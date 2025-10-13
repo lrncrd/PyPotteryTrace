@@ -15,6 +15,16 @@ A Python tool to convert archaeological pottery drawings into clean vector graph
 
 PyPotteryTrace turns archaeological pottery drawings into clean, structured SVG vectors. It distinguishes between different graphical elements (lines, dotted points, painted decorations), simplifies and smooths them with Bézier curves, and produces publication/modifiable‑ready vector output plus diagnostic imagery.
 
+## 🎯 Two Modes Available
+
+### **Automatic Mode** (GUI/Batch Processing)
+Fast, automated vectorization for batch processing multiple images. Best for clean drawings with simple elements.
+
+### **Interactive Mode** (NEW! 🚀)
+Web-based, SAM2-powered precision tool for complex drawings. Manually segment elements, assign categories, and get organized SVG output with layers.
+
+👉 **[See Interactive Mode Documentation](README_INTERACTIVE.md)**
+
 
 ---
 

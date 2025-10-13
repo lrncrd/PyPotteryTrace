@@ -209,3 +209,6 @@ __marimo__/
 BK
 data
 data_vectorized
+
+interactive_app/uploads/*
+interactive_app/models/*

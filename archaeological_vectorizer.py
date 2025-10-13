@@ -22,12 +22,164 @@ import numpy as np
 from skimage.morphology import skeletonize, closing, disk
 from skimage import img_as_ubyte
 from skimage.measure import label
-import sknw
 import svgwrite
 from rdp import rdp
 import matplotlib.pyplot as plt
 import math
 from typing import List, Tuple, Dict, Any, Optional
+from path_tracer import extract_main_paths, visualize_paths
+
+
+def close_profile_curve(path: np.ndarray) -> np.ndarray:
+    """
+    Chiude una curva connettendo il punto finale al punto iniziale.
+    
+    Args:
+        path: Array di punti [(y1,x1), (y2,x2), ...] che formano il profilo
+        
+    Returns:
+        Curva chiusa con il punto iniziale aggiunto alla fine
+    """
+    if len(path) < 2:
+        return path
+    
+    # Verifica se la curva è già chiusa
+    start_point = path[0]
+    end_point = path[-1]
+    distance = np.linalg.norm(start_point - end_point)
+    
+    if distance < 5:  # Già abbastanza vicini
+        return path
+    
+    # Aggiungi il punto iniziale alla fine per chiudere
+    closed_path = np.vstack([path, start_point])
+    
+    print(f"Curva chiusa: distanza tra inizio e fine = {distance:.2f}px")
+    return closed_path
+
+
+def extract_outer_contour(binary_image: np.ndarray, profile_path: np.ndarray) -> np.ndarray:
+    """
+    Estrae il contorno esterno di un profilo archeologico.
+    Il contorno esterno è quello orientato verso sinistra (verso l'esterno del vaso).
+    
+    Args:
+        binary_image: Immagine binaria del profilo
+        profile_path: Percorso del profilo tracciato
+        
+    Returns:
+        Percorso del solo contorno esterno
+    """
+    if len(profile_path) < 3:
+        return profile_path
+    
+    # Trova il contorno più esterno nell'immagine binaria
+    # Questo ci dà il bordo effettivo del profilo
+    contours, hierarchy = cv2.findContours(
+        binary_image.astype(np.uint8) * 255, 
+        cv2.RETR_EXTERNAL, 
+        cv2.CHAIN_APPROX_NONE
+    )
+    
+    if len(contours) == 0:
+        print("Nessun contorno trovato, uso il percorso originale")
+        return profile_path
+    
+    # Prendi il contorno più grande (dovrebbe essere il profilo principale)
+    largest_contour = max(contours, key=cv2.contourArea)
+    
+    # Converti da formato OpenCV (N, 1, 2) a formato (N, 2) con (y, x)
+    contour_points = largest_contour.squeeze()
+    if len(contour_points.shape) == 1:
+        contour_points = contour_points.reshape(1, -1)
+    
+    # Converti da (x, y) a (y, x) per coerenza con il resto del codice
+    contour_yx = np.column_stack([contour_points[:, 1], contour_points[:, 0]])
+    
+    print(f"Contorno esterno estratto: {len(contour_yx)} punti")
+    
+    return contour_yx
+
+
+def extract_left_side_of_profile(profile_path: np.ndarray) -> np.ndarray:
+    """
+    Estrae il lato sinistro (esterno) di un profilo archeologico.
+    
+    POST-PROCESSING:
+    1. Trova il punto più alto (y minimo) e più basso (y massimo) del profilo
+    2. Traccia due rette ORIZZONTALI tangenti a questi punti
+    3. Trova i punti di intersezione più a SINISTRA su queste rette
+    4. Tiene solo la porzione di curva che sta a SINISTRA (il fronte esterno del vaso)
+    
+    Args:
+        profile_path: Percorso completo del profilo (array di punti y, x)
+        
+    Returns:
+        Solo il lato sinistro del profilo (fronte esterno)
+    """
+    if len(profile_path) < 3:
+        return profile_path
+    
+    # 1. Trova il punto più alto (y minimo) e più basso (y massimo)
+    y_coords = profile_path[:, 0]
+    y_top = np.min(y_coords)      # coordinata y del punto più alto
+    y_bottom = np.max(y_coords)   # coordinata y del punto più basso
+    
+    print(f"Retta orizzontale superiore: y={y_top:.1f}")
+    print(f"Retta orizzontale inferiore: y={y_bottom:.1f}")
+    
+    # 2. Trova tutti i punti sulla retta superiore (y = y_top)
+    #    e sulla retta inferiore (y = y_bottom)
+    tolerance = 2  # Tolleranza in pixel per considerare un punto "sulla retta"
+    
+    top_line_points = profile_path[np.abs(profile_path[:, 0] - y_top) <= tolerance]
+    bottom_line_points = profile_path[np.abs(profile_path[:, 0] - y_bottom) <= tolerance]
+    
+    if len(top_line_points) == 0 or len(bottom_line_points) == 0:
+        print("ATTENZIONE: Nessun punto trovato sulle rette orizzontali!")
+        return profile_path
+    
+    # 3. Trova il punto più a SINISTRA (x minimo) su ciascuna retta
+    top_left_point = top_line_points[np.argmin(top_line_points[:, 1])]
+    bottom_left_point = bottom_line_points[np.argmin(bottom_line_points[:, 1])]
+    
+    print(f"Intersezione superiore (più a sinistra): y={top_left_point[0]:.1f}, x={top_left_point[1]:.1f}")
+    print(f"Intersezione inferiore (più a sinistra): y={bottom_left_point[0]:.1f}, x={bottom_left_point[1]:.1f}")
+    
+    # 4. Trova gli indici di questi punti nel percorso originale
+    top_idx = -1
+    bottom_idx = -1
+    
+    for i, point in enumerate(profile_path):
+        if np.array_equal(point, top_left_point):
+            top_idx = i
+        if np.array_equal(point, bottom_left_point):
+            bottom_idx = i
+    
+    # Se non troviamo match esatti, cerca i punti più vicini
+    if top_idx == -1:
+        distances = np.linalg.norm(profile_path - top_left_point, axis=1)
+        top_idx = np.argmin(distances)
+        print(f"  Punto superiore approssimato all'indice {top_idx}")
+    
+    if bottom_idx == -1:
+        distances = np.linalg.norm(profile_path - bottom_left_point, axis=1)
+        bottom_idx = np.argmin(distances)
+        print(f"  Punto inferiore approssimato all'indice {bottom_idx}")
+    
+    # 5. Estrai la porzione di curva tra i due punti
+    # Assicurati che top_idx < bottom_idx (ordine dall'alto verso il basso)
+    if top_idx > bottom_idx:
+        top_idx, bottom_idx = bottom_idx, top_idx
+        print("  Invertiti gli indici per mantenere l'ordine dall'alto verso il basso")
+    
+    # Estrai la sottosezione del percorso
+    left_side_profile = profile_path[top_idx:bottom_idx+1]
+    
+    print(f"Lato sinistro estratto: {len(left_side_profile)} punti su {len(profile_path)} totali")
+    print(f"  (dall'indice {top_idx} all'indice {bottom_idx})")
+    
+    return left_side_profile
 
 
 def find_dotted_points(binary_image: np.ndarray, 
@@ -257,9 +409,60 @@ def find_painted_decorations_from_original(original_image: np.ndarray,
     return decoration_contours
 
 
+def classify_paths(paths: List[np.ndarray], filter_branches: bool = True) -> Dict[str, List]:
+    """
+    Classify extracted paths into lines (keeping all main paths).
+    
+    With the new intelligent path tracing, we don't need aggressive filtering
+    because spurious branches are already eliminated during tracing.
+    
+    Args:
+        paths: List of paths from extract_main_paths
+        filter_branches: Whether to apply minimal filtering (kept for compatibility)
+        
+    Returns:
+        Dictionary with classified elements
+    """
+    lines = []
+    dotted_points = []
+    path_lengths = []
+    
+    for path in paths:
+        if len(path) < 2:
+            continue
+        
+        # Calculate path length
+        length = calculate_path_length(path)
+        path_lengths.append(length)
+        
+        # Simple classification: very short = noise, everything else = line
+        if length < 3:
+            # Extremely short - noise
+            dotted_points.append(path)
+        else:
+            # Everything else is a valid line
+            # The path tracer already eliminated spurious branches
+            lines.append(path)
+    
+    # Debug info
+    if path_lengths:
+        print(f"  Path lengths: min={min(path_lengths):.1f}, max={max(path_lengths):.1f}, avg={np.mean(path_lengths):.1f}")
+        print(f"  Total paths: {len(paths)}")
+        print(f"  Classified as lines: {len(lines)}")
+        print(f"  Classified as noise: {len(dotted_points)}")
+    
+    return {
+        'lines': lines,
+        'dotted_points': [],  # Not used with path tracing
+        'painted_decorations': [],
+        'filtered_branches': []  # Not needed with intelligent tracing
+    }
+
+
 def classify_archaeological_elements(original_image: np.ndarray, 
                                    binary_image: np.ndarray, 
-                                   graph) -> Dict[str, List]:
+                                   graph,
+                                   filter_branches: bool = True) -> Dict[str, List]:
     """
     Classify drawing elements into archaeological categories:
     1. Lines (all long paths)
@@ -277,9 +480,11 @@ def classify_archaeological_elements(original_image: np.ndarray,
     # We don't extract painted decorations from the graph anymore
     # They are handled separately and more accurately from the original image
     
-    # Classify graph elements (only lines and dotted points)
+    # NUOVO: Filtraggio intelligente per eliminare rami spuri
     lines = []
     dotted_points = []
+    filtered_branches = []
+    path_lengths = []
     
     for (s, e) in graph.edges():
         path_pixels = graph[s][e]['pts']
@@ -289,19 +494,53 @@ def classify_archaeological_elements(original_image: np.ndarray,
             
         # Calculate path characteristics
         length = calculate_path_length(path_pixels)
-        is_very_short = length < 8  # Threshold to distinguish points from lines
+        path_lengths.append(length)
         
-        if is_very_short:
-            # Small elements = dotted pattern
-            dotted_points.append((s, e, path_pixels))
+        # NUOVO: Identifica se è un ramo spurio (breve connesso a nodo con molti vicini)
+        s_degree = graph.degree(s)
+        e_degree = graph.degree(e)
+        max_degree = max(s_degree, e_degree)
+        
+        # MIGLIORATO: Criteri più conservativi per filtrare SOLO veri rami spuri
+        # 1. Molto corto in assoluto (probabilmente rumore)
+        is_noise = length < 3  # Ridotto da 5 a 3 per essere più conservativi
+        
+        # 2. Ramo spurio solo se MOLTO corto E altamente ramificato
+        # Aumentata soglia lunghezza e grado per essere più selettivi
+        is_short_branch = (length < 8 and max_degree >= 4)  # Era: length < 15 e degree >= 3
+        
+        # Applica il filtro solo se richiesto
+        if not filter_branches:
+            # Filtro disabilitato - classifica solo per lunghezza
+            if is_noise:
+                dotted_points.append((s, e, path_pixels))
+            else:
+                lines.append((s, e, path_pixels))
         else:
-            # Everything else = lines (no more graph decorations)
-            lines.append((s, e, path_pixels))
+            # Filtro abilitato - elimina anche rami spuri
+            if is_noise:
+                # Rumore - troppo corto
+                dotted_points.append((s, e, path_pixels))
+            elif is_short_branch:
+                # Ramo spurio - filtrato
+                filtered_branches.append((s, e, path_pixels, length))
+            else:
+                # Linea valida - accetta tutto il resto
+                lines.append((s, e, path_pixels))
+    
+    # Debug info
+    if path_lengths:
+        print(f"  Path lengths: min={min(path_lengths):.1f}, max={max(path_lengths):.1f}, avg={np.mean(path_lengths):.1f}")
+        print(f"  Total edges in graph: {len(graph.edges())}")
+        print(f"  Classified as lines: {len(lines)}")
+        print(f"  Classified as points: {len(dotted_points)}")
+        print(f"  Filtered branches (spuri): {len(filtered_branches)}")
     
     return {
         'lines': lines,
         'dotted_points': dotted_points,
-        'painted_decorations': []  # Empty - no graph decorations
+        'painted_decorations': [],  # Empty - no graph decorations
+        'filtered_branches': filtered_branches  # Per debug
     }
 
 
@@ -377,7 +616,8 @@ def connect_nearby_endpoints(graph, max_distance: int = 10) -> Any:
 def vectorize_archaeological_drawing(image_path: str,
                                    output_svg_path: str,
                                    output_jpg_path: Optional[str] = None,
-                                   binary_threshold: int = 15,
+                                   lines_threshold: int = 200,
+                                   points_threshold: int = 30,
                                    epsilon: float = 1.5,
                                    smoothing_factor: float = 0.3,
                                    min_dotted_area: int = 5,
@@ -385,9 +625,11 @@ def vectorize_archaeological_drawing(image_path: str,
                                    dotted_circularity: float = 0.6,
                                    dark_threshold: int = 100,
                                    min_decoration_area: int = 1000,
+                                   filter_branches: bool = True,
                                    show_debug_plots: bool = True,
                                    save_debug_images: bool = True,
-                                   include_background_image: bool = False) -> Dict[str, Any]:
+                                   include_background_image: bool = False,
+                                   extract_profile_mode: bool = False) -> Dict[str, Any]:
     """
     Main function to vectorize archaeological drawings with element classification.
     Based on the proven vectorize.py workflow.
@@ -396,7 +638,8 @@ def vectorize_archaeological_drawing(image_path: str,
         image_path: Path to input image
         output_svg_path: Path for output SVG file
         output_jpg_path: Optional path for output JPG comparison
-        binary_threshold: Threshold for binarization (lower = more sensitive)
+        lines_threshold: Threshold for binarization of LINES (higher = only dark lines, 200 recommended)
+        points_threshold: Threshold for binarization of POINTS (lower = captures faint points, 30 recommended)
         epsilon: RDP simplification epsilon (higher = more simplification)
         smoothing_factor: Bézier curve smoothing (0-1)
         min_dotted_area: Minimum area for dotted points
@@ -404,9 +647,11 @@ def vectorize_archaeological_drawing(image_path: str,
         dotted_circularity: Minimum circularity for dotted points
         dark_threshold: Threshold for finding dark decorations
         min_decoration_area: Minimum area for painted decorations
+        filter_branches: Whether to filter short spurious branches (default True). Set False to keep all lines.
         show_debug_plots: Whether to show matplotlib debug plots
         save_debug_images: Whether to save debug PNG files
-        include_background_image: Whether to include original image as background in SVG (diagnostic_plots.png and skeleton_debug.png)
+        include_background_image: Whether to include original image as background in SVG
+        extract_profile_mode: If True, extracts only a closed profile curve with external contour only (default False)
         
     Returns:
         Dictionary with processing statistics and results
@@ -422,34 +667,39 @@ def vectorize_archaeological_drawing(image_path: str,
         
     img_gray = cv2.cvtColor(img_original_color, cv2.COLOR_BGR2GRAY)
     height, width = img_gray.shape
+    height, width = int(height), int(width)  # Convert numpy int to Python int for SVG
     print(f"Image dimensions: {width} x {height}")
     
     # Apply light blur to reduce noise
     img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
     
-    # Very sensitive binarization to capture even faint shadows
-    print("Using very sensitive binarization for shadows...")
+    # DUAL THRESHOLD APPROACH
+    # Create TWO separate binarizations for better element separation
+    print("Using DUAL THRESHOLD approach...")
+    print(f"  - Lines threshold: {lines_threshold} (higher = only marked lines)")
+    print(f"  - Points threshold: {points_threshold} (lower = captures faint points)")
     
     # Invert image (black lines become white)
     img_inverted = cv2.bitwise_not(img_blur)
     
-    # Very low threshold to capture even light gray zones
-    # Everything that's not completely white (255) becomes part of the drawing
-    _, binary_image = cv2.threshold(img_inverted, binary_threshold, 255, cv2.THRESH_BINARY)
+    # HIGH threshold for LINES only (captures only dark/marked lines)
+    _, binary_lines = cv2.threshold(img_inverted, lines_threshold, 255, cv2.THRESH_BINARY)
     
-    print(f"Threshold used: {binary_threshold}")
-    print(f"White pixels in binarization: {np.sum(binary_image > 0)}")
+    # LOW threshold for POINTS (captures even faint/light points)
+    _, binary_points = cv2.threshold(img_inverted, points_threshold, 255, cv2.THRESH_BINARY)
     
-    # Binarization debug removed - not needed
+    print(f"White pixels in LINES binarization: {np.sum(binary_lines > 0)}")
+    print(f"White pixels in POINTS binarization: {np.sum(binary_points > 0)}")
     
     # Convert to boolean for subsequent processing
-    binary_image_bool = binary_image.astype(bool)
+    binary_lines_bool = binary_lines.astype(bool)
+    binary_points_bool = binary_points.astype(bool)
 
     # --- 2. Separation of Dotted Points, Decorations and Lines ---
     print("Separating dotted points, decorations and lines...")
     
-    # Identify dotted points as small circular isolated areas
-    dotted_points = find_dotted_points(binary_image_bool, min_dotted_area, max_dotted_area, dotted_circularity)
+    # Identify dotted points using LOW threshold (captures faint points)
+    dotted_points = find_dotted_points(binary_points_bool, min_dotted_area, max_dotted_area, dotted_circularity)
     print(f"Found {len(dotted_points)} dotted points")
     
     # Identify painted decorations from original image
@@ -457,14 +707,15 @@ def vectorize_archaeological_drawing(image_path: str,
     print(f"Found {len(painted_decorations)} painted decorations")
     
     # Create mask without dotted points and decorations for line skeletonization
-    lines_mask = binary_image_bool.copy()
+    # Use HIGH threshold binary (only marked lines)
+    lines_mask = binary_lines_bool.copy()
     
     # Remove dotted points from lines mask
     for (center_y, center_x, radius) in dotted_points:
         y_min = max(0, center_y - radius - 2)
-        y_max = min(binary_image_bool.shape[0], center_y + radius + 3)
+        y_max = min(binary_lines_bool.shape[0], center_y + radius + 3)
         x_min = max(0, center_x - radius - 2)
-        x_max = min(binary_image_bool.shape[1], center_x + radius + 3)
+        x_max = min(binary_lines_bool.shape[1], center_x + radius + 3)
         lines_mask[y_min:y_max, x_min:x_max] = False
     
     # Remove painted decorations from lines mask
@@ -485,8 +736,63 @@ def vectorize_archaeological_drawing(image_path: str,
     print("Performing skeletonization of lines...")
     
     if remaining_pixels > 0:
-        # Improve connectivity only for lines
-        improved_lines = closing(lines_mask, disk(2))
+        # NUOVO: Remove small circular blobs that could be residual points
+        # This prevents skeleton fragmentation in areas with many points
+        print("  Filtering out small circular areas (residual points)...")
+        from skimage.morphology import area_opening, remove_small_objects
+        from scipy import ndimage
+        
+        # Label connected components
+        labeled_mask, num_features = ndimage.label(lines_mask)
+        
+        # Analyze each component
+        cleaned_mask = np.zeros_like(lines_mask)
+        removed_count = 0
+        
+        for i in range(1, num_features + 1):
+            component = (labeled_mask == i)
+            area = np.sum(component)
+            
+            # Skip very small components (likely noise)
+            if area < 10:
+                removed_count += 1
+                continue
+            
+            # Check circularity - remove circular blobs (likely points)
+            if area < 500:  # Only check small components
+                coords = np.argwhere(component)
+                if len(coords) > 0:
+                    # Calculate bounding box
+                    y_min, x_min = coords.min(axis=0)
+                    y_max, x_max = coords.max(axis=0)
+                    comp_width = x_max - x_min + 1
+                    comp_height = y_max - y_min + 1
+                    
+                    # Calculate aspect ratio
+                    aspect_ratio = max(comp_width, comp_height) / (min(comp_width, comp_height) + 1e-6)
+                    
+                    # If roughly square/circular and small, it's likely a point - REMOVE
+                    if aspect_ratio < 2.0:  # Nearly square = likely point
+                        removed_count += 1
+                        continue
+            
+            # Keep this component - it's a line
+            cleaned_mask |= component
+        
+        print(f"  Removed {removed_count} small circular components (points)")
+        print(f"  Kept {num_features - removed_count} line components")
+        
+        lines_mask = cleaned_mask
+        remaining_pixels = np.sum(lines_mask)
+        print(f"  Pixels after point filtering: {remaining_pixels}")
+        
+        # MIGLIORATO: Improve connectivity with larger disk for better line connection
+        # disk(2) -> disk(5) per connettere meglio le linee interrotte
+        print("  Improving line connectivity with morphological closing...")
+        improved_lines = closing(lines_mask, disk(5))
+        
+        connectivity_improvement = np.sum(improved_lines) - remaining_pixels
+        print(f"  Pixels added by closing: {connectivity_improvement}")
         
         # Skeletonization only of lines
         skeleton = skeletonize(improved_lines)
@@ -496,50 +802,99 @@ def vectorize_archaeological_drawing(image_path: str,
         print(f"Skeleton pixels for lines: {skeleton_pixels}")
     else:
         print("No lines to skeletonize")
-        skeleton_img = np.zeros_like(binary_image, dtype=np.uint8)
+        skeleton_img = np.zeros_like(binary_lines, dtype=np.uint8)
         skeleton_pixels = 0
 
-    # --- 3. Path Extraction ---
-    print("Building graph from skeleton...")
-    graph = sknw.build_sknw(skeleton_img, multi=False)
+    # --- 3. NUOVO: Smart Path Extraction ---
+    print("\n=== INTELLIGENT PATH TRACING ===")
+    print("Extracting main paths from skeleton using smart tracing...")
     
-    initial_nodes = len(graph.nodes())
-    initial_edges = len(graph.edges())
-    print(f"Initial graph: {initial_nodes} nodes and {initial_edges} edges")
+    # Use intelligent path tracing instead of sknw
+    # Pass the GRAYSCALE original image to follow darker (stronger) lines
+    main_paths = extract_main_paths(
+        skeleton_img,
+        original_gray=img_gray,  # Pass grayscale to follow darker/stronger lines
+        min_path_length=30,  # Increased to 30 to ignore small disconnected fragments
+        max_branch_depth=5   # Don't follow deep branches
+    )
     
-    # This will be updated later to show final results
+    print(f"Extracted {len(main_paths)} main paths")
     
-    # --- 3.1 Improve Graph Connectivity ---
-    print("Improving graph connectivity...")
-    graph = connect_nearby_endpoints(graph, max_distance=8)
-    
-    final_nodes = len(graph.nodes())
-    final_edges = len(graph.edges())
-    print(f"Final graph: {final_nodes} nodes and {final_edges} edges")
-    
-    # --- 4. Archaeological Element Classification ---
-    print("Classifying archaeological elements...")
-    classified_elements = classify_archaeological_elements(img_gray, binary_image_bool, graph)
+    # === MODALITÀ PROFILO: Processa il percorso principale ===
+    if extract_profile_mode:
+        print("\n=== MODALITÀ PROFILO ARCHEOLOGICO ===")
+        
+        if len(main_paths) == 0:
+            print("ERRORE: Nessun percorso trovato!")
+            classified_elements = {
+                'lines': [], 
+                'dotted_points': [], 
+                'painted_decorations': [],
+                'dotted_points_separate': [],
+                'painted_decorations_separate': []
+            }
+        else:
+            # Prendi il percorso più lungo (dovrebbe essere il profilo principale)
+            longest_path = max(main_paths, key=len)
+            print(f"Percorso principale selezionato: {len(longest_path)} punti")
+            
+            # 1. Chiudi la curva
+            closed_profile = close_profile_curve(longest_path)
+            print(f"Curva chiusa: {len(closed_profile)} punti")
+            
+            # 2. Estrai il contorno esterno (lato sinistro) - SOLO per il ribaltamento
+            outer_contour = extract_left_side_of_profile(closed_profile)
+            print(f"Contorno esterno: {len(outer_contour)} punti")
+            
+            # Salva la CURVA CHIUSA COMPLETA come elemento principale
+            # e il contorno esterno nei dati aggiuntivi
+            classified_elements = {
+                'lines': [closed_profile],  # CURVA COMPLETA CHIUSA
+                'dotted_points': [],
+                'painted_decorations': [],
+                'dotted_points_separate': [],
+                'painted_decorations_separate': [],
+                'profile_data': {  # Dati aggiuntivi per il profilo
+                    'full_closed_profile': closed_profile,  # Curva completa chiusa
+                    'outer_contour': outer_contour  # Solo lato esterno (per ribaltamento)
+                }
+            }
+            
+            print("✓ Profilo estratto: curva chiusa completa")
+            
+            # Crea visualizzazione del profilo estratto
+            if save_debug_images:
+                visualize_paths(img_gray, [closed_profile], 'diagnostic_paths.png')
+    else:
+        # === MODALITÀ NORMALE (scheletro completo) ===
+        # Create visualization of extracted paths
+        if save_debug_images:
+            visualize_paths(img_gray, main_paths, 'diagnostic_paths.png')
+        
+        # --- 4. Archaeological Element Classification ---
+        print("\nClassifying archaeological elements...")
+        classified_elements = classify_paths(main_paths, filter_branches)
     
     # Add elements found separately (before skeletonization)
-    classified_elements['dotted_points_separate'] = dotted_points
-    classified_elements['painted_decorations_separate'] = painted_decorations
-    
-    # Classification debug removed - not needed
+    # Ma solo se NON siamo in modalità profilo
+    if not extract_profile_mode:
+        classified_elements['dotted_points_separate'] = dotted_points
+        classified_elements['painted_decorations_separate'] = painted_decorations
     
     # Create skeleton debug with final results
     if save_debug_images:
         create_skeleton_debug_image(img_gray, classified_elements)
     
     # --- 5. Enhanced SVG Saving ---
-    print(f"Saving classified SVG file to {output_svg_path}...")
+    print(f"\nSaving classified SVG file to {output_svg_path}...")
     save_classified_svg(classified_elements, output_svg_path, width, height, epsilon, smoothing_factor, 
                        image_path if include_background_image else None)
     
     # Generate JPG comparison if requested
     if output_jpg_path:
         print(f"Generating JPG comparison to {output_jpg_path}...")
-        generate_jpg_comparison(classified_elements, output_jpg_path, width, height)
+        generate_jpg_comparison(classified_elements, output_jpg_path, width, height, 
+                              is_profile_mode=extract_profile_mode)
     
     # Statistics
     stats = {
@@ -548,10 +903,14 @@ def vectorize_archaeological_drawing(image_path: str,
         'separated_dotted_points': len(classified_elements.get('dotted_points_separate', [])),
         'graph_decorations': len(classified_elements['painted_decorations']),
         'separated_decorations': len(classified_elements.get('painted_decorations_separate', [])),
-        'total_graph_elements': initial_edges,
+        'total_paths_extracted': len(main_paths),
         'remaining_line_pixels': remaining_pixels,
         'skeleton_pixels': skeleton_pixels
     }
+    
+    # Add profile_data if in profile mode
+    if extract_profile_mode and 'profile_data' in classified_elements:
+        stats['profile_data'] = classified_elements['profile_data']
     
     print("\n=== ARCHAEOLOGICAL ELEMENT CLASSIFICATION ===")
     print(f"Lines: {stats['total_lines']}")
@@ -559,13 +918,64 @@ def vectorize_archaeological_drawing(image_path: str,
     print(f"Separated dotted points: {stats['separated_dotted_points']}")
     print(f"Graph decorations: {stats['graph_decorations']}")
     print(f"Separated decorations: {stats['separated_decorations']}")
-    print(f"Total graph elements: {stats['total_graph_elements']}")
+    print(f"Total paths extracted: {stats['total_paths_extracted']}")
     print("Conversion completed!")
     
     if show_debug_plots:
-        show_diagnostic_plots(img_gray, binary_image, skeleton_img, classified_elements)
+        show_diagnostic_plots(img_gray, binary_lines, skeleton_img, classified_elements)
     
     return stats
+
+
+import cv2
+import numpy as np
+from skimage.morphology import skeletonize, closing, disk
+from skimage.util import img_as_ubyte
+from scipy import ndimage
+from typing import Optional, Dict, Any, List, Tuple
+
+
+
+
+
+def create_graph_debug_image(original: np.ndarray, graph, output_path: str):
+    """
+    Create debug image showing ALL edges in the graph.
+    This helps identify if lines are in the graph but not being classified.
+    
+    Args:
+        original: Original grayscale image
+        graph: NetworkX graph
+        output_path: Path to save the debug image
+    """
+    print(f"Creating graph debug image with {len(graph.edges())} edges...")
+    
+    # Start with original image as background
+    debug_img = cv2.cvtColor(original, cv2.COLOR_GRAY2BGR)
+    
+    # Draw ALL edges in the graph in CYAN
+    edge_count = 0
+    for (s, e) in graph.edges():
+        path_pixels = graph[s][e]['pts']
+        
+        if len(path_pixels) > 0:
+            edge_count += 1
+            # Draw path in CYAN (visible on grayscale)
+            for i in range(len(path_pixels)-1):
+                y1, x1 = int(path_pixels[i][0]), int(path_pixels[i][1])
+                y2, x2 = int(path_pixels[i+1][0]), int(path_pixels[i+1][1])
+                if (0 <= y1 < debug_img.shape[0] and 0 <= x1 < debug_img.shape[1] and
+                    0 <= y2 < debug_img.shape[0] and 0 <= x2 < debug_img.shape[1]):
+                    cv2.line(debug_img, (x1, y1), (x2, y2), (255, 255, 0), 2)  # Cyan
+    
+    # Draw nodes in RED (endpoints and junctions)
+    for node in graph.nodes():
+        y, x = int(graph.nodes[node]['o'][0]), int(graph.nodes[node]['o'][1])
+        if 0 <= y < debug_img.shape[0] and 0 <= x < debug_img.shape[1]:
+            cv2.circle(debug_img, (x, y), 3, (0, 0, 255), -1)  # Red
+    
+    cv2.imwrite(output_path, debug_img)
+    print(f"Saved {output_path} with {edge_count} edges and {len(graph.nodes())} nodes")
 
 
 def create_skeleton_debug_image(original: np.ndarray, classified_elements: Dict[str, List]):
@@ -580,8 +990,19 @@ def create_skeleton_debug_image(original: np.ndarray, classified_elements: Dict[
     # Start with original image as background
     debug_img = cv2.cvtColor(original, cv2.COLOR_GRAY2BGR)
     
+    # NUOVO: Draw filtered branches in ORANGE (to see what was filtered out)
+    for item in classified_elements.get('filtered_branches', []):
+        if len(item) >= 3:  # (s, e, path_pixels, length)
+            path_pixels = item[2]
+            for i in range(len(path_pixels)-1):
+                y1, x1 = int(path_pixels[i][0]), int(path_pixels[i][1])
+                y2, x2 = int(path_pixels[i+1][0]), int(path_pixels[i+1][1])
+                if (0 <= y1 < debug_img.shape[0] and 0 <= x1 < debug_img.shape[1] and
+                    0 <= y2 < debug_img.shape[0] and 0 <= x2 < debug_img.shape[1]):
+                    cv2.line(debug_img, (x1, y1), (x2, y2), (0, 165, 255), 1)  # Orange thin
+    
     # Draw lines in BLUE (thick for visibility)
-    for (s, e, path_pixels) in classified_elements['lines']:
+    for path_pixels in classified_elements['lines']:
         for i in range(len(path_pixels)-1):
             y1, x1 = int(path_pixels[i][0]), int(path_pixels[i][1])
             y2, x2 = int(path_pixels[i+1][0]), int(path_pixels[i+1][1])
@@ -620,7 +1041,8 @@ def save_classified_svg(classified_elements: Dict[str, List],
                        smoothing_factor: float = 0.3,
                        background_image_path: Optional[str] = None):
     """Save classified elements to SVG with proper styling and optional background image."""
-    dwg = svgwrite.Drawing(svg_path, size=(width, height), profile='tiny')
+    # Use 'full' profile instead of 'tiny' to avoid size restrictions
+    dwg = svgwrite.Drawing(svg_path, size=(f'{width}px', f'{height}px'), profile='full')
     
     # Add background image if requested
     if background_image_path:
@@ -647,7 +1069,8 @@ def save_classified_svg(classified_elements: Dict[str, List],
     
     # Lines with smoothing (separate group)
     lines_group = dwg.g(id='lines', stroke='black', stroke_width=1, fill='none')
-    for (s, e, path_pixels) in classified_elements['lines']:
+    for path_pixels in classified_elements['lines']:
+        # path_pixels is now directly a numpy array from path tracer
         simplified_path = rdp(path_pixels, epsilon=epsilon)
         if len(simplified_path) > 1:
             if smoothing_factor > 0:
@@ -709,38 +1132,63 @@ def save_classified_svg(classified_elements: Dict[str, List],
 def generate_jpg_comparison(classified_elements: Dict[str, List], 
                           jpg_path: str, 
                           width: int, 
-                          height: int):
-    """Generate a JPG comparison image showing the vectorized elements."""
+                          height: int,
+                          is_profile_mode: bool = False):
+    """
+    Generate a JPG comparison image showing the vectorized elements.
+    Handles both skeleton mode and profile mode.
+    """
+    print(f"-> Generating JPG comparison at {jpg_path}...")
+    
     # Create white background
     img = np.ones((height, width, 3), dtype=np.uint8) * 255
     
-    # Draw lines in black
-    for (s, e, path_pixels) in classified_elements['lines']:
-        if len(path_pixels) > 1:
-            for i in range(len(path_pixels) - 1):
-                cv2.line(img, 
-                        (int(path_pixels[i, 1]), int(path_pixels[i, 0])), 
-                        (int(path_pixels[i+1, 1]), int(path_pixels[i+1, 0])), 
-                        (0, 0, 0), 1)
-    
-    # Draw dotted points in red
-    for (s, e, path_pixels) in classified_elements['dotted_points']:
-        center_idx = len(path_pixels) // 2
-        y, x = path_pixels[center_idx][0], path_pixels[center_idx][1]
-        cv2.circle(img, (int(x), int(y)), 2, (0, 0, 255), -1)
-    
-    # Draw separated dotted points in red
-    for (center_y, center_x, radius) in classified_elements.get('dotted_points_separate', []):
-        cv2.circle(img, (center_x, center_y), max(2, radius//2), (0, 0, 255), -1)
-    
-    # Draw painted decorations in black (filled)
-    for contour_points in classified_elements.get('painted_decorations_separate', []):
-        if len(contour_points) > 2:
-            cv_contour = np.array([[point[1], point[0]] for point in contour_points], dtype=np.int32)
-            cv_contour = cv_contour.reshape(-1, 1, 2)
-            cv2.fillPoly(img, [cv_contour], (0, 0, 0))  # Black fill
+    if is_profile_mode:
+        # === PROFILE MODE: Draw only the profile path ===
+        if 'lines' in classified_elements and classified_elements['lines']:
+            # Extract the profile path (first and only element)
+            profile_path = classified_elements['lines'][0]
+            
+            # Convert to integer points for OpenCV
+            points = np.array(profile_path, dtype=np.int32).reshape((-1, 1, 2))
+            
+            # Swap y,x to x,y for OpenCV
+            points_xy = np.column_stack([profile_path[:, 1], profile_path[:, 0]]).astype(np.int32)
+            points_xy = points_xy.reshape((-1, 1, 2))
+            
+            # Draw the profile path (not closed, just the external contour)
+            cv2.polylines(img, [points_xy], isClosed=False, color=(0, 0, 255), thickness=2)
+            print(f"   - Drew profile path with {len(profile_path)} points")
+    else:
+        # === SKELETON MODE: Original drawing logic ===
+        # Draw lines in black
+        for path_pixels in classified_elements['lines']:
+            if len(path_pixels) > 1:
+                for i in range(len(path_pixels) - 1):
+                    cv2.line(img, 
+                            (int(path_pixels[i, 1]), int(path_pixels[i, 0])), 
+                            (int(path_pixels[i+1, 1]), int(path_pixels[i+1, 0])), 
+                            (0, 0, 0), 1)
+        
+        # Draw dotted points in red
+        for (s, e, path_pixels) in classified_elements['dotted_points']:
+            center_idx = len(path_pixels) // 2
+            y, x = path_pixels[center_idx][0], path_pixels[center_idx][1]
+            cv2.circle(img, (int(x), int(y)), 2, (0, 0, 255), -1)
+        
+        # Draw separated dotted points in red
+        for (center_y, center_x, radius) in classified_elements.get('dotted_points_separate', []):
+            cv2.circle(img, (center_x, center_y), max(2, radius//2), (0, 0, 255), -1)
+        
+        # Draw painted decorations in black (filled)
+        for contour_points in classified_elements.get('painted_decorations_separate', []):
+            if len(contour_points) > 2:
+                cv_contour = np.array([[point[1], point[0]] for point in contour_points], dtype=np.int32)
+                cv_contour = cv_contour.reshape(-1, 1, 2)
+                cv2.fillPoly(img, [cv_contour], (0, 0, 0))  # Black fill
     
     cv2.imwrite(jpg_path, img)
+    print("   - JPG comparison saved.")
 
 
 def show_diagnostic_plots(original: np.ndarray, 
@@ -791,7 +1239,7 @@ def show_diagnostic_plots(original: np.ndarray,
     ax[3].axis('off')
     
     # Visualize lines in BLUE
-    for i, (s, e, path_pixels) in enumerate(classified_elements['lines']):
+    for i, path_pixels in enumerate(classified_elements['lines']):
         ax[3].plot(path_pixels[:, 1], path_pixels[:, 0], 'b-', linewidth=1.5, alpha=0.8, label='Lines' if i == 0 else "")
     
     # Visualize dotted pattern in RED (as points)

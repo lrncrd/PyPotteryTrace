@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PyPotteryTrace Interactive - Segmentation Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container" id="main-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-section">
+                <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" class="logo" onerror="this.style.display='none'">
+                <h1>PyPotteryTrace <span class="version">Interactive</span></h1>
+            </div>
+            <div class="header-actions">
+                <button id="help-btn" class="btn btn-secondary">
+                    <span>ℹ️</span> Help
+                </button>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-button active" data-tab="model-tab">
+                <span class="tab-icon">⚙️</span>
+                <span class="tab-label">Setup</span>
+            </button>
+            <button class="tab-button" data-tab="segmentation-tab" id="segmentation-tab-btn" disabled>
+                <span class="tab-icon">✂️</span>
+                <span class="tab-label">Segmentation</span>
+            </button>
+        </div>
+
+        <!-- Tab 1: Setup -->
+        <div class="tab-content active" id="model-tab">
+            <div class="setup-container">
+                <div class="setup-header">
+                    <h2>📁 Setup - Select Folder and Model</h2>
+                    <p>Choose a folder with pottery images and configure the segmentation model</p>
+                </div>
+
+                <div class="setup-panels">
+                    <!-- Panel 1: Folder Selection -->
+                    <div class="setup-panel">
+                        <h3>📂 Select Image Folder</h3>
+                        <div class="folder-selection">
+                            <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;">
+                            <button type="button" id="select-folder-btn" class="btn btn-primary btn-large">
+                                <span>📁</span> Select Folder
+                            </button>
+                            <div id="folder-info" class="folder-info" style="display: none;">
+                                <p><strong>Folder:</strong> <span id="folder-name"></span></p>
+                                <p><strong>Images found:</strong> <span id="images-count">0</span></p>
+                                <div id="images-preview" class="images-preview"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Panel 2: Model Selection -->
+                    <div class="setup-panel">
+                        <h3>🤖 Select SAM2 Model</h3>
+                        <div class="model-selection-compact">
+                            <div class="model-option">
+                                <input type="radio" id="model-tiny" name="model" value="tiny">
+                                <label for="model-tiny">
+                                    <strong>⚡ Tiny</strong>
+                                    <span class="model-desc">~40MB - Very Fast - Good accuracy</span>
+                                </label>
+                            </div>
+                            <div class="model-option">
+                                <input type="radio" id="model-small" name="model" value="small" checked>
+                                <label for="model-small">
+                                    <strong>⭐ Small (Recommended)</strong>
+                                    <span class="model-desc">~180MB - Fast - Very Good accuracy</span>
+                                </label>
+                            </div>
+                            <div class="model-option">
+                                <input type="radio" id="model-base" name="model" value="base">
+                                <label for="model-base">
+                                    <strong>🎯 Base+</strong>
+                                    <span class="model-desc">~230MB - Medium - Excellent accuracy</span>
+                                </label>
+                            </div>
+                            <div class="model-option">
+                                <input type="radio" id="model-large" name="model" value="large">
+                                <label for="model-large">
+                                    <strong>🚀 Large</strong>
+                                    <span class="model-desc">~900MB - Slow - Best accuracy</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Panel 3: Training Data -->
+                    <div class="setup-panel">
+                        <h3>🎓 Training Data (Future)</h3>
+                        <div class="training-option">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="save-training-data">
+                                <span>💾 Save data for model training</span>
+                            </label>
+                            <p class="option-description">
+                                Save segmentation masks and annotations to train a custom model in the future.
+                                <br><small style="color: #f59e0b;">⚠️ Feature coming soon - checkbox enabled for preview</small>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Start Button -->
+                <div class="setup-actions">
+                    <button id="start-processing-btn" class="btn btn-success btn-xl" disabled>
+                        <span>🚀</span> Start Processing
+                    </button>
+                </div>
+
+                <div class="model-status" id="model-loading-status" style="display: none;">
+                    <div class="spinner"></div>
+                    <p id="model-status-message">Loading model...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Segmentation -->
+        <div class="tab-content" id="segmentation-tab">
+            <div class="main-content">
+            <!-- Left Sidebar - Tools & Controls -->
+            <aside class="sidebar left-sidebar">
+                <div class="panel">
+                    <h2>📁 Current Image</h2>
+                    <div id="image-info" class="image-info">
+                        <p><strong>File:</strong> <span id="filename">No image loaded</span></p>
+                        <p><strong>Image:</strong> <span id="current-image-number">-</span> / <span id="total-images">-</span></p>
+                    </div>
+                    <div class="image-navigation">
+                        <button id="prev-image-btn" class="btn btn-secondary" disabled>
+                            <span>⬅️</span> Previous
+                        </button>
+                        <button id="next-image-btn" class="btn btn-secondary" disabled>
+                            <span>➡️</span> Next
+                        </button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>🎯 Segmentation Mode</h2>
+                    <div class="mode-selector">
+                        <button class="mode-btn active" data-mode="point" id="point-mode-btn">
+                            <span class="mode-icon">👆</span>
+                            <span>Point Mode</span>
+                            <span class="mode-desc">Click to segment</span>
+                        </button>
+                        <button class="mode-btn" data-mode="box" id="box-mode-btn">
+                            <span class="mode-icon">▭</span>
+                            <span>Box Mode</span>
+                            <span class="mode-desc">Draw bounding box</span>
+                        </button>
+                        <button class="mode-btn" data-mode="rotation" id="rotation-mode-btn">
+                            <span class="mode-icon">⊕</span>
+                            <span>Rotation Center</span>
+                            <span class="mode-desc">Set mirror axis</span>
+                        </button>
+                    </div>
+
+                    <div class="point-controls" id="point-controls">
+                        <label>
+                            <input type="radio" name="point-label" value="1" checked>
+                            <span class="positive">➕ Positive</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="point-label" value="0">
+                            <span class="negative">➖ Negative</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>🏷️ Category</h2>
+                    <select id="category-select" class="category-select">
+                        <option value="Profile">🏺 Profile</option>
+                        <option value="Application">🎯 Application</option>
+                        <option value="Handle">🪢 Handle</option>
+                        <option value="Prospectus">👁️ Prospectus</option>
+                        <option value="Decoration">🎨 Decoration</option>
+                        <option value="Section">✂️ Section</option>
+                        <option value="Detail">📌 Detail</option>
+                    </select>
+
+                    <div class="form-group">
+                        <label for="element-name">Element Name:</label>
+                        <input type="text" id="element-name" placeholder="e.g., Main Profile" class="form-input">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="vectorize-checkbox" checked>
+                            Enable vectorization (SVG)
+                        </label>
+                        <small style="color: #666; display: block; margin-top: 4px;">
+                            Uncheck to export as PNG with transparent background
+                        </small>
+                    </div>
+
+                    <button id="add-segment-btn" class="btn btn-primary" disabled>
+                        <span>✓</span> Add Segment
+                    </button>
+
+                    <button id="clear-preview-btn" class="btn btn-secondary" disabled>
+                        <span>✗</span> Clear Preview
+                    </button>
+                </div>
+
+                <div class="panel">
+                    <h2>⚙️ Settings</h2>
+                    <div class="form-group">
+                        <label>Simplification: <span id="epsilon-value">1.5</span></label>
+                        <input type="range" id="epsilon-slider" min="0.5" max="5" step="0.1" value="1.5" class="slider">
+                    </div>
+                    <div class="form-group">
+                        <label>Smoothing: <span id="smoothing-value">0.3</span></label>
+                        <input type="range" id="smoothing-slider" min="0" max="1" step="0.1" value="0.3" class="slider">
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="bg-checkbox">
+                            Include background in SVG
+                        </label>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Center - Canvas Area -->
+            <main class="canvas-area">
+                <div class="canvas-container" id="canvas-container">
+                    <canvas id="main-canvas"></canvas>
+                    <div id="canvas-message" class="canvas-message">
+                        <span class="message-icon">📷</span>
+                        <p>Upload an image to start</p>
+                    </div>
+                </div>
+
+                <div class="canvas-toolbar">
+                    <button id="zoom-in-btn" class="toolbar-btn" title="Zoom In">
+                        <span>🔍+</span>
+                    </button>
+                    <button id="zoom-out-btn" class="toolbar-btn" title="Zoom Out">
+                        <span>🔍-</span>
+                    </button>
+                    <button id="reset-view-btn" class="toolbar-btn" title="Reset View">
+                        <span>⟲</span>
+                    </button>
+                    <div class="toolbar-divider"></div>
+                    <button id="undo-btn" class="toolbar-btn" title="Undo" disabled>
+                        <span>↶</span>
+                    </button>
+                </div>
+            </main>
+
+            <!-- Right Sidebar - Segments List -->
+            <aside class="sidebar right-sidebar">
+                <div class="panel">
+                    <h2>📋 Segments</h2>
+                    <div id="rotation-center-info" class="rotation-info" style="display: none;">
+                        <p>⊕ Rotation Center: <span id="rotation-coords"></span></p>
+                        <button id="clear-rotation-btn" class="btn btn-secondary btn-small" style="margin-top: 5px;">
+                            <span>✗</span> Clear Rotation Center
+                        </button>
+                    </div>
+                    <div id="segments-list" class="segments-list">
+                        <p class="empty-message">No segments yet</p>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>📤 Export</h2>
+                    <button id="export-btn" class="btn btn-success btn-large" disabled>
+                        <span>📦</span> Export Segments
+                    </button>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 8px;">
+                        Creates SVG for vectorized segments and PNG with transparent background for raster segments
+                    </p>
+                    
+                    <button id="debug-export-btn" class="btn btn-secondary" disabled style="margin-top: 10px;">
+                        <span>🔧</span> DEBUG: Export Masks as PNG
+                    </button>
+                    
+                    <div id="export-status" class="export-status" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill"></div>
+                        </div>
+                        <p id="status-text">Processing...</p>
+                    </div>
+                </div>
+
+                <div class="panel stats-panel">
+                    <h3>📊 Statistics</h3>
+                    <div class="stat-row">
+                        <span>Total Segments:</span>
+                        <span id="stat-segments">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Profiles:</span>
+                        <span id="stat-profiles">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span>Decorations:</span>
+                        <span id="stat-decorations">0</span>
+                    </div>
+                </div>
+            </aside>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>📖 How to Use PyPotteryTrace Interactive</h2>
+            
+            <div class="help-section">
+                <h3>1. Upload Image</h3>
+                <p>Click the upload area to select a pottery drawing image.</p>
+            </div>
+
+            <div class="help-section">
+                <h3>2. Segment Elements</h3>
+                <p><strong>Point Mode:</strong> Click on the object to segment. Use positive (➕) clicks for the object and negative (➖) to exclude areas.</p>
+                <p><strong>Box Mode:</strong> Draw a bounding box around the object.</p>
+            </div>
+
+            <div class="help-section">
+                <h3>3. Assign Category & Vectorization</h3>
+                <p>Select the category and check/uncheck "Enable vectorization" to choose between SVG (vector) or PNG (raster with transparent background) output.</p>
+                <p>Some categories have vectorization disabled by default (Decoration, Prospectus, Handle/Application).</p>
+            </div>
+
+            <div class="help-section">
+                <h3>4. Set Rotation Center (Optional)</h3>
+                <p>For profiles, switch to Rotation Center mode and click to set the symmetry axis. Profiles will be automatically mirrored.</p>
+            </div>
+
+            <div class="help-section">
+                <h3>5. Export</h3>
+                <p>Click "Export Segments" to generate a ZIP file containing SVG files for vectorized segments and PNG files with transparent backgrounds for raster segments.</p>
+            </div>
+
+            <div class="help-section">
+                <h3>⌨️ Keyboard Shortcuts</h3>
+                <ul>
+                    <li><kbd>P</kbd> - Point Mode</li>
+                    <li><kbd>B</kbd> - Box Mode</li>
+                    <li><kbd>R</kbd> - Rotation Center Mode</li>
+                    <li><kbd>Ctrl+Z</kbd> - Undo</li>
+                    <li><kbd>+</kbd> - Zoom In</li>
+                    <li><kbd>-</kbd> - Zoom Out</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="{{ url_for('static', filename='js/tabs.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/canvas.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/segmentation.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
