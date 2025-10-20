@@ -101,7 +101,7 @@ def extract_outer_contour(binary_image: np.ndarray, profile_path: np.ndarray) ->
     return contour_yx
 
 
-def extract_left_side_of_profile(profile_path: np.ndarray) -> np.ndarray:
+def extract_left_side_of_profile(profile_path: np.ndarray, vertical_confidence: int = 30) -> np.ndarray:
     """
     Estrae il lato sinistro (esterno) di un profilo archeologico.
     
@@ -110,9 +110,12 @@ def extract_left_side_of_profile(profile_path: np.ndarray) -> np.ndarray:
     2. Traccia due rette ORIZZONTALI tangenti a questi punti
     3. Trova i punti di intersezione più a SINISTRA su queste rette
     4. Tiene solo la porzione di curva che sta a SINISTRA (il fronte esterno del vaso)
+    5. NUOVO: Se il fondo è piatto, include tutti i punti entro vertical_confidence dalla base
     
     Args:
         profile_path: Percorso completo del profilo (array di punti y, x)
+        vertical_confidence: Tolleranza verticale per fondi piatti (pixel). 
+                           Punti entro questa distanza dal fondo vengono inclusi.
         
     Returns:
         Solo il lato sinistro del profilo (fronte esterno)
@@ -127,24 +130,28 @@ def extract_left_side_of_profile(profile_path: np.ndarray) -> np.ndarray:
     
     print(f"Retta orizzontale superiore: y={y_top:.1f}")
     print(f"Retta orizzontale inferiore: y={y_bottom:.1f}")
+    print(f"Tolleranza verticale per fondi piatti: {vertical_confidence}px")
     
     # 2. Trova tutti i punti sulla retta superiore (y = y_top)
-    #    e sulla retta inferiore (y = y_bottom)
-    tolerance = 2  # Tolleranza in pixel per considerare un punto "sulla retta"
+    #    e sulla retta inferiore (y = y_bottom) con tolleranza estesa per fondi piatti
+    tolerance_top = 2  # Tolleranza standard per il punto superiore
+    tolerance_bottom = vertical_confidence  # Tolleranza estesa per il fondo (default 15px)
     
-    top_line_points = profile_path[np.abs(profile_path[:, 0] - y_top) <= tolerance]
-    bottom_line_points = profile_path[np.abs(profile_path[:, 0] - y_bottom) <= tolerance]
+    top_line_points = profile_path[np.abs(profile_path[:, 0] - y_top) <= tolerance_top]
+    bottom_line_points = profile_path[np.abs(profile_path[:, 0] - y_bottom) <= tolerance_bottom]
     
     if len(top_line_points) == 0 or len(bottom_line_points) == 0:
         print("ATTENZIONE: Nessun punto trovato sulle rette orizzontali!")
         return profile_path
     
-    # 3. Trova il punto più a SINISTRA (x minimo) su ciascuna retta
+    # 3. Trova il punto più a SINISTRA (x minimo) sulla retta SUPERIORE
+    #    e il punto più a DESTRA (x massimo) sulla retta INFERIORE (per fondi piatti)
     top_left_point = top_line_points[np.argmin(top_line_points[:, 1])]
-    bottom_left_point = bottom_line_points[np.argmin(bottom_line_points[:, 1])]
+    bottom_right_point = bottom_line_points[np.argmax(bottom_line_points[:, 1])]  # CAMBIATO: argmax invece di argmin!
     
     print(f"Intersezione superiore (più a sinistra): y={top_left_point[0]:.1f}, x={top_left_point[1]:.1f}")
-    print(f"Intersezione inferiore (più a sinistra): y={bottom_left_point[0]:.1f}, x={bottom_left_point[1]:.1f}")
+    print(f"Intersezione inferiore (più a DESTRA - interno): y={bottom_right_point[0]:.1f}, x={bottom_right_point[1]:.1f}")
+    print(f"Punti nell'area del fondo (entro {tolerance_bottom}px da y={y_bottom:.1f}): {len(bottom_line_points)}")
     
     # 4. Trova gli indici di questi punti nel percorso originale
     top_idx = -1
@@ -153,7 +160,7 @@ def extract_left_side_of_profile(profile_path: np.ndarray) -> np.ndarray:
     for i, point in enumerate(profile_path):
         if np.array_equal(point, top_left_point):
             top_idx = i
-        if np.array_equal(point, bottom_left_point):
+        if np.array_equal(point, bottom_right_point):
             bottom_idx = i
     
     # Se non troviamo match esatti, cerca i punti più vicini
@@ -163,7 +170,7 @@ def extract_left_side_of_profile(profile_path: np.ndarray) -> np.ndarray:
         print(f"  Punto superiore approssimato all'indice {top_idx}")
     
     if bottom_idx == -1:
-        distances = np.linalg.norm(profile_path - bottom_left_point, axis=1)
+        distances = np.linalg.norm(profile_path - bottom_right_point, axis=1)
         bottom_idx = np.argmin(distances)
         print(f"  Punto inferiore approssimato all'indice {bottom_idx}")
     
@@ -173,13 +180,220 @@ def extract_left_side_of_profile(profile_path: np.ndarray) -> np.ndarray:
         top_idx, bottom_idx = bottom_idx, top_idx
         print("  Invertiti gli indici per mantenere l'ordine dall'alto verso il basso")
     
-    # Estrai la sottosezione del percorso
+    # Estrai la sottosezione del percorso (SENZA chiudere - è solo un lato!)
     left_side_profile = profile_path[top_idx:bottom_idx+1]
     
     print(f"Lato sinistro estratto: {len(left_side_profile)} punti su {len(profile_path)} totali")
     print(f"  (dall'indice {top_idx} all'indice {bottom_idx})")
+    print(f"  NOTA: Contorno esterno NON chiuso (è solo un lato del profilo)")
+    
+    # 6. NUOVO: Rimuovi fratture (segmenti corti che rientrano verso il centro)
+    # Ma mantieni il fondo piatto anche se rientra
+    #left_side_profile = remove_fractures_from_profile(left_side_profile, y_bottom, tolerance_bottom)
     
     return left_side_profile
+
+
+
+def remove_fractures_from_profile(profile_path: np.ndarray, y_bottom: float, bottom_tolerance: int) -> np.ndarray:
+    """
+    Rimuove fratture concentrandosi su deviazioni nette, prolungate e orizzontali,
+    differenziandole da curve naturali del profilo.
+
+    Logica affinata:
+    1. Richiede un cluster di punti molto densi.
+    2. Identifica un cambio di direzione MOLTO BRUSCO.
+    3. **AFFINATO**: Controlla che la nuova direzione sia decisamente "anomala"
+       (cioè molto orizzontale) e non un semplice cambiamento verticale.
+    4. **NUOVO**: Richiede che il segmento anomalo si estenda per una lunghezza minima,
+       per filtrare il rumore e conservare le curve naturali.
+
+    Args:
+        profile_path: Percorso del profilo, un array di coordinate (y, x).
+        y_bottom: Coordinata y della base del profilo.
+        bottom_tolerance: Tolleranza in pixel per identificare la base.
+
+    Returns:
+        Un nuovo array NumPy con i punti della frattura rimossi.
+    """
+    # Parametri sintonizzati per essere estremamente selettivi
+    MIN_PATH_LEN = 20
+    LOOKBACK_ANGLE = 15  # Quanti punti guardare indietro per il vettore "prima" (aumentato)
+    LOOKAHEAD_ANGLE = 15 # Quanti punti guardare avanti per il vettore "dopo" (aumentato)
+    CLUSTER_SIZE = 3
+    MAX_CLUSTER_DIST = 5.0 # <-- Distanza più stretta per il cluster (più selettivo)
+    MIN_ANGLE_CHANGE_DEG = 60.0 # <-- Angolo minimo per un cambio "brusco" (più alto)
+    RECOVERY_ANGLE_DEG = 45.0   # Tolleranza per il "ritorno"
+
+    # NUOVO: Direzione considerata "anomala" (es. molto orizzontale)
+    # Angoli vicino a 0° (dx) o 180° (sx) rispetto all'asse orizzontale
+    # Se il profilo va verso il basso (y aumenta), un angolo di 90° è verticale.
+    # Vogliamo eliminare quando l'angolo è tipo 0-30° o 150-180°
+    MAX_ANOMALOUS_DEVIATION_FROM_VERTICAL_DEG = 30.0 # Max deviazione da 90° per essere "verticale"
+    # Un angolo di 90° è perfettamente verticale verso il basso.
+    # Quindi angoli "normali" saranno tra (90-30)=60 e (90+30)=120.
+    # Gli angoli al di fuori di questo intervallo saranno considerati anomali.
+
+    MIN_FRACTURE_SEGMENT_LENGTH = 10 # <-- NUOVO: Lunghezza minima del segmento anomalo
+
+    if len(profile_path) < MIN_PATH_LEN:
+        return profile_path
+
+    print("\n-> Inizio rimozione fratture (v4 - Estremamente Conservativa e Specifica)...")
+
+    keep_mask = np.ones(len(profile_path), dtype=bool)
+    removed_fractures_count = 0
+    
+    i = LOOKBACK_ANGLE 
+    while i < len(profile_path) - LOOKAHEAD_ANGLE:
+        
+        # --- 1. Identificazione del Cluster (più stretto) ---
+        is_cluster = True
+        for k in range(CLUSTER_SIZE - 1):
+            if i + k + 1 >= len(profile_path):
+                is_cluster = False; break
+            dist = np.linalg.norm(profile_path[i + k + 1] - profile_path[i + k])
+            if dist >= MAX_CLUSTER_DIST: # Usiamo la distanza più stretta
+                is_cluster = False; break
+        
+        if not is_cluster:
+            i += 1
+            continue
+
+        # --- 2. Analisi Angolare (con finestre più ampie per stabilità) ---
+        # Il vettore "before" deve essere molto stabile, quindi guardiamo più indietro
+        if i < LOOKBACK_ANGLE: # Assicurati di non andare fuori bound all'inizio
+            i += 1
+            continue
+        before_vec = profile_path[i] - profile_path[i - LOOKBACK_ANGLE]
+        before_angle_rad = np.arctan2(before_vec[0], before_vec[1]) # Angle of the path segment *before* the cluster
+
+        # Il vettore "after" deve essere stabile, quindi guardiamo più avanti
+        if i + CLUSTER_SIZE + LOOKAHEAD_ANGLE >= len(profile_path): # Assicurati di non andare fuori bound alla fine
+            i += 1
+            continue
+        after_vec = profile_path[i + CLUSTER_SIZE + LOOKAHEAD_ANGLE] - profile_path[i + CLUSTER_SIZE]
+        after_angle_rad = np.arctan2(after_vec[0], after_vec[1]) # Angle of the path segment *after* the cluster
+
+        # Calcolo del cambio di angolo
+        angle_diff_deg = np.degrees(abs(after_angle_rad - before_angle_rad))
+        if angle_diff_deg > 180: angle_diff_deg = 360 - angle_diff_deg
+        
+        # --- 3. Condizioni di Frattura (Logica Estremamente Selettiva) ---
+        is_sharp_change = angle_diff_deg > MIN_ANGLE_CHANGE_DEG
+        is_near_bottom = abs(profile_path[i][0] - y_bottom) <= bottom_tolerance
+        
+        # **CONTROLLO AGGIUNTIVO**: la direzione dopo il cambio è decisamente "orizzontale" (anomala)?
+        # Un profilo normale scende, quindi ha un angolo vicino a 90 gradi.
+        # Una frattura che va a destra avrà un angolo vicino a 0 gradi, una a sinistra vicino a 180.
+        after_angle_deg = np.degrees(after_angle_rad)
+        
+        # Normalizziamo l'angolo su 0-180 per misurare la deviazione dalla verticale (90°).
+        # Ad esempio, un angolo di 10° o 170° sono entrambi a 80° dalla verticale.
+        normalized_after_angle_deg = min(after_angle_deg, 180 - after_angle_deg) # Distanza da 0 o 180
+        
+        # La deviazione dalla verticale ideale (90°)
+        deviation_from_vertical_deg = abs(normalized_after_angle_deg - 90) # Quanto è lontano da essere orizzontale (0/180) o verticale (90)
+        
+        # Consideriamo "anomalo" se si discosta molto dalla verticale, cioè è molto orizzontale.
+        is_anomalous_horizontal_direction = deviation_from_vertical_deg > (90 - MAX_ANOMALOUS_DEVIATION_FROM_VERTICAL_DEG)
+        
+        # --- 4. Frattura Rilevata? ---
+        if is_sharp_change and is_anomalous_horizontal_direction and not is_near_bottom:
+            
+            # **NUOVO: Verifica la lunghezza minima del segmento anomalo**
+            potential_fracture_end_idx = -1
+            current_segment_len = 0
+            
+            # Partiamo da dove dovrebbe iniziare la parte anomala
+            start_check_for_length = i + CLUSTER_SIZE 
+
+            for k in range(start_check_for_length, min(len(profile_path) - LOOKBACK_ANGLE, start_check_for_length + 200)): # Max search 200 pts
+                if k < LOOKBACK_ANGLE: # Assicurarsi che ci sia abbastanza storia per calcolare l'angolo
+                    current_segment_len = 0 # reset
+                    continue
+
+                temp_before_vec = profile_path[k] - profile_path[k - LOOKBACK_ANGLE]
+                temp_before_angle_rad = np.arctan2(temp_before_vec[0], temp_before_vec[1])
+
+                temp_after_vec = profile_path[min(k + LOOKAHEAD_ANGLE, len(profile_path) -1)] - profile_path[k] # Vettore in avanti
+                temp_after_angle_rad = np.arctan2(temp_after_vec[0], temp_after_vec[1])
+                
+                temp_after_angle_deg = np.degrees(temp_after_angle_rad)
+                temp_normalized_after_angle_deg = min(temp_after_angle_deg, 180 - temp_after_angle_deg)
+                temp_deviation_from_vertical_deg = abs(temp_normalized_after_angle_deg - 90)
+
+                temp_is_anomalous_horizontal = temp_deviation_from_vertical_deg > (90 - MAX_ANOMALOUS_DEVIATION_FROM_VERTICAL_DEG)
+                
+                if temp_is_anomalous_horizontal:
+                    current_segment_len += 1
+                    potential_fracture_end_idx = k # Mantieni l'ultimo punto anomalo trovato
+                else:
+                    break # Il segmento anomalo si è interrotto
+
+            if current_segment_len < MIN_FRACTURE_SEGMENT_LENGTH:
+                # Non è una frattura sufficientemente lunga, si tratta di rumore o piccola asperità.
+                print(f"    -> Potenziale frattura all'indice {i} ignorata: segmento anomalo troppo corto ({current_segment_len} punti).")
+                i += 1 # Passa al prossimo punto
+                continue
+            
+            print(f"    -> Frattura RILEVATA all'indice {i}: cambio={angle_diff_deg:.1f}°, dopo={np.degrees(after_angle_rad):.1f}° (anomalo, lungo {current_segment_len}p.)")
+
+            # --- 5. Ricerca Fine Frattura e Rimozione (logica robusta v2) ---
+            start_idx = max(0, i - 5) # Rimuovi un po' prima del cluster per essere sicuri
+            end_idx = -1
+            
+            search_start = potential_fracture_end_idx # Iniziamo a cercare la fine da dove finiva il segmento anomalo
+            if search_start == -1: # Fallback se non abbiamo trovato alcun punto anomalo prolungato
+                search_start = i + CLUSTER_SIZE
+                
+            for j in range(search_start, min(len(profile_path) - LOOKBACK_ANGLE, search_start + 200)): # Max search 200 pts
+                if j < LOOKBACK_ANGLE: continue # Evita out of bounds
+                current_vec = profile_path[j] - profile_path[j - LOOKBACK_ANGLE]
+                current_angle_rad = np.arctan2(current_vec[0], current_vec[1])
+                
+                recovery_diff_deg = np.degrees(abs(current_angle_rad - before_angle_rad))
+                if recovery_diff_deg > 180: recovery_diff_deg = 360 - recovery_diff_deg
+
+                if recovery_diff_deg < RECOVERY_ANGLE_DEG:
+                    end_idx = j
+                    print(f"       Fine frattura trovata all'indice {end_idx} (rientro in direzione normale)")
+                    break
+            
+            if end_idx == -1:
+                end_idx = min(len(profile_path), start_idx + 200) # Se non trovata, taglia al limite
+                print(f"       Fine frattura non trovata, taglio al limite (indice {end_idx})")
+
+            keep_mask[start_idx:end_idx] = False
+            removed_fractures_count += 1
+            i = end_idx # Salta alla fine della sezione rimossa
+            continue
+
+        i += 1
+
+    cleaned_profile = profile_path[keep_mask]
+    removed_points = len(profile_path) - len(cleaned_profile)
+    
+    if removed_fractures_count > 0:
+        print(f"-> Rimozione completata. Trovate e rimosse {removed_fractures_count} fratture ({removed_points} punti).")
+    else:
+        print("-> Nessuna frattura trovata.")
+        
+    return cleaned_profile
+
+
+def calculate_segment_length(segment: np.ndarray) -> float:
+    """Calcola la lunghezza di un segmento di percorso."""
+    if len(segment) < 2:
+        return 0
+    
+    total_length = 0
+    for i in range(1, len(segment)):
+        dy = segment[i][0] - segment[i-1][0]
+        dx = segment[i][1] - segment[i-1][1]
+        total_length += np.sqrt(dx*dx + dy*dy)
+    
+    return total_length
 
 
 def find_dotted_points(binary_image: np.ndarray, 
@@ -629,7 +843,8 @@ def vectorize_archaeological_drawing(image_path: str,
                                    show_debug_plots: bool = True,
                                    save_debug_images: bool = True,
                                    include_background_image: bool = False,
-                                   extract_profile_mode: bool = False) -> Dict[str, Any]:
+                                   extract_profile_mode: bool = False,
+                                   profile_vertical_confidence: int = 15) -> Dict[str, Any]:
     """
     Main function to vectorize archaeological drawings with element classification.
     Based on the proven vectorize.py workflow.
@@ -652,6 +867,7 @@ def vectorize_archaeological_drawing(image_path: str,
         save_debug_images: Whether to save debug PNG files
         include_background_image: Whether to include original image as background in SVG
         extract_profile_mode: If True, extracts only a closed profile curve with external contour only (default False)
+        profile_vertical_confidence: Tolleranza verticale in pixel per fondi piatti nei profili (default 15px)
         
     Returns:
         Dictionary with processing statistics and results
@@ -702,11 +918,10 @@ def vectorize_archaeological_drawing(image_path: str,
     dotted_points = find_dotted_points(binary_points_bool, min_dotted_area, max_dotted_area, dotted_circularity)
     print(f"Found {len(dotted_points)} dotted points")
     
-    # Identify painted decorations from original image
-    painted_decorations = find_painted_decorations_from_original(img_gray, dark_threshold, min_decoration_area)
-    print(f"Found {len(painted_decorations)} painted decorations")
+    # NOTE: Decorations are NOT processed in this version
+    # The function now only handles LINES and POINTS
     
-    # Create mask without dotted points and decorations for line skeletonization
+    # Create mask without dotted points for line skeletonization
     # Use HIGH threshold binary (only marked lines)
     lines_mask = binary_lines_bool.copy()
     
@@ -717,17 +932,6 @@ def vectorize_archaeological_drawing(image_path: str,
         x_min = max(0, center_x - radius - 2)
         x_max = min(binary_lines_bool.shape[1], center_x + radius + 3)
         lines_mask[y_min:y_max, x_min:x_max] = False
-    
-    # Remove painted decorations from lines mask
-    for contour_points in painted_decorations:
-        if len(contour_points) > 2:
-            # Create mask for this decoration
-            decoration_mask = np.zeros_like(lines_mask, dtype=np.uint8)
-            # Convert points to OpenCV format for fillPoly
-            cv_points = np.array([[int(p[1]), int(p[0])] for p in contour_points], dtype=np.int32)
-            cv2.fillPoly(decoration_mask, [cv_points], 1)
-            # Remove decoration area from lines mask
-            lines_mask = lines_mask & (~decoration_mask.astype(bool))
     
     remaining_pixels = np.sum(lines_mask)
     print(f"Pixels remaining for lines: {remaining_pixels}")
@@ -843,7 +1047,7 @@ def vectorize_archaeological_drawing(image_path: str,
             print(f"Curva chiusa: {len(closed_profile)} punti")
             
             # 2. Estrai il contorno esterno (lato sinistro) - SOLO per il ribaltamento
-            outer_contour = extract_left_side_of_profile(closed_profile)
+            outer_contour = extract_left_side_of_profile(closed_profile, profile_vertical_confidence)
             print(f"Contorno esterno: {len(outer_contour)} punti")
             
             # Salva la CURVA CHIUSA COMPLETA come elemento principale
@@ -879,7 +1083,7 @@ def vectorize_archaeological_drawing(image_path: str,
     # Ma solo se NON siamo in modalità profilo
     if not extract_profile_mode:
         classified_elements['dotted_points_separate'] = dotted_points
-        classified_elements['painted_decorations_separate'] = painted_decorations
+        # NOTE: No decorations in this version
     
     # Create skeleton debug with final results
     if save_debug_images:
@@ -901,8 +1105,6 @@ def vectorize_archaeological_drawing(image_path: str,
         'total_lines': len(classified_elements['lines']),
         'graph_dotted_points': len(classified_elements['dotted_points']),
         'separated_dotted_points': len(classified_elements.get('dotted_points_separate', [])),
-        'graph_decorations': len(classified_elements['painted_decorations']),
-        'separated_decorations': len(classified_elements.get('painted_decorations_separate', [])),
         'total_paths_extracted': len(main_paths),
         'remaining_line_pixels': remaining_pixels,
         'skeleton_pixels': skeleton_pixels
@@ -916,8 +1118,6 @@ def vectorize_archaeological_drawing(image_path: str,
     print(f"Lines: {stats['total_lines']}")
     print(f"Graph dotted points: {stats['graph_dotted_points']}")
     print(f"Separated dotted points: {stats['separated_dotted_points']}")
-    print(f"Graph decorations: {stats['graph_decorations']}")
-    print(f"Separated decorations: {stats['separated_decorations']}")
     print(f"Total paths extracted: {stats['total_paths_extracted']}")
     print("Conversion completed!")
     
@@ -1015,16 +1215,7 @@ def create_skeleton_debug_image(original: np.ndarray, classified_elements: Dict[
         if (0 <= center_y < debug_img.shape[0] and 0 <= center_x < debug_img.shape[1]):
             cv2.circle(debug_img, (center_x, center_y), max(3, radius//2), (0, 0, 255), -1)  # Red filled
     
-    # Draw separated decorations in GREEN (filled contours)
-    for contour_points in classified_elements.get('painted_decorations_separate', []):
-        if len(contour_points) > 2:
-            # Convert to OpenCV format and fill
-            cv_contour = np.array([[int(point[1]), int(point[0])] for point in contour_points], dtype=np.int32)
-            cv_contour = cv_contour.reshape(-1, 1, 2)
-            cv2.fillPoly(debug_img, [cv_contour], (0, 255, 0))  # Green fill
-            
-            # Also draw contour outline in darker green
-            cv2.polylines(debug_img, [cv_contour], True, (0, 150, 0), 2)
+    # NOTE: No decorations in this version
     
     cv2.imwrite('skeleton_debug.png', debug_img)
     print("Saved skeleton_debug.png showing final classified results")
@@ -1073,6 +1264,17 @@ def save_classified_svg(classified_elements: Dict[str, List],
         # path_pixels is now directly a numpy array from path tracer
         simplified_path = rdp(path_pixels, epsilon=epsilon)
         if len(simplified_path) > 1:
+            # Verifica se il percorso è chiuso (primo e ultimo punto MOLTO vicini)
+            # Soglia conservativa: solo se < 2px (praticamente coincidenti)
+            is_closed = False
+            if len(simplified_path) >= 3:
+                start_point = simplified_path[0]
+                end_point = simplified_path[-1]
+                distance = np.linalg.norm(start_point - end_point)
+                # MOLTO conservativo: chiudi solo se DAVVERO vicini (< 2px)
+                # Questo evita di chiudere curve che sono solo "parziali" (come il contorno esterno)
+                is_closed = distance < 2.0  
+            
             if smoothing_factor > 0:
                 # Use Bézier curves for smooth lines
                 path_data = smooth_path_to_bezier(simplified_path, smoothing_factor)
@@ -1081,6 +1283,10 @@ def save_classified_svg(classified_elements: Dict[str, List],
                 path_data = f"M {simplified_path[0, 1]:.2f},{simplified_path[0, 0]:.2f}"
                 for i in range(1, len(simplified_path)):
                     path_data += f" L {simplified_path[i, 1]:.2f},{simplified_path[i, 0]:.2f}"
+            
+            # Aggiungi "Z" per chiudere il percorso SOLO se è veramente chiuso
+            if is_closed and path_data:
+                path_data += " Z"
             
             if path_data:  # Only if we have valid data
                 lines_group.add(dwg.path(d=path_data))
@@ -1101,31 +1307,9 @@ def save_classified_svg(classified_elements: Dict[str, List],
     
     dwg.add(dots_group)
     
-    # Save painted decorations as black filled areas (separate group)
-    # Only use separated decorations (extracted directly from original image)
-    decorations_group = dwg.g(id='painted_decorations', stroke='black', stroke_width=1, fill='black')
+    # NOTE: Decorations are NOT saved in this version
+    # Only LINES and POINTS are exported
     
-    # Separated decorations (extracted from original image - these are the good ones!)
-    for contour_points in classified_elements.get('painted_decorations_separate', []):
-        if len(contour_points) > 2:
-            # Apply very reduced RDP simplification to preserve decoration details
-            simplified_contour = rdp(contour_points, epsilon=epsilon * 0.5)  # Reduced epsilon to maintain details
-            
-            if len(simplified_contour) > 2:
-                if smoothing_factor > 0:
-                    # Use very light Bézier curves to maintain original shape
-                    path_data = smooth_path_to_bezier(simplified_contour, smoothing_factor * 0.2)  # Very reduced smoothing
-                else:
-                    # Use simple lines if smoothing = 0
-                    path_data = f"M {simplified_contour[0, 1]:.2f},{simplified_contour[0, 0]:.2f}"
-                    for i in range(1, len(simplified_contour)):
-                        path_data += f" L {simplified_contour[i, 1]:.2f},{simplified_contour[i, 0]:.2f}"
-                    path_data += " Z"  # Close the path
-                
-                if path_data:  # Only if we have valid data
-                    decorations_group.add(dwg.path(d=path_data))
-    
-    dwg.add(decorations_group)
     dwg.save()
 
 

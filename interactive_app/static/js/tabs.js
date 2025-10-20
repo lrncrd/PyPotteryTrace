@@ -74,6 +74,18 @@ class TabManager {
         folderInput.addEventListener('change', (e) => {
             this.handleFolderSelection(e.target.files);
         });
+        
+        // Output folder selection
+        const selectOutputButton = document.getElementById('select-output-folder-btn');
+        const outputFolderInput = document.getElementById('output-folder-input');
+        
+        selectOutputButton.addEventListener('click', () => {
+            outputFolderInput.click();
+        });
+        
+        outputFolderInput.addEventListener('change', (e) => {
+            this.handleOutputFolderSelection(e.target.files);
+        });
     }
     
     handleFolderSelection(files) {
@@ -95,6 +107,12 @@ class TabManager {
         // Extract folder path from first file
         this.folderPath = this.imageFiles[0].webkitRelativePath.split('/')[0];
         
+        // Set default output folder (input_folder + "_vectorized")
+        if (!this.outputFolderPath) {
+            this.outputFolderPath = this.folderPath + '_vectorized';
+            document.getElementById('output-folder-name').textContent = this.outputFolderPath;
+        }
+        
         // Update UI
         document.getElementById('folder-info').style.display = 'block';
         document.getElementById('folder-name').textContent = this.folderPath;
@@ -105,6 +123,17 @@ class TabManager {
         
         // Enable start button
         this.checkStartButton();
+    }
+    
+    handleOutputFolderSelection(files) {
+        if (files.length === 0) return;
+        
+        // Extract folder path from first file
+        const folderPath = files[0].webkitRelativePath.split('/')[0];
+        this.outputFolderPath = folderPath;
+        
+        // Update UI
+        document.getElementById('output-folder-name').textContent = folderPath;
     }
     
     showImagePreviews() {

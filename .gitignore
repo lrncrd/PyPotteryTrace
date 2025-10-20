@@ -212,3 +212,7 @@ data_vectorized
 
 interactive_app/uploads/*
 interactive_app/models/*
+
+test/*
+test/*
+.vscode/*

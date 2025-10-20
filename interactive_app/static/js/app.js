@@ -61,6 +61,14 @@ class PyPotteryTraceApp {
             this.clearPreview();
         });
         
+        // Clear rotation center button
+        document.getElementById('clear-rotation-btn').addEventListener('click', () => {
+            if (window.canvasManager) {
+                window.canvasManager.clearRotationCenter();
+                document.getElementById('rotation-center-info').style.display = 'none';
+            }
+        });
+        
         // Settings sliders
         document.getElementById('epsilon-slider').addEventListener('input', (e) => {
             this.epsilon = parseFloat(e.target.value);
@@ -82,6 +90,14 @@ class PyPotteryTraceApp {
             this.exportMasksDebug();
         });
         
+        // Update ML export notice visibility when Training Data checkbox changes
+        const saveTrainingCheckbox = document.getElementById('save-training-data');
+        if (saveTrainingCheckbox) {
+            saveTrainingCheckbox.addEventListener('change', () => {
+                this.updateMLExportNotice();
+            });
+        }
+        
         // Zoom controls
         document.getElementById('zoom-in-btn').addEventListener('click', () => {
             if (window.canvasManager) window.canvasManager.zoom(1.2);
@@ -102,21 +118,39 @@ class PyPotteryTraceApp {
     }
     
     setupHelpModal() {
-        const modal = document.getElementById('help-modal');
-        const btn = document.getElementById('help-btn');
-        const span = document.getElementsByClassName('close')[0];
+        // Help Modal
+        const helpModal = document.getElementById('help-modal');
+        const helpBtn = document.getElementById('help-btn');
+        const helpClose = helpModal.querySelector('.close');
         
-        btn.onclick = () => {
-            modal.style.display = 'flex';
+        helpBtn.onclick = () => {
+            helpModal.style.display = 'flex';
         };
         
-        span.onclick = () => {
-            modal.style.display = 'none';
+        helpClose.onclick = () => {
+            helpModal.style.display = 'none';
         };
         
+        // Info Modal
+        const infoModal = document.getElementById('info-modal');
+        const infoBtn = document.getElementById('info-btn');
+        const infoClose = infoModal.querySelector('.info-close');
+        
+        infoBtn.onclick = () => {
+            infoModal.style.display = 'flex';
+        };
+        
+        infoClose.onclick = () => {
+            infoModal.style.display = 'none';
+        };
+        
+        // Close modals when clicking outside
         window.onclick = (event) => {
-            if (event.target == modal) {
-                modal.style.display = 'none';
+            if (event.target == helpModal) {
+                helpModal.style.display = 'none';
+            }
+            if (event.target == infoModal) {
+                infoModal.style.display = 'none';
             }
         };
     }
@@ -158,6 +192,11 @@ class PyPotteryTraceApp {
         
         const formData = new FormData();
         formData.append('file', file);
+        
+        // Add output folder path if available
+        if (window.tabManager && window.tabManager.outputFolderPath) {
+            formData.append('output_folder_path', window.tabManager.outputFolderPath);
+        }
         
         try {
             const response = await fetch('/api/upload', {
@@ -402,6 +441,9 @@ class PyPotteryTraceApp {
         
         document.getElementById('export-btn').disabled = false;
         document.getElementById('debug-export-btn').disabled = false;
+        
+        // Update ML notice based on training data setting
+        this.updateMLExportNotice();
     }
     
     getCategoryIcon(category) {
@@ -527,6 +569,15 @@ class PyPotteryTraceApp {
         }
     }
     
+    updateMLExportNotice() {
+        const saveTrainingCheckbox = document.getElementById('save-training-data');
+        const mlNotice = document.getElementById('ml-export-notice');
+        
+        if (saveTrainingCheckbox && mlNotice) {
+            mlNotice.style.display = saveTrainingCheckbox.checked ? 'block' : 'none';
+        }
+    }
+    
     async exportSegments() {
         if (this.segments.length === 0) {
             this.showNotification('No segments to export', 'warning');
@@ -544,13 +595,14 @@ class PyPotteryTraceApp {
         try {
             progressFill.style.width = '30%';
             
-            const includeBackground = document.getElementById('bg-checkbox').checked;
+            // Background will be added later in SVG Editor if needed
+            // Don't include background in initial export
             
             console.log('Calling /api/generate_svg_preview with:', {
                 session_id: this.sessionId,
                 epsilon: this.epsilon,
                 smoothing_factor: this.smoothing,
-                include_background: includeBackground
+                include_background: false
             });
             
             // Call the export endpoint
@@ -563,7 +615,7 @@ class PyPotteryTraceApp {
                     session_id: this.sessionId,
                     epsilon: this.epsilon,
                     smoothing_factor: this.smoothing,
-                    include_background: includeBackground
+                    include_background: false
                 })
             });
             
@@ -574,29 +626,49 @@ class PyPotteryTraceApp {
             }
             
             progressFill.style.width = '80%';
-            statusText.textContent = 'Download starting...';
+            statusText.textContent = 'Loading SVG in editor...';
             
-            // Trigger download of the ZIP file
-            window.location.href = data.zip_url;
-            
-            progressFill.style.width = '100%';
-            statusText.textContent = 'Export complete!';
-            
-            setTimeout(() => {
-                exportStatus.style.display = 'none';
+            // Load the unified SVG into the SVG Editor (NO DOWNLOAD HERE!)
+            if (data.output_files && data.output_files.length > 0) {
+                // Find the unified SVG (it's usually the first one or has "vectorized" in name)
+                const unifiedSVG = data.output_files.find(f => 
+                    f.type === 'svg' && (f.name.includes('vectorized') || f.description.includes('Unified'))
+                );
                 
-                // Auto-advance to next image if available
-                if (this.imageFiles.length > 0 && this.currentImageIndex < this.imageFiles.length - 1) {
-                    this.showNotification('Moving to next image...', 'info');
+                if (unifiedSVG && window.svgEditor) {
+                    console.log('Loading SVG into editor:', unifiedSVG.url);
+                    
+                    // Enable SVG Editor tab
+                    document.getElementById('svg-editor-tab-btn').disabled = false;
+                    
+                    // Set session ID and image name in SVG Editor (for saving)
+                    window.svgEditor.sessionId = this.sessionId;
+                    window.svgEditor.currentImageName = this.currentImageFilename;
+                    
+                    // Load SVG in editor
+                    await window.svgEditor.loadSVG(unifiedSVG.url);
+                    
+                    // Store the ZIP URL for later download from SVG Editor
+                    window.svgEditor.zipDownloadUrl = data.zip_url;
+                    
+                    progressFill.style.width = '100%';
+                    statusText.textContent = 'SVG loaded! Switching to editor...';
+                    
+                    // Switch to SVG Editor tab after a short delay
                     setTimeout(() => {
-                        this.navigateImage(1);
+                        if (window.tabManager) {
+                            window.tabManager.switchTab('svg-editor-tab');
+                        }
+                        exportStatus.style.display = 'none';
                     }, 1000);
-                } else if (this.imageFiles.length > 0 && this.currentImageIndex === this.imageFiles.length - 1) {
-                    this.showNotification('All images completed! 🎉', 'success');
+                    
+                    this.showNotification('SVG loaded! You can now edit it in the "SVG Editor" tab.', 'success');
+                } else {
+                    throw new Error('SVG file not found in export results');
                 }
-            }, 2000);
-            
-            this.showNotification('Export completed! ZIP file downloaded.', 'success');
+            } else {
+                throw new Error('No output files generated');
+            }
             
         } catch (error) {
             console.error('Export error:', error);
@@ -662,6 +734,72 @@ class PyPotteryTraceApp {
             console.error('Export error:', error);
             statusText.textContent = 'Error: ' + error.message;
             this.showNotification('Failed to export masks: ' + error.message, 'error');
+        }
+    }
+    
+    async exportMLMasks() {
+        if (this.segments.length === 0) {
+            this.showNotification('No segments to export', 'warning');
+            return;
+        }
+        
+        // Ask user to choose format
+        const format = confirm('Choose format:\n\nOK = COCO format (standard ML)\nCancel = Simple format (custom)') 
+            ? 'coco' 
+            : 'simple';
+        
+        const exportStatus = document.getElementById('export-status');
+        const progressFill = document.getElementById('progress-fill');
+        const statusText = document.getElementById('status-text');
+        
+        exportStatus.style.display = 'block';
+        progressFill.style.width = '0%';
+        statusText.textContent = `Exporting masks in ${format.toUpperCase()} format...`;
+        
+        try {
+            progressFill.style.width = '30%';
+            
+            // Call the ML export endpoint
+            const response = await fetch('/api/export_ml_dataset', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    session_id: this.sessionId,
+                    format: format
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (!data.success) {
+                throw new Error(data.error || 'Export failed');
+            }
+            
+            progressFill.style.width = '80%';
+            statusText.textContent = `Exported ${data.total_masks} masks. Downloading...`;
+            
+            // Trigger download
+            window.location.href = data.download_url;
+            
+            progressFill.style.width = '100%';
+            statusText.textContent = 'Download started!';
+            
+            setTimeout(() => {
+                exportStatus.style.display = 'none';
+            }, 2000);
+            
+            this.showNotification(`Exported ${data.total_masks} masks in ${format.toUpperCase()} format`, 'success');
+            
+        } catch (error) {
+            console.error('ML export error:', error);
+            statusText.textContent = 'Error: ' + error.message;
+            this.showNotification('Failed to export ML masks: ' + error.message, 'error');
+            
+            setTimeout(() => {
+                exportStatus.style.display = 'none';
+            }, 3000);
         }
     }
     
@@ -771,29 +909,77 @@ document.head.appendChild(style);
 document.addEventListener('DOMContentLoaded', function() {
    console.log('DOM Content Loaded - Starting initialization');
  
+    // Show splash screen with progress
+    const splashScreen = document.getElementById('splash-screen');
+    const splashMessage = document.getElementById('splash-message');
+    const splashProgressBar = document.getElementById('splash-progress-bar');
+    const splashProgressText = document.getElementById('splash-progress-text');
+    
+    let progress = 0;
+    
+    function updateSplash(message, percent) {
+        splashMessage.textContent = message;
+        splashProgressBar.style.width = percent + '%';
+        splashProgressText.textContent = percent + '%';
+        progress = percent;
+    }
+    
     try {
-         // Initialize canvas manager
-         console.log('Initializing canvas manager...');
-         window.canvasManager = new CanvasManager('main-canvas');
-         console.log('Canvas manager initialized:', window.canvasManager);
- 
+        updateSplash('Initializing canvas...', 20);
+        
+        // Initialize canvas manager
+        console.log('Initializing canvas manager...');
+        window.canvasManager = new CanvasManager('main-canvas');
+        console.log('Canvas manager initialized:', window.canvasManager);
+        
+        updateSplash('Loading tab manager...', 40);
+
         // Initialize tab manager
         console.log('Initializing tab manager...');
         window.tabManager = new TabManager();
         console.log('Tab manager initialized:', window.tabManager);
+        
+        updateSplash('Setting up application...', 60);
 
         // Initialize ONE main app instance and assign it to window.app
         console.log('Initializing main app...');
-        window.app = new PyPotteryTraceApp(); // L'unica istanza che ti serve
+        window.app = new PyPotteryTraceApp();
         console.log('Main app initialized:', window.app);
+        
+        updateSplash('Loading segmentation engine...', 80);
 
         // Initialize segmentation manager
         console.log('Initializing segmentation manager...');
         window.segmentationManager = new SegmentationManager();
         console.log('Segmentation manager initialized:', window.segmentationManager);
+        
+        updateSplash('Preparing SVG editor...', 90);
 
+        // Initialize SVG editor
+        console.log('Initializing SVG editor...');
+        window.svgEditor = new SVGEditor('svg-canvas');
+        console.log('SVG editor initialized:', window.svgEditor);
+
+        updateSplash('Ready!', 100);
+        
         console.log('All initialization complete!');
+        
+        // Hide splash screen after a short delay
+        setTimeout(() => {
+            splashScreen.classList.add('fade-out');
+            setTimeout(() => {
+                splashScreen.style.display = 'none';
+            }, 500);
+        }, 800);
+        
   } catch (error) {
      console.error('Error during initialization:', error);
+     updateSplash('Error: ' + error.message, progress);
+     setTimeout(() => {
+         splashScreen.classList.add('fade-out');
+         setTimeout(() => {
+             splashScreen.style.display = 'none';
+         }, 500);
+     }, 2000);
  }
 });

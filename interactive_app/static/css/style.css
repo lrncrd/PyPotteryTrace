@@ -1345,3 +1345,127 @@ kbd {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* SVG Editor Specific Styles */
+#svg-canvas-container {
+    background: #f5f5f5;
+}
+
+#svg-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.btn-danger {
+    background: var(--danger-color);
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #dc2626;
+}
+
+.btn-small {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8rem;
+}
+
+/* Layer Categories */
+.layer-category {
+    margin-bottom: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    background: white;
+}
+
+.layer-category-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
+    cursor: pointer;
+    user-select: none;
+    transition: var(--transition);
+}
+
+.layer-category-header:hover {
+    background: var(--bg-tertiary);
+}
+
+.layer-category.collapsed .category-icon {
+    transform: rotate(-90deg);
+}
+
+.layer-category.collapsed .layer-category-content {
+    display: none;
+}
+
+.category-icon {
+    transition: transform 0.2s ease;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.category-count {
+    margin-left: auto;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.layer-category-content {
+    padding: 0.5rem;
+}
+
+.layer-category-content .segment-item {
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.layer-category-content .segment-item:last-child {
+    margin-bottom: 0;
+}
+
+.image-layer {
+    background: #fef3c7;
+    border-color: #fbbf24;
+}
+
+.image-layer .segment-name {
+    font-weight: 500;
+}
+
+.btn-icon {
+    background: none;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: var(--transition);
+}
+
+.btn-icon:hover {
+    background: var(--bg-secondary);
+    border-color: var(--primary-color);
+}
+
+.btn-danger-icon {
+    color: var(--danger-color);
+    border-color: var(--danger-color);
+}
+
+.btn-danger-icon:hover {
+    background: var(--danger-color);
+    color: white;
+}
+
+.empty-message {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+

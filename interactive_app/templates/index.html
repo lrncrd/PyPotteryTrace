@@ -5,18 +5,118 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PyPotteryTrace Interactive - Segmentation Tool</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        /* Splash Screen Styles */
+        .splash-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            transition: opacity 0.5s ease;
+        }
+        
+        .splash-screen.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .splash-content {
+            text-align: center;
+            max-width: 600px;
+            padding: 40px;
+        }
+        
+        .splash-logo {
+            max-width: 120px;
+            height: auto;
+            margin: 0 auto 20px;
+        }
+        
+        .splash-spinner {
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .splash-title {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+        
+        .splash-message {
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        .splash-progress {
+            width: 100%;
+            max-width: 500px;
+            margin: 20px auto;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            overflow: hidden;
+            height: 30px;
+        }
+        
+        .splash-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #3b82f6);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
+    <!-- Splash Screen -->
+    <div id="splash-screen" class="splash-screen">
+        <div class="splash-content">
+            <img src="{{ url_for('static', filename='logo.png') }}" alt="PyPotteryTrace Logo" class="splash-logo">
+            <div class="splash-spinner"></div>
+            <h1 class="splash-title">PyPotteryTrace</h1>
+            <p class="splash-message" id="splash-message">Initializing application...</p>
+            
+            <div class="splash-progress">
+                <div class="splash-progress-bar" id="splash-progress-bar" style="width: 0%">
+                    <span id="splash-progress-text">0%</span>
+                </div>
+            </div>
+        </div>
+    </div>
     <div class="container" id="main-container">
         <!-- Header -->
         <header class="app-header">
             <div class="logo-section">
-                <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" class="logo" onerror="this.style.display='none'">
-                <h1>PyPotteryTrace <span class="version">Interactive</span></h1>
+                <img src="{{ url_for('static', filename='logo.png') }}" alt="PyPotteryTrace Logo" class="logo">
+                <h1>PyPotteryTrace</h1>
             </div>
-            <div class="header-actions">
+            <div class="header-actions" style="display: flex; gap: 10px;">
+                <button id="info-btn" class="btn btn-secondary">
+                    <span>ℹ️</span> Info
+                </button>
                 <button id="help-btn" class="btn btn-secondary">
-                    <span>ℹ️</span> Help
+                    <span>❓</span> Help
                 </button>
             </div>
         </header>
@@ -30,6 +130,10 @@
             <button class="tab-button" data-tab="segmentation-tab" id="segmentation-tab-btn" disabled>
                 <span class="tab-icon">✂️</span>
                 <span class="tab-label">Segmentation</span>
+            </button>
+            <button class="tab-button" data-tab="svg-editor-tab" id="svg-editor-tab-btn" disabled>
+                <span class="tab-icon">✏️</span>
+                <span class="tab-label">SVG Editor</span>
             </button>
         </div>
 
@@ -54,6 +158,19 @@
                                 <p><strong>Folder:</strong> <span id="folder-name"></span></p>
                                 <p><strong>Images found:</strong> <span id="images-count">0</span></p>
                                 <div id="images-preview" class="images-preview"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="folder-selection" style="margin-top: 20px;">
+                            <h4 style="margin-bottom: 10px;">📤 Output Folder</h4>
+                            <input type="file" id="output-folder-input" webkitdirectory directory style="display: none;">
+                            <button type="button" id="select-output-folder-btn" class="btn btn-secondary">
+                                <span>📁</span> Select Output Folder
+                            </button>
+                            <div id="output-folder-info" class="folder-info" style="display: block; margin-top: 10px;">
+                                <p style="font-size: 0.9rem; color: #666;">
+                                    <strong>Output:</strong> <span id="output-folder-name">(auto: input_folder_vectorized)</span>
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -95,15 +212,15 @@
 
                     <!-- Panel 3: Training Data -->
                     <div class="setup-panel">
-                        <h3>🎓 Training Data (Future)</h3>
+                        <h3>🎓 ML Training Data</h3>
                         <div class="training-option">
                             <label class="checkbox-label">
                                 <input type="checkbox" id="save-training-data">
-                                <span>💾 Save data for model training</span>
+                                <span>💾 Save segmentation data for ML training</span>
                             </label>
                             <p class="option-description">
-                                Save segmentation masks and annotations to train a custom model in the future.
-                                <br><small style="color: #f59e0b;">⚠️ Feature coming soon - checkbox enabled for preview</small>
+                                Automatically export masks and annotations in COCO format to train custom models.
+                                <br><small style="color: #10b981;">✓ Data will be saved in output_folder/ml_training/</small>
                             </p>
                         </div>
                     </div>
@@ -222,12 +339,6 @@
                         <label>Smoothing: <span id="smoothing-value">0.3</span></label>
                         <input type="range" id="smoothing-slider" min="0" max="1" step="0.1" value="0.3" class="slider">
                     </div>
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="bg-checkbox">
-                            Include background in SVG
-                        </label>
-                    </div>
                 </div>
             </aside>
 
@@ -276,10 +387,13 @@
                 <div class="panel">
                     <h2>📤 Export</h2>
                     <button id="export-btn" class="btn btn-success btn-large" disabled>
-                        <span>📦</span> Export Segments
+                        <span>🎨</span> Generate SVG
                     </button>
                     <p style="font-size: 0.9em; color: #666; margin-top: 8px;">
-                        Creates SVG for vectorized segments and PNG with transparent background for raster segments
+                        Generate SVG and switch to "SVG Editor" tab to modify it before saving
+                    </p>
+                    <p id="ml-export-notice" style="font-size: 0.85em; color: #10b981; margin-top: 4px; display: none;">
+                        🤖 ML training data will be automatically exported
                     </p>
                     
                     <button id="debug-export-btn" class="btn btn-secondary" disabled style="margin-top: 10px;">
@@ -310,6 +424,198 @@
                     </div>
                 </div>
             </aside>
+            </div>
+        </div>
+
+        <!-- Tab 3: SVG Editor -->
+        <div class="tab-content" id="svg-editor-tab">
+            <div class="main-content">
+                <!-- Left Sidebar - Tools & Info -->
+                <aside class="sidebar left-sidebar">
+                    <div class="panel">
+                        <h2>🎨 SVG Editor</h2>
+                        <p style="font-size: 0.875rem; color: #666; margin-bottom: 1rem;">
+                            View and edit the exported SVG. You can select and delete individual points.
+                        </p>
+                    </div>
+
+                    <div class="panel">
+                        <h2>🔧 Tools</h2>
+                        <div class="mode-selector">
+                            <button class="mode-btn active" data-svg-mode="view" id="svg-view-mode-btn">
+                                <span class="mode-icon">👁️</span>
+                                <span>View Mode</span>
+                                <span class="mode-desc">Pan & zoom</span>
+                            </button>
+                            <button class="mode-btn" data-svg-mode="select" id="svg-select-mode-btn">
+                                <span class="mode-icon">👆</span>
+                                <span>Select Mode</span>
+                                <span class="mode-desc">Select points</span>
+                            </button>
+                            <button class="mode-btn" data-svg-mode="add" id="svg-add-mode-btn">
+                                <span class="mode-icon">➕</span>
+                                <span>Add Point</span>
+                                <span class="mode-desc">Click on path to add point</span>
+                            </button>
+                            <button class="mode-btn" data-svg-mode="delete" id="svg-delete-mode-btn">
+                                <span class="mode-icon">🗑️</span>
+                                <span>Delete Mode</span>
+                                <span class="mode-desc">Click to delete points</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h2>⚙️ Settings</h2>
+                        <div class="form-group">
+                            <label>Point Size: <span id="svg-point-size-value">8</span>px</label>
+                            <input type="range" id="svg-point-size-slider" min="4" max="16" step="1" value="8" class="slider">
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="svg-show-points" checked>
+                                Show Path Points
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="svg-show-labels" checked>
+                                Show Point Labels
+                            </label>
+                        </div>
+                        
+                        <div style="margin-top: 15px; padding: 10px; background: #f0f0f0; border-radius: 4px; font-size: 0.8rem;">
+                            <strong style="display: block; margin-bottom: 8px;">Point Types:</strong>
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                                <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #2563eb;"></span>
+                                <span>Path Points</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                                <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9333ea;"></span>
+                                <span>Control Points (Curves)</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                                <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f59e0b;"></span>
+                                <span>Hovered</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #ef4444;"></span>
+                                <span>Selected</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h2>📊 Selection Info</h2>
+                        <div id="svg-selection-info" style="font-size: 0.875rem;">
+                            <p>No point selected</p>
+                        </div>
+                    </div>
+                    
+                    <div class="panel">
+                        <h2>💡 Shortcuts</h2>
+                        <div style="font-size: 0.8rem; line-height: 1.6; color: #666;">
+                            <p><strong>Mode View:</strong></p>
+                            <p>• Drag (empty area): Pan view<br>
+                            • Scroll: Zoom<br>
+                            • <span style="color: #10b981; font-weight: bold;">Click on Image: Move Image 🆕</span><br>
+                            • Shift + Drag: Force pan (ignore images)</p>
+                            
+                            <p style="margin-top: 8px;"><strong>Mode Select:</strong></p>
+                            <p>• Click: Select Point<br>
+                            • Shift + Click: Multi-select<br>
+                            • Ctrl + Drag: Move Point</p>
+                            
+                            <p style="margin-top: 8px;"><strong>Mode Add Point:</strong></p>
+                            <p>• Click on path: Add new point at position</p>
+                            
+                            <p style="margin-top: 8px;"><strong>Mode Delete:</strong></p>
+                            <p>• Click: Delete Point</p>
+                        </div>
+                    </div>
+                </aside>
+
+                <!-- Center - SVG Canvas -->
+                <main class="canvas-area">
+                    <div class="canvas-container" id="svg-canvas-container">
+                        <canvas id="svg-canvas"></canvas>
+                        <div id="svg-canvas-message" class="canvas-message">
+                            <span class="message-icon">📄</span>
+                            <p>Export an SVG from the Segmentation tab to begin</p>
+                        </div>
+                    </div>
+
+                    <div class="canvas-toolbar">
+                        <button id="svg-zoom-in-btn" class="toolbar-btn" title="Zoom In">
+                            <span>🔍+</span>
+                        </button>
+                        <button id="svg-zoom-out-btn" class="toolbar-btn" title="Zoom Out">
+                            <span>🔍-</span>
+                        </button>
+                        <button id="svg-reset-view-btn" class="toolbar-btn" title="Reset View">
+                            <span>⟲</span>
+                        </button>
+                        <div class="toolbar-divider"></div>
+                        <button id="svg-undo-btn" class="toolbar-btn" title="Undo" disabled>
+                            <span>↶</span>
+                        </button>
+                    </div>
+                </main>
+
+                <!-- Right Sidebar - Layers & Export -->
+                <aside class="sidebar right-sidebar">
+                    <div class="panel">
+                        <h2>📋 Layers</h2>
+                        <button id="svg-add-image-btn" class="btn btn-secondary btn-small" style="width: 100%; margin-bottom: 10px;">
+                            <span>📷</span> Add PNG Image
+                        </button>
+                        <input type="file" id="svg-image-upload" accept="image/png,image/jpeg,image/jpg" style="display: none;">
+                        <div id="svg-layers-list" class="segments-list">
+                            <p class="empty-message">No layers loaded</p>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h2>📤 Export</h2>
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label>
+                                <input type="checkbox" id="svg-bg-checkbox">
+                                Include background in SVG
+                            </label>
+                            <p style="font-size: 0.85rem; color: #666; margin-top: 4px;">
+                                Include the original image as background in the exported SVG
+                            </p>
+                        </div>
+                        <button id="svg-save-btn" class="btn btn-success btn-large" disabled>
+                            <span>💾</span> Save Modified SVG
+                        </button>
+                        <p style="font-size: 0.85rem; color: #666; margin-top: 8px;">
+                            Save the modified SVG and download the complete package
+                        </p>
+                        <button id="svg-download-zip-btn" class="btn btn-secondary" disabled style="margin-top: 10px;">
+                            <span>📦</span> Download Complete ZIP
+                        </button>
+                        <p style="font-size: 0.85rem; color: #666; margin-top: 8px;">
+                            Download all files (SVG + PNG) without modifications
+                        </p>
+                    </div>
+
+                    <div class="panel stats-panel">
+                        <h3>📊 Statistics</h3>
+                        <div class="stat-row">
+                            <span>Total Paths:</span>
+                            <span id="svg-stat-paths">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>Total Points:</span>
+                            <span id="svg-stat-points">0</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>Selected Points:</span>
+                            <span id="svg-stat-selected">0</span>
+                        </div>
+                    </div>
+                </aside>
             </div>
         </div>
     </div>
@@ -361,10 +667,66 @@
         </div>
     </div>
 
+    <!-- Info Modal -->
+    <div id="info-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close info-close">&times;</span>
+            <div style="text-align: center; margin-bottom: 2rem;">
+                <img src="{{ url_for('static', filename='logo.png') }}" alt="PyPotteryTrace Logo" style="width: 120px; height: auto; margin-bottom: 1rem;">
+                <h2 style="margin: 0;">PyPotteryTrace</h2>
+                <p style="color: #666; font-size: 1.1rem; margin-top: 0.5rem;">Interactive Archaeological Vectorization Tool</p>
+            </div>
+            
+            <div class="help-section">
+                <h3>📋 Version Information</h3>
+                <p><strong>Version:</strong> 2.0 Interactive</p>
+                <p><strong>Release Date:</strong> October 2025</p>
+                <p><strong>License:</strong> Open Source</p>
+            </div>
+
+            <div class="help-section">
+                <h3>👨‍💻 Author</h3>
+                <p><strong>Lorenzo Cardarelli</strong></p>
+                <p style="color: #666; font-size: 0.9rem;">Archaeological Vectorization Specialist</p>
+            </div>
+
+            <div class="help-section">
+                <h3>✨ Features</h3>
+                <ul style="margin-left: 1.5rem;">
+                    <li>SAM2-powered interactive segmentation</li>
+                    <li>Multi-category element classification</li>
+                    <li>Profile mirroring with rotation center</li>
+                    <li>SVG and PNG export with layers</li>
+                    <li>ML training data export (COCO format)</li>
+                    <li>Interactive SVG editing</li>
+                </ul>
+            </div>
+
+            <div class="help-section">
+                <h3>🔧 Technology Stack</h3>
+                <ul style="margin-left: 1.5rem;">
+                    <li><strong>Backend:</strong> Python, Flask, SAM2</li>
+                    <li><strong>Frontend:</strong> JavaScript, Canvas API</li>
+                    <li><strong>Vectorization:</strong> OpenCV, scikit-image</li>
+                    <li><strong>ML Export:</strong> COCO format support</li>
+                </ul>
+            </div>
+
+            <div class="help-section" style="text-align: center; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;">
+                <p style="color: #666; font-size: 0.85rem;">
+                    © 2025 Lorenzo Cardarelli - PyPotteryTrace Project<br>
+                    Built with ❤️ for Archaeological Research
+                </p>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="{{ url_for('static', filename='js/tabs.js') }}"></script>
     <script src="{{ url_for('static', filename='js/canvas.js') }}"></script>
     <script src="{{ url_for('static', filename='js/segmentation.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/svg-editor.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/batch-export.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

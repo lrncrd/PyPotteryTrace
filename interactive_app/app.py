@@ -28,6 +28,7 @@ from datetime import datetime
 # Import SAM2 and processing modules
 from sam2_handler import SAM2Handler
 from vectorization_handler import VectorizationHandler
+from ml_export_handler import MLExportHandler
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
@@ -40,6 +41,7 @@ CORS(app)
 # Global state for SAM2 handler
 sam2_handler = SAM2Handler(model_size='small')  # Initialize immediately
 vectorization_handler = VectorizationHandler()
+ml_export_handler = MLExportHandler()
 
 # Store session data (in production, use Redis or database)
 sessions_data = {}
@@ -377,23 +379,22 @@ def generate_svg_preview():
             height = info['height']
             safe_name = info['safe_name']
             
-            # Use the SAME logic as extract_left_side_of_profile:
-            # Find all points on the top horizontal line
-            tolerance = 2
-            top_line_points = outer_contour[np.abs(outer_contour[:, 0] - y_top) <= tolerance]
+            # CORREZIONE: La linea di diametro deve partire dal punto PIÙ ALTO
+            # (più vicino al margine superiore dell'immagine = y minima)
+            # Non dal punto più a sinistra!
             
-            if len(top_line_points) > 0:
-                # Find the leftmost point on the top line (the external edge)
-                top_left_point = top_line_points[np.argmin(top_line_points[:, 1])]
-                
-                center_y = int(top_left_point[0])  # Y coordinate at the top (y_top)
-                x_left = int(top_left_point[1])    # Leftmost X coordinate at y_top
-                x_right = int(2 * center_x - x_left)  # Mirror to get right side
-            else:
-                # Fallback: use y_top directly
-                center_y = int(y_top)
-                x_left = int(np.min(outer_contour[:, 1]))
-                x_right = int(2 * center_x - x_left)
+            # Trova il punto con Y minima (più vicino al margine superiore)
+            highest_point_idx = np.argmin(outer_contour[:, 0])
+            highest_point = outer_contour[highest_point_idx]
+            
+            # La linea di diametro passa per questo punto (il più alto)
+            center_y = int(highest_point[0])  # Y del punto più alto
+            x_left = int(highest_point[1])    # X del punto più alto
+            x_right = int(2 * center_x - x_left)  # Mirror per ottenere il lato destro
+            
+            print(f"  Punto più alto (più vicino al margine superiore):")
+            print(f"    Y = {center_y}, X = {x_left}")
+            print(f"  Linea di diametro: da ({x_left}, {center_y}) a ({x_right}, {center_y})")
             
             diameter_svg_path = svg_debug_dir / f"Diameter_Line_{safe_name}.svg"
             vectorization_handler.create_diameter_line_svg(
@@ -529,6 +530,57 @@ def generate_svg_preview():
             })
             print(f"✓ PNG copied: {output_png_path}")
         
+        # ML TRAINING DATA EXPORT (if enabled)
+        ml_data_exported = False
+        if app.config.get('SAVE_TRAINING_DATA', False):
+            print(f"\n{'='*60}")
+            print(f"ML TRAINING DATA EXPORT ENABLED")
+            print(f"{'='*60}\n")
+            
+            try:
+                # Determine the user's output folder
+                output_folder_name = session.get('output_folder_path', '')
+                
+                if output_folder_name:
+                    # Use user-specified output folder
+                    if os.path.isabs(output_folder_name):
+                        user_output_folder = Path(output_folder_name)
+                    else:
+                        project_root = Path(__file__).parent.parent
+                        user_output_folder = project_root / output_folder_name
+                else:
+                    # Fallback to default output folder
+                    project_root = Path(__file__).parent.parent
+                    user_output_folder = project_root / 'output'
+                
+                # Create ML training subdirectory inside USER'S output folder
+                ml_training_dir = user_output_folder / 'ml_training'
+                ml_training_dir.mkdir(parents=True, exist_ok=True)
+                
+                print(f"ML training data will be saved to: {ml_training_dir}")
+                
+                # Export in COCO format (standard for ML)
+                ml_output_path = ml_training_dir / f'{base_name}_coco.json'
+                ml_export_handler.export_coco_format(
+                    segments=session['segments'],
+                    image_path=session['image_path'],
+                    output_path=str(ml_output_path),
+                    include_rle=False
+                )
+                
+                # Copy original image to ML training folder
+                import shutil
+                ml_image_path = ml_training_dir / Path(session['image_path']).name
+                shutil.copy2(session['image_path'], ml_image_path)
+                
+                print(f"✓ ML training data exported to: {ml_training_dir}")
+                ml_data_exported = True
+                
+            except Exception as e:
+                print(f"⚠ Warning: Failed to export ML training data: {e}")
+                import traceback
+                traceback.print_exc()
+        
         # Create a ZIP file containing all outputs (named after original file)
         import zipfile
         zip_path = Path(app.config['UPLOAD_FOLDER']) / session_id / f'{base_name}_export.zip'
@@ -536,9 +588,12 @@ def generate_svg_preview():
         print(f"\n{'='*60}")
         print(f"CREATING ZIP FILE")
         print(f"Total output files to add: {len(output_files)}")
+        if ml_data_exported:
+            print(f"ML training data will be included in ZIP")
         print(f"{'='*60}")
         
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add regular output files
             for i, output_file in enumerate(output_files):
                 file_path = Path(output_file['path'])
                 print(f"  {i+1}. Checking: {file_path.name}")
@@ -559,6 +614,20 @@ def generate_svg_preview():
         print(f"  → Intermediate SVGs: {svg_debug_dir}")
         print(f"  → Output files: {output_dir}")
         print(f"  → Combined ZIP: {zip_path}")
+        if ml_data_exported:
+            # Determine the user's output folder for displaying ML path
+            output_folder_name = session.get('output_folder_path', '')
+            if output_folder_name:
+                if os.path.isabs(output_folder_name):
+                    user_output_folder = Path(output_folder_name)
+                else:
+                    project_root = Path(__file__).parent.parent
+                    user_output_folder = project_root / output_folder_name
+            else:
+                project_root = Path(__file__).parent.parent
+                user_output_folder = project_root / 'output'
+            ml_training_dir = user_output_folder / 'ml_training'
+            print(f"  → ML Training Data: {ml_training_dir}")
         print(f"{'='*80}\n")
         
         return jsonify({
@@ -605,6 +674,9 @@ def upload_image():
     file_path = upload_path / filename
     file.save(file_path)
     
+    # Get output folder path from request if provided
+    output_folder_path = request.form.get('output_folder_path', '')
+    
     # Initialize SAM2 for this image
     try:
         image_embedding = sam2_handler.set_image(str(file_path))
@@ -615,6 +687,7 @@ def upload_image():
             'filename': filename,
             'segments': [],  # List of segmented elements with their categories
             'rotation_center': None,
+            'output_folder_path': output_folder_path,  # Store output folder path
             'created_at': datetime.now().isoformat()
         }
         
@@ -1259,6 +1332,122 @@ def export_filtered_svg():
         return jsonify({'error': f'Failed to export SVG: {str(e)}'}), 500
 
 
+@app.route('/api/export_ml_masks', methods=['POST'])
+def export_ml_masks():
+    """
+    Export segmentation masks for ML training in JSON format.
+    Supports COCO and simple custom formats.
+    """
+    data = request.json
+    session_id = data.get('session_id')
+    
+    if session_id not in sessions_data:
+        return jsonify({'error': 'Session not found'}), 404
+    
+    session = sessions_data[session_id]
+    
+    if not session['segments']:
+        return jsonify({'error': 'No segments to export'}), 400
+    
+    try:
+        # Get export parameters
+        export_format = data.get('format', 'coco')  # 'coco' or 'simple'
+        include_rle = data.get('include_rle', False)
+        
+        # Create output directory
+        ml_export_dir = Path(app.config['UPLOAD_FOLDER']) / session_id / 'ml_training'
+        ml_export_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get image filename for output naming
+        image_filename = Path(session['image_path']).stem
+        
+        if export_format == 'coco':
+            # COCO format export
+            output_path = ml_export_dir / f'{image_filename}_coco.json'
+            result = ml_export_handler.export_coco_format(
+                segments=session['segments'],
+                image_path=session['image_path'],
+                output_path=str(output_path),
+                include_rle=include_rle
+            )
+        else:
+            # Simple format export
+            output_path = ml_export_dir / f'{image_filename}_masks.json'
+            result = ml_export_handler.export_simple_format(
+                segments=session['segments'],
+                image_path=session['image_path'],
+                output_path=str(output_path)
+            )
+        
+        return jsonify({
+            'success': True,
+            'format': export_format,
+            'total_masks': len(result.get('annotations', result.get('masks', []))),
+            'download_url': f'/api/download/{session_id}/ml_training/{output_path.name}',
+            'output_path': str(output_path)
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to export ML masks: {str(e)}'}), 500
+
+
+@app.route('/api/export_ml_dataset', methods=['POST'])
+def export_ml_dataset():
+    """
+    Export complete ML training dataset (images + annotations) as ZIP.
+    """
+    data = request.json
+    session_id = data.get('session_id')
+    
+    if session_id not in sessions_data:
+        return jsonify({'error': 'Session not found'}), 404
+    
+    session = sessions_data[session_id]
+    
+    if not session['segments']:
+        return jsonify({'error': 'No segments to export'}), 400
+    
+    try:
+        export_format = data.get('format', 'coco')
+        
+        # Create output directory
+        dataset_dir = Path(app.config['UPLOAD_FOLDER']) / session_id / 'ml_dataset'
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Export training dataset
+        ml_export_handler.export_training_dataset(
+            segments=session['segments'],
+            image_path=session['image_path'],
+            output_dir=str(dataset_dir),
+            format=export_format
+        )
+        
+        # Create ZIP file
+        import zipfile
+        image_filename = Path(session['image_path']).stem
+        zip_path = Path(app.config['UPLOAD_FOLDER']) / session_id / f'{image_filename}_ml_dataset.zip'
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for file in dataset_dir.iterdir():
+                if file.is_file():
+                    zip_file.write(file, file.name)
+        
+        return jsonify({
+            'success': True,
+            'format': export_format,
+            'total_masks': len(session['segments']),
+            'download_url': f'/api/download/{session_id}/{zip_path.name}',
+            'files': [f.name for f in dataset_dir.iterdir() if f.is_file()]
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to export ML dataset: {str(e)}'}), 500
+
+
 if __name__ == '__main__':
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -1269,6 +1458,121 @@ if __name__ == '__main__':
     print("Starting server...")
     print("Open your browser at: http://localhost:5000")
     print("=" * 60)
+
+
+@app.route('/api/save_modified_svg', methods=['POST'])
+def save_modified_svg():
+    """
+    Save the modified SVG from the SVG Editor back to the output folder.
+    This replaces the original vectorized SVG with the edited version.
+    """
+    try:
+        data = request.get_json()
+        svg_content = data.get('svg_content')
+        include_background = data.get('include_background', False)
+        session_id = data.get('session_id', 'default')
+        image_name = data.get('image_name', 'output')
+        
+        if not svg_content:
+            return jsonify({'success': False, 'error': 'No SVG content provided'})
+        
+        # Get session data
+        if session_id not in sessions_data:
+            return jsonify({'success': False, 'error': 'Session not found'})
+        
+        session = sessions_data[session_id]
+        image_path = session.get('image_path')  # Get original image path for background
+        
+        if not image_path:
+            return jsonify({'success': False, 'error': 'No image in session'})
+        
+        # Determine output folder path
+        # Use the output_folder_path from session, or default to 'output'
+        output_folder_name = session.get('output_folder_path', '')
+        
+        if not output_folder_name:
+            # If not set, use a default based on the session folder
+            output_folder_name = 'output'
+        
+        # If output_folder_name is a relative path, resolve it from project root
+        # If it's absolute, use it as is
+        if os.path.isabs(output_folder_name):
+            output_folder = Path(output_folder_name)
+        else:
+            # Get the project root directory (parent of interactive_app)
+            project_root = Path(__file__).parent.parent
+            output_folder = project_root / output_folder_name
+        
+        # Create output folder if it doesn't exist
+        output_folder.mkdir(parents=True, exist_ok=True)
+        
+        print(f"Saving modified SVG to: {output_folder}")
+        
+        # Get the base name from image_name (remove extension if present)
+        image_basename = os.path.splitext(image_name)[0]
+        output_svg_path = output_folder / f"{image_basename}_vectorized.svg"
+        
+        # If include_background is True, we need to embed the original image in the SVG
+        if include_background:
+            # Read the original image and convert to base64
+            import base64
+            with open(image_path, 'rb') as img_file:
+                img_data = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            # Determine image format
+            img_ext = os.path.splitext(image_path)[1].lower()
+            img_format = 'jpeg' if img_ext in ['.jpg', '.jpeg'] else 'png'
+            
+            # Parse the SVG and add background image
+            from xml.dom import minidom
+            dom = minidom.parseString(svg_content)
+            svg_element = dom.getElementsByTagName('svg')[0]
+            
+            # Get SVG dimensions
+            width = svg_element.getAttribute('width') or '2000'
+            height = svg_element.getAttribute('height') or '2000'
+            
+            # Create background group
+            bg_group = dom.createElement('g')
+            bg_group.setAttribute('id', 'background')
+            bg_group.setAttribute('opacity', '0.3')
+            
+            # Create image element
+            img_element = dom.createElement('image')
+            img_element.setAttribute('href', f'data:image/{img_format};base64,{img_data}')
+            img_element.setAttribute('x', '0')
+            img_element.setAttribute('y', '0')
+            img_element.setAttribute('width', width.replace('px', ''))
+            img_element.setAttribute('height', height.replace('px', ''))
+            
+            bg_group.appendChild(img_element)
+            
+            # Insert background as first child
+            if svg_element.firstChild:
+                svg_element.insertBefore(bg_group, svg_element.firstChild)
+            else:
+                svg_element.appendChild(bg_group)
+            
+            # Serialize back to string
+            svg_content = dom.toxml()
+        
+        # Save the SVG
+        with open(output_svg_path, 'w', encoding='utf-8') as f:
+            f.write(svg_content)
+        
+        print(f"✓ Modified SVG saved to: {output_svg_path}")
+        
+        return jsonify({
+            'success': True,
+            'output_path': str(output_svg_path)
+        })
+        
+    except Exception as e:
+        print(f"Error saving modified SVG: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
+
     
     # Run Flask app
     app.run(debug=False, host='0.0.0.0', port=5000)
