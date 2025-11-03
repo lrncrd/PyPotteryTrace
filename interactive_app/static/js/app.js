@@ -131,6 +131,29 @@ class PyPotteryTraceApp {
             helpModal.style.display = 'none';
         };
         
+        // Help Modal Tabs
+        const helpTabBtns = document.querySelectorAll('.help-tab-btn');
+        const helpTabContents = document.querySelectorAll('.help-tab-content');
+        
+        helpTabBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const targetTab = btn.dataset.helpTab;
+                
+                // Update active tab button
+                helpTabBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // Update active tab content
+                helpTabContents.forEach(content => {
+                    if (content.dataset.helpContent === targetTab) {
+                        content.classList.add('active');
+                    } else {
+                        content.classList.remove('active');
+                    }
+                });
+            });
+        });
+        
         // Info Modal
         const infoModal = document.getElementById('info-modal');
         const infoBtn = document.getElementById('info-btn');
@@ -138,6 +161,7 @@ class PyPotteryTraceApp {
         
         infoBtn.onclick = () => {
             infoModal.style.display = 'flex';
+            this.loadSystemInfo(); // Load system info when modal opens
         };
         
         infoClose.onclick = () => {
@@ -153,6 +177,50 @@ class PyPotteryTraceApp {
                 infoModal.style.display = 'none';
             }
         };
+        
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (helpModal.style.display === 'flex') {
+                    helpModal.style.display = 'none';
+                }
+                if (infoModal.style.display === 'flex') {
+                    infoModal.style.display = 'none';
+                }
+            }
+        });
+    }
+    
+    async loadSystemInfo() {
+        // Get CPU info (from navigator)
+        const cpuCores = navigator.hardwareConcurrency || 'Unknown';
+        document.getElementById('info-cpu').textContent = `${cpuCores} cores (Available)`;
+        
+        // Try to get GPU info from backend
+        try {
+            const response = await fetch('/api/system_info');
+            if (response.ok) {
+                const data = await response.json();
+                
+                if (data.gpu_available) {
+                    document.getElementById('info-gpu').textContent = 
+                        `Available (${data.gpu_count} device${data.gpu_count > 1 ? 's' : ''})\n${data.gpu_name || ''}`;
+                } else {
+                    document.getElementById('info-gpu').textContent = 'Not Available';
+                }
+                
+                if (data.mps_available) {
+                    document.getElementById('info-mps').textContent = 'Available';
+                } else {
+                    document.getElementById('info-mps').textContent = 'Not Available';
+                }
+            }
+        } catch (error) {
+            console.log('Could not fetch system info from backend');
+            // Fallback to basic detection
+            document.getElementById('info-gpu').textContent = 'Unknown';
+            document.getElementById('info-mps').textContent = 'Not Available';
+        }
     }
     
     setMode(mode) {

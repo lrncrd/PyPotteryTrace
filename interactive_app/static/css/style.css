@@ -736,6 +736,267 @@ kbd {
     border: 1px solid var(--border-color);
 }
 
+/* ========================================
+   INFO MODAL STYLES (PyPotteryLens Style)
+   ======================================== */
+
+.info-modal-content {
+    max-width: 500px;
+    padding: 0;
+    background: linear-gradient(135deg, #3b3f5c 0%, #2c2e3e 100%);
+    color: white;
+    border-radius: 16px;
+    overflow: hidden;
+}
+
+.info-modal-content .close {
+    color: white;
+    opacity: 0.8;
+    z-index: 10;
+    right: 1.5rem;
+    top: 1.5rem;
+}
+
+.info-modal-content .close:hover {
+    opacity: 1;
+    color: white;
+}
+
+.info-header {
+    text-align: center;
+    padding: 2.5rem 2rem 2rem;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.info-logo {
+    width: 100px;
+    height: auto;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.3));
+}
+
+.info-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin: 0;
+    color: white;
+}
+
+.info-metadata {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.info-row:last-child {
+    border-bottom: none;
+}
+
+.info-label {
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 0.95rem;
+}
+
+.info-value {
+    color: white;
+    font-weight: 500;
+    font-size: 0.95rem;
+}
+
+.info-section {
+    padding: 1.5rem 2rem;
+}
+
+.info-section-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: white;
+}
+
+.info-section .info-row {
+    padding: 0.5rem 0;
+}
+
+/* ========================================
+   HELP MODAL STYLES (Tabbed Design)
+   ======================================== */
+
+.help-modal-content {
+    max-width: 900px;
+    padding: 0;
+    max-height: 85vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.help-title {
+    padding: 1.5rem 2rem;
+    margin: 0;
+    background: linear-gradient(135deg, var(--primary-color) 0%, #1e40af 100%);
+    color: white;
+    font-size: 1.75rem;
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+}
+
+.help-modal-content .close {
+    color: white;
+    z-index: 10;
+}
+
+.help-tabs {
+    display: flex;
+    background: var(--bg-secondary);
+    border-bottom: 2px solid var(--border-color);
+    padding: 0 1.5rem;
+    gap: 0.5rem;
+    overflow-x: auto;
+}
+
+.help-tab-btn {
+    padding: 0.75rem 1.5rem;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.help-tab-btn:hover {
+    color: var(--primary-color);
+    background: rgba(37, 99, 235, 0.05);
+}
+
+.help-tab-btn.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+    background: white;
+}
+
+.help-tab-content {
+    display: none;
+    padding: 2rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.help-tab-content.active {
+    display: block;
+}
+
+.help-tab-content h3 {
+    color: var(--primary-color);
+    margin-bottom: 1.5rem;
+    font-size: 1.5rem;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.help-tab-content h4 {
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+    font-size: 1.1rem;
+}
+
+.help-step {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius);
+    border-left: 4px solid var(--primary-color);
+}
+
+.help-step-number {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.help-step-content {
+    flex: 1;
+}
+
+.help-step-content p {
+    margin: 0.5rem 0;
+    color: var(--text-secondary);
+}
+
+.help-step-content ul {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+}
+
+.help-step-content li {
+    margin: 0.25rem 0;
+    color: var(--text-secondary);
+}
+
+.help-step-content em {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.shortcuts-section {
+    margin-bottom: 2rem;
+}
+
+.shortcuts-section h4 {
+    color: var(--primary-color);
+    margin-bottom: 1rem;
+    font-size: 1.2rem;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.shortcut-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    transition: var(--transition);
+}
+
+.shortcut-row:hover {
+    background: var(--bg-tertiary);
+    transform: translateX(4px);
+}
+
+.shortcut-row kbd {
+    margin-right: 0.25rem;
+}
+
+.shortcut-row span {
+    color: var(--text-secondary);
+    flex: 1;
+    text-align: right;
+    padding-left: 1rem;
+}
+
 /* Scrollbar Styling */
 ::-webkit-scrollbar {
     width: 8px;
@@ -1468,4 +1729,137 @@ kbd {
     font-style: italic;
 }
 
+/* ========================================
+   POST-PROCESSING TAB STYLES
+   ======================================== */
+
+.postprocess-container {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.postprocess-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.postprocess-header h2 {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.postprocess-header p {
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+.postprocess-panels {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    margin-top: 2rem;
+}
+
+.postprocess-left,
+.postprocess-right {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.postprocess-left .panel,
+.postprocess-right .panel {
+    background: white;
+    padding: 1.5rem;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-md);
+}
+
+.postprocess-left .panel h3,
+.postprocess-right .panel h3 {
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    font-size: 1.3rem;
+}
+
+.postprocess-left .panel h4,
+.postprocess-right .panel h4 {
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+}
+
+#postprocess-categories-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.postprocess-category-badge {
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+#postprocess-preview-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 1rem;
+}
+
+.postprocess-preview-item {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    transition: var(--transition);
+}
+
+.postprocess-preview-item:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.postprocess-preview-item img {
+    width: 100%;
+    height: 120px;
+    object-fit: contain;
+    background: #f9fafb;
+}
+
+.postprocess-preview-item p {
+    padding: 0.5rem;
+    font-size: 0.75rem;
+    text-align: center;
+    color: var(--text-secondary);
+    background: white;
+}
+
+#postprocess-category-filters label {
+    display: block;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    transition: var(--transition);
+}
+
+#postprocess-category-filters label:hover {
+    background: var(--bg-secondary);
+}
+
+#postprocess-category-filters input[type="checkbox"] {
+    margin-right: 8px;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .postprocess-panels {
+        grid-template-columns: 1fr;
+    }
+}
 

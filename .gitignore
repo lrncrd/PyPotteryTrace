@@ -214,5 +214,7 @@ interactive_app/uploads/*
 interactive_app/models/*
 
 test/*
-test/*
+test_vectorized/*
+.vscode/*
+
 .vscode/*

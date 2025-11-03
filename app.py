@@ -12,7 +12,7 @@ Quick launcher for the inte    # Change to interactive_app directory and run
     # Import and run the Flask app
     try:
         from app import app
-        app.run(debug=False, host='0.0.0.0', port=5000)
+        app.run(debug=False, host='0.0.0.0', port=5004)
     except KeyboardInterrupt:
         print("\n\nServer stopped by user")
     except Exception as e:
@@ -80,7 +80,7 @@ def open_browser():
     """Open browser after a short delay to ensure server is ready."""
     time.sleep(2)  # Wait 2 seconds for server to start
     print("\n🌐 Opening browser...")
-    webbrowser.open('http://localhost:5000')
+    webbrowser.open('http://localhost:5004')
 
 def main():
     """Main launcher function."""
@@ -111,7 +111,7 @@ def main():
     print("=" * 60)
     print("\nStarting PyPotteryTrace Interactive...")
     print("\nThe application will be available at:")
-    print("  http://localhost:5000")
+    print("  http://localhost:5004")
     print("\nPress Ctrl+C to stop the server")
     print("=" * 60)
     print()
@@ -130,8 +130,8 @@ def main():
     
     # Import and run the Flask app
     try:
-        from app import app
-        app.run(debug=False, host='0.0.0.0', port=5000)
+        from main import app
+        app.run(debug=False, host='0.0.0.0', port=5004)
     except KeyboardInterrupt:
         print("\n\nServer stopped by user")
     except Exception as e:

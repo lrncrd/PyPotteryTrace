@@ -5,7 +5,7 @@
 FLASK_SECRET_KEY = 'change-this-to-a-random-secret-key'
 FLASK_DEBUG = False  # Set to True for development
 FLASK_HOST = '0.0.0.0'
-FLASK_PORT = 5000
+FLASK_PORT = 5004
 
 # Upload Configuration
 UPLOAD_FOLDER = 'uploads'

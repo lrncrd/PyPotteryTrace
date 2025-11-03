@@ -107,11 +107,12 @@ class TabManager {
         // Extract folder path from first file
         this.folderPath = this.imageFiles[0].webkitRelativePath.split('/')[0];
         
-        // Set default output folder (input_folder + "_vectorized")
-        if (!this.outputFolderPath) {
-            this.outputFolderPath = this.folderPath + '_vectorized';
-            document.getElementById('output-folder-name').textContent = this.outputFolderPath;
-        }
+        // ALWAYS set default output folder (input_folder + "_vectorized")
+        this.outputFolderPath = this.folderPath + '_vectorized';
+        document.getElementById('output-folder-name').textContent = this.outputFolderPath;
+        
+        // Enable post-processing tab immediately (can work independently)
+        this.enableTab('postprocess-tab');
         
         // Update UI
         document.getElementById('folder-info').style.display = 'block';
@@ -223,6 +224,7 @@ class TabManager {
                 setTimeout(async () => {
                     statusDiv.style.display = 'none';
                     this.enableTab('segmentation-tab');
+                    this.enableTab('postprocess-tab');
                     this.switchTab('segmentation-tab');
                     
                     // Wait a bit for tab switch and canvas resize

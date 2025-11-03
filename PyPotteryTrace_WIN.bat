@@ -19,13 +19,13 @@ if errorlevel 1 (
 echo Starting PyPotteryTrace Interactive...
 echo.
 echo The application will be available at:
-echo   http://localhost:5000
+echo   http://localhost:5004
 echo.
 echo Press Ctrl+C to stop the server
 echo ======================================================
 echo.
 
 REM Run the launcher script
-python launch_interactive.py
+python app.py
 
 pause

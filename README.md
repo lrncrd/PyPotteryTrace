@@ -2,7 +2,7 @@
 
 # PyPotteryTrace
 
-<img src="imgs/logo.png" width="250"/>
+<img src="imgs/LogoTrace.png" width="250"/>
 
 A Python tool to convert archaeological pottery drawings into clean vector graphics.
 

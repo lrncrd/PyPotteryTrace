@@ -92,7 +92,7 @@
     <!-- Splash Screen -->
     <div id="splash-screen" class="splash-screen">
         <div class="splash-content">
-            <img src="{{ url_for('static', filename='logo.png') }}" alt="PyPotteryTrace Logo" class="splash-logo">
+            <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="splash-logo">
             <div class="splash-spinner"></div>
             <h1 class="splash-title">PyPotteryTrace</h1>
             <p class="splash-message" id="splash-message">Initializing application...</p>
@@ -108,7 +108,7 @@
         <!-- Header -->
         <header class="app-header">
             <div class="logo-section">
-                <img src="{{ url_for('static', filename='logo.png') }}" alt="PyPotteryTrace Logo" class="logo">
+                <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="logo">
                 <h1>PyPotteryTrace</h1>
             </div>
             <div class="header-actions" style="display: flex; gap: 10px;">
@@ -134,6 +134,10 @@
             <button class="tab-button" data-tab="svg-editor-tab" id="svg-editor-tab-btn" disabled>
                 <span class="tab-icon">✏️</span>
                 <span class="tab-label">SVG Editor</span>
+            </button>
+            <button class="tab-button" data-tab="postprocess-tab" id="postprocess-tab-btn">
+                <span class="tab-icon">🎨</span>
+                <span class="tab-label">Post-Processing</span>
             </button>
         </div>
 
@@ -618,105 +622,454 @@
                 </aside>
             </div>
         </div>
+
+        <!-- Tab 4: Post-Processing -->
+        <div class="tab-content" id="postprocess-tab">
+            <div class="postprocess-container">
+                <header class="postprocess-header">
+                    <h2>🎨 Post-Processing - Batch Export Vectorized Data</h2>
+                    <p>Export all vectorized files from your output folder in different formats</p>
+                </header>
+
+                <div class="postprocess-panels">
+                    <!-- Left Panel: Folder Selection & Preview -->
+                    <div class="postprocess-left">
+                        <div class="panel">
+                            <h3>📂 Select Vectorized Folder</h3>
+                            <p style="color: #666; font-size: 0.9rem; margin-bottom: 15px;">
+                                Select a folder ending with "_vectorized" containing your processed files
+                            </p>
+                            
+                            <div id="postprocess-default-hint" style="display: none; background: #eff6ff; border: 1px solid #3b82f6; padding: 12px; border-radius: 6px; margin-bottom: 15px;">
+                                <p style="margin: 0; color: #1e40af; font-size: 0.9rem;">
+                                    💡 <strong>Suggested folder:</strong><br>
+                                    <span id="postprocess-default-folder" style="font-family: monospace; font-size: 0.85rem;"></span>
+                                </p>
+                            </div>
+                            
+                            <input type="file" id="postprocess-folder-input" webkitdirectory directory style="display: none;">
+                            <button id="postprocess-select-folder-btn" class="btn btn-primary btn-large">
+                                <span>📁</span> Select Vectorized Folder
+                            </button>
+                            
+                            <div id="postprocess-folder-info" style="display: none; margin-top: 20px;">
+                                <div style="background: #f0fdf4; border: 1px solid #86efac; padding: 15px; border-radius: 8px;">
+                                    <h4 style="margin: 0 0 10px 0; color: #15803d;">✓ Folder Loaded</h4>
+                                    <p style="margin: 5px 0;"><strong>Path:</strong> <span id="postprocess-folder-path"></span></p>
+                                    <p style="margin: 5px 0;"><strong>SVG Files:</strong> <span id="postprocess-svg-count">0</span></p>
+                                    <p style="margin: 5px 0;"><strong>PNG Files:</strong> <span id="postprocess-png-count">0</span></p>
+                                </div>
+                                
+                                <div id="postprocess-categories" style="margin-top: 20px;">
+                                    <h4>📋 Categories Found:</h4>
+                                    <div id="postprocess-categories-list" style="margin-top: 10px;">
+                                        <!-- Categories will be populated here -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Panel: Export Options -->
+                    <div class="postprocess-right">
+                        <div class="panel">
+                            <h3>⚙️ Export Settings</h3>
+                            
+                            <div class="form-group">
+                                <h4 style="margin-bottom: 10px;">📄 Output Format</h4>
+                                
+                                <div style="background: #d1fae5; border: 1px solid #10b981; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
+                                    <p style="margin: 0; color: #065f46; font-size: 0.85rem;">
+                                        ✨ <strong>Smart Conversion:</strong> SVG files are converted to PNG/JPG directly in your browser!
+                                        High quality, no server dependencies required.
+                                    </p>
+                                </div>
+                                
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" id="postprocess-format-svg" checked>
+                                    <strong>SVG</strong> - Vector format (editable)
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" id="postprocess-format-png" checked>
+                                    <strong>PNG</strong> - Raster with transparency
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" id="postprocess-format-jpg">
+                                    <strong>JPG</strong> - Compressed raster
+                                </label>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;" id="postprocess-raster-settings">
+                                <h4 style="margin-bottom: 10px;">🖼️ Raster Settings (PNG/JPG)</h4>
+                                <label style="display: block; margin-bottom: 10px;">
+                                    Resolution (DPI):
+                                    <select id="postprocess-dpi" style="width: 100%; padding: 8px; margin-top: 5px;">
+                                        <option value="72">72 DPI (Screen)</option>
+                                        <option value="150">150 DPI (Standard)</option>
+                                        <option value="300" selected>300 DPI (Print Quality)</option>
+                                        <option value="600">600 DPI (High Quality)</option>
+                                    </select>
+                                </label>
+                                
+                                <label style="display: block; margin-bottom: 10px;">
+                                    <input type="checkbox" id="postprocess-transparent-bg" checked>
+                                    Transparent background (PNG only)
+                                </label>
+                                
+                                <div id="postprocess-bg-color-group" style="display: none; margin-top: 10px;">
+                                    <label>
+                                        Background color:
+                                        <input type="color" id="postprocess-bg-color" value="#ffffff" style="margin-left: 10px;">
+                                    </label>
+                                </div>
+
+                                <label style="display: block; margin-top: 10px;">
+                                    JPG Quality:
+                                    <input type="range" id="postprocess-jpg-quality" min="60" max="100" value="90" style="width: 100%;">
+                                    <span id="postprocess-jpg-quality-value">90</span>%
+                                </label>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <h4 style="margin-bottom: 10px;">🏷️ Category Filter</h4>
+                                <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
+                                    Select which layer categories to include in the export. Unselected layers will be removed from SVG files.
+                                </p>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" id="postprocess-select-all-categories" checked>
+                                    <strong>Select All</strong>
+                                </label>
+                                <div id="postprocess-category-filters" style="margin-top: 10px; padding-left: 10px;">
+                                    <!-- Category checkboxes will be populated here -->
+                                </div>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <h4 style="margin-bottom: 10px;">📦 Archive Options</h4>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" id="postprocess-create-zip" checked>
+                                    Create ZIP archive
+                                </label>
+                                <label style="display: block; margin-bottom: 8px;">
+                                    <input type="checkbox" id="postprocess-organize-by-category">
+                                    Organize files by category in subfolders
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="panel">
+                            <h3>🚀 Export</h3>
+                            <button id="postprocess-export-btn" class="btn btn-success btn-large" disabled>
+                                <span>📤</span> Export Files
+                            </button>
+                            <p style="font-size: 0.85rem; color: #666; margin-top: 8px;">
+                                Process and export all selected files
+                            </p>
+                            
+                            <div id="postprocess-progress" style="display: none; margin-top: 20px;">
+                                <div style="background: #f3f4f6; border-radius: 8px; overflow: hidden; height: 30px;">
+                                    <div id="postprocess-progress-bar" style="background: linear-gradient(90deg, #10b981, #3b82f6); height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 0.85rem;">
+                                    </div>
+                                </div>
+                                <p id="postprocess-progress-text" style="margin-top: 8px; font-size: 0.9rem; color: #666; text-align: center;">
+                                </p>
+                            </div>
+
+                            <div id="postprocess-result" style="display: none; margin-top: 20px;">
+                                <!-- Export results will be shown here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Help Modal -->
     <div id="help-modal" class="modal" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content help-modal-content">
             <span class="close">&times;</span>
-            <h2>📖 How to Use PyPotteryTrace Interactive</h2>
+            <h2 class="help-title">📖 PyPotteryLens - User Guide</h2>
             
-            <div class="help-section">
-                <h3>1. Upload Image</h3>
-                <p>Click the upload area to select a pottery drawing image.</p>
+            <div class="help-tabs">
+                <button class="help-tab-btn active" data-help-tab="setup">Setup</button>
+                <button class="help-tab-btn" data-help-tab="segmentation">Segmentation</button>
+                <button class="help-tab-btn" data-help-tab="editor">SVG Editor</button>
+                <button class="help-tab-btn" data-help-tab="postprocess">Post-Processing</button>
+                <button class="help-tab-btn" data-help-tab="shortcuts">Shortcuts</button>
             </div>
 
-            <div class="help-section">
-                <h3>2. Segment Elements</h3>
-                <p><strong>Point Mode:</strong> Click on the object to segment. Use positive (➕) clicks for the object and negative (➖) to exclude areas.</p>
-                <p><strong>Box Mode:</strong> Draw a bounding box around the object.</p>
+            <div class="help-tab-content active" data-help-content="setup">
+                <h3>🚀 Getting Started</h3>
+                <div class="help-step">
+                    <span class="help-step-number">1</span>
+                    <div class="help-step-content">
+                        <h4>Select Image Folder</h4>
+                        <p>Choose a folder containing your pottery images. Supported formats: PNG, JPG, JPEG, TIFF, BMP.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">2</span>
+                    <div class="help-step-content">
+                        <h4>Choose SAM2 Model</h4>
+                        <p>Select model size based on your needs:</p>
+                        <ul>
+                            <li><strong>Tiny:</strong> Fastest, good for quick tests</li>
+                            <li><strong>Small:</strong> Recommended for most cases (best balance)</li>
+                            <li><strong>Base+:</strong> Better accuracy, slower</li>
+                            <li><strong>Large:</strong> Best quality, requires more resources</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">3</span>
+                    <div class="help-step-content">
+                        <h4>Enable ML Training Data (Optional)</h4>
+                        <p>Check this option to automatically export segmentation masks in COCO format for training custom models.</p>
+                    </div>
+                </div>
             </div>
 
-            <div class="help-section">
-                <h3>3. Assign Category & Vectorization</h3>
-                <p>Select the category and check/uncheck "Enable vectorization" to choose between SVG (vector) or PNG (raster with transparent background) output.</p>
-                <p>Some categories have vectorization disabled by default (Decoration, Prospectus, Handle/Application).</p>
+            <div class="help-tab-content" data-help-content="segmentation">
+                <h3>✂️ Segmentation Workflow</h3>
+                <div class="help-step">
+                    <span class="help-step-number">1</span>
+                    <div class="help-step-content">
+                        <h4>Choose Segmentation Mode</h4>
+                        <p><strong>Point Mode:</strong> Click to add positive (➕) or negative (➖) points. SAM2 will segment the object based on your clicks.</p>
+                        <p><strong>Box Mode:</strong> Draw a bounding box around the entire object for automatic segmentation.</p>
+                        <p><strong>Rotation Center:</strong> Set the symmetry axis for profile mirroring.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">2</span>
+                    <div class="help-step-content">
+                        <h4>Assign Category</h4>
+                        <p>Select the appropriate category for the segmented element:</p>
+                        <ul>
+                            <li><strong>Profile:</strong> Main vessel profile (auto-mirrored if rotation center is set)</li>
+                            <li><strong>Application:</strong> Applied decorations, stamps</li>
+                            <li><strong>Handle:</strong> Vessel handles</li>
+                            <li><strong>Prospectus:</strong> Front/side views</li>
+                            <li><strong>Decoration:</strong> Painted or incised decorations</li>
+                            <li><strong>Section:</strong> Cross-sections</li>
+                            <li><strong>Detail:</strong> Close-up details</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">3</span>
+                    <div class="help-step-content">
+                        <h4>Vectorization Option</h4>
+                        <p>Check "Enable vectorization" to export as SVG (vector). Uncheck to export as PNG with transparent background.</p>
+                        <p><em>Note: Some categories default to PNG export (Decoration, Handle, Application).</em></p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">4</span>
+                    <div class="help-step-content">
+                        <h4>Export</h4>
+                        <p>Click "Generate SVG" to create the vectorized output and switch to SVG Editor for refinement.</p>
+                    </div>
+                </div>
             </div>
 
-            <div class="help-section">
-                <h3>4. Set Rotation Center (Optional)</h3>
-                <p>For profiles, switch to Rotation Center mode and click to set the symmetry axis. Profiles will be automatically mirrored.</p>
+            <div class="help-tab-content" data-help-content="editor">
+                <h3>✏️ SVG Editor</h3>
+                <div class="help-step">
+                    <span class="help-step-number">1</span>
+                    <div class="help-step-content">
+                        <h4>View Mode</h4>
+                        <p>Pan and zoom to navigate the SVG. Click and drag on images to reposition them.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">2</span>
+                    <div class="help-step-content">
+                        <h4>Select Mode</h4>
+                        <p>Click to select individual path points. Hold Shift for multi-selection. Hold Ctrl while dragging to move points.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">3</span>
+                    <div class="help-step-content">
+                        <h4>Add Point Mode</h4>
+                        <p>Click on any path to add a new point at that position. Useful for adding detail to simplified paths.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">4</span>
+                    <div class="help-step-content">
+                        <h4>Delete Mode</h4>
+                        <p>Click on points to remove them. Use this to simplify overly complex paths.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">5</span>
+                    <div class="help-step-content">
+                        <h4>Layer Management</h4>
+                        <p>Toggle layer visibility, add PNG images, and organize your composition. Use "Add PNG Image" to import reference photos or decorations.</p>
+                    </div>
+                </div>
             </div>
 
-            <div class="help-section">
-                <h3>5. Export</h3>
-                <p>Click "Export Segments" to generate a ZIP file containing SVG files for vectorized segments and PNG files with transparent backgrounds for raster segments.</p>
+            <div class="help-tab-content" data-help-content="postprocess">
+                <h3>🎨 Post-Processing & Batch Export</h3>
+                <div class="help-step">
+                    <span class="help-step-number">1</span>
+                    <div class="help-step-content">
+                        <h4>Select Vectorized Folder</h4>
+                        <p>Choose a folder ending with "_vectorized" containing your processed SVG and PNG files.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">2</span>
+                    <div class="help-step-content">
+                        <h4>Choose Output Formats</h4>
+                        <p>Select which formats to export: SVG (vector), PNG (raster with transparency), or JPG (compressed).</p>
+                        <p><em>Smart Conversion: SVG files are converted to PNG/JPG directly in your browser at high quality!</em></p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">3</span>
+                    <div class="help-step-content">
+                        <h4>Category Filtering</h4>
+                        <p>Select which layer categories to include in the export. Unselected layers will be removed from SVG files.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">4</span>
+                    <div class="help-step-content">
+                        <h4>Export Options</h4>
+                        <p>Configure DPI, transparency, JPG quality, and archive settings. Enable "Organize by category" to create subfolders for each category.</p>
+                    </div>
+                </div>
             </div>
 
-            <div class="help-section">
+            <div class="help-tab-content" data-help-content="shortcuts">
                 <h3>⌨️ Keyboard Shortcuts</h3>
-                <ul>
-                    <li><kbd>P</kbd> - Point Mode</li>
-                    <li><kbd>B</kbd> - Box Mode</li>
-                    <li><kbd>R</kbd> - Rotation Center Mode</li>
-                    <li><kbd>Ctrl+Z</kbd> - Undo</li>
-                    <li><kbd>+</kbd> - Zoom In</li>
-                    <li><kbd>-</kbd> - Zoom Out</li>
-                </ul>
+                
+                <div class="shortcuts-section">
+                    <h4>🎯 Segmentation Tab</h4>
+                    <div class="shortcut-row">
+                        <kbd>P</kbd>
+                        <span>Point Mode</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>B</kbd>
+                        <span>Box Mode</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>R</kbd>
+                        <span>Rotation Center Mode</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Ctrl</kbd> + <kbd>Z</kbd>
+                        <span>Undo Last Action</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>+</kbd> / <kbd>-</kbd>
+                        <span>Zoom In / Out</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Mouse Wheel</kbd>
+                        <span>Zoom</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Drag</kbd>
+                        <span>Pan Canvas</span>
+                    </div>
+                </div>
+
+                <div class="shortcuts-section">
+                    <h4>✏️ SVG Editor</h4>
+                    <div class="shortcut-row">
+                        <kbd>V</kbd>
+                        <span>View Mode</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>S</kbd>
+                        <span>Select Mode</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>A</kbd>
+                        <span>Add Point Mode</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>D</kbd> / <kbd>Delete</kbd>
+                        <span>Delete Mode / Delete Selected</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Shift</kbd> + <kbd>Click</kbd>
+                        <span>Multi-select Points</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Ctrl</kbd> + <kbd>Drag</kbd>
+                        <span>Move Selected Point</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Shift</kbd> + <kbd>Drag</kbd>
+                        <span>Force Pan (ignore images)</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Ctrl</kbd> + <kbd>Z</kbd>
+                        <span>Undo</span>
+                    </div>
+                </div>
+
+                <div class="shortcuts-section">
+                    <h4>🔄 Navigation</h4>
+                    <div class="shortcut-row">
+                        <kbd>←</kbd> / <kbd>→</kbd>
+                        <span>Previous / Next Image</span>
+                    </div>
+                    <div class="shortcut-row">
+                        <kbd>Esc</kbd>
+                        <span>Close Modal / Cancel Action</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- Info Modal -->
     <div id="info-modal" class="modal" style="display: none;">
-        <div class="modal-content">
+        <div class="modal-content info-modal-content">
             <span class="close info-close">&times;</span>
-            <div style="text-align: center; margin-bottom: 2rem;">
-                <img src="{{ url_for('static', filename='logo.png') }}" alt="PyPotteryTrace Logo" style="width: 120px; height: auto; margin-bottom: 1rem;">
-                <h2 style="margin: 0;">PyPotteryTrace</h2>
-                <p style="color: #666; font-size: 1.1rem; margin-top: 0.5rem;">Interactive Archaeological Vectorization Tool</p>
+            
+            <!-- Header with Logo -->
+            <div class="info-header">
+                <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="info-logo">
+                <h2 class="info-title">PyPotteryLens</h2>
             </div>
             
-            <div class="help-section">
-                <h3>📋 Version Information</h3>
-                <p><strong>Version:</strong> 2.0 Interactive</p>
-                <p><strong>Release Date:</strong> October 2025</p>
-                <p><strong>License:</strong> Open Source</p>
+            <!-- Version & Author -->
+            <div class="info-metadata">
+                <div class="info-row">
+                    <span class="info-label">Version:</span>
+                    <span class="info-value">v0.2.0</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Author:</span>
+                    <span class="info-value">Lorenzo Cardarelli</span>
+                </div>
             </div>
-
-            <div class="help-section">
-                <h3>👨‍💻 Author</h3>
-                <p><strong>Lorenzo Cardarelli</strong></p>
-                <p style="color: #666; font-size: 0.9rem;">Archaeological Vectorization Specialist</p>
-            </div>
-
-            <div class="help-section">
-                <h3>✨ Features</h3>
-                <ul style="margin-left: 1.5rem;">
-                    <li>SAM2-powered interactive segmentation</li>
-                    <li>Multi-category element classification</li>
-                    <li>Profile mirroring with rotation center</li>
-                    <li>SVG and PNG export with layers</li>
-                    <li>ML training data export (COCO format)</li>
-                    <li>Interactive SVG editing</li>
-                </ul>
-            </div>
-
-            <div class="help-section">
-                <h3>🔧 Technology Stack</h3>
-                <ul style="margin-left: 1.5rem;">
-                    <li><strong>Backend:</strong> Python, Flask, SAM2</li>
-                    <li><strong>Frontend:</strong> JavaScript, Canvas API</li>
-                    <li><strong>Vectorization:</strong> OpenCV, scikit-image</li>
-                    <li><strong>ML Export:</strong> COCO format support</li>
-                </ul>
-            </div>
-
-            <div class="help-section" style="text-align: center; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;">
-                <p style="color: #666; font-size: 0.85rem;">
-                    © 2025 Lorenzo Cardarelli - PyPotteryTrace Project<br>
-                    Built with ❤️ for Archaeological Research
-                </p>
+            
+            <!-- System Information -->
+            <div class="info-section">
+                <h3 class="info-section-title">System Information:</h3>
+                <div class="info-row">
+                    <span class="info-label">CPU:</span>
+                    <span class="info-value" id="info-cpu">Loading...</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">GPU (CUDA):</span>
+                    <span class="info-value" id="info-gpu">Loading...</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">MPS (Apple Silicon):</span>
+                    <span class="info-value" id="info-mps">Not Available</span>
+                </div>
             </div>
         </div>
     </div>
@@ -727,6 +1080,7 @@
     <script src="{{ url_for('static', filename='js/segmentation.js') }}"></script>
     <script src="{{ url_for('static', filename='js/svg-editor.js') }}"></script>
     <script src="{{ url_for('static', filename='js/batch-export.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/postprocess.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

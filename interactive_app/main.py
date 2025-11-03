@@ -24,6 +24,8 @@ import base64
 from pathlib import Path
 import uuid
 from datetime import datetime
+import zipfile
+import traceback
 
 # Import SAM2 and processing modules
 from sam2_handler import SAM2Handler
@@ -565,7 +567,8 @@ def generate_svg_preview():
                     segments=session['segments'],
                     image_path=session['image_path'],
                     output_path=str(ml_output_path),
-                    include_rle=False
+                    include_rle=False,
+                    rotation_center=session.get('rotation_center')
                 )
                 
                 # Copy original image to ML training folder
@@ -1194,14 +1197,19 @@ def list_svgs(session_id):
 
 @app.route('/api/download/<session_id>/<path:filename>')
 def download_file(session_id, filename):
-    """Download generated file."""
-    if session_id not in sessions_data:
-        return jsonify({'error': 'Session not found'}), 404
-    
+    """Download generated file (works for both segmentation and post-processing sessions)."""
+    # Check if file exists in upload folder (works for any session_id)
     file_path = Path(app.config['UPLOAD_FOLDER']) / session_id / filename
     
     if not file_path.exists():
         return jsonify({'error': 'File not found'}), 404
+    
+    # Optional: Verify session exists if it's a segmentation session
+    # (post-processing sessions are temporary UUIDs and won't be in sessions_data)
+    if session_id in sessions_data:
+        print(f"✓ Download for segmentation session: {session_id}")
+    else:
+        print(f"✓ Download for temporary session (post-processing): {session_id}")
     
     return send_file(file_path, as_attachment=True, download_name=file_path.name)
 
@@ -1221,6 +1229,37 @@ def get_session_info(session_id):
         'rotation_center': session.get('rotation_center'),
         'created_at': session['created_at']
     })
+
+
+@app.route('/api/system_info')
+def get_system_info():
+    """Get system information (CPU, GPU, etc.)."""
+    try:
+        import torch
+        
+        gpu_available = torch.cuda.is_available()
+        gpu_count = torch.cuda.device_count() if gpu_available else 0
+        gpu_name = torch.cuda.get_device_name(0) if gpu_available and gpu_count > 0 else None
+        
+        # Check for Apple Silicon MPS
+        mps_available = hasattr(torch.backends, 'mps') and torch.backends.mps.is_available()
+        
+        return jsonify({
+            'success': True,
+            'gpu_available': gpu_available,
+            'gpu_count': gpu_count,
+            'gpu_name': gpu_name,
+            'mps_available': mps_available
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'gpu_available': False,
+            'gpu_count': 0,
+            'gpu_name': None,
+            'mps_available': False
+        })
 
 
 @app.route('/api/get_vectorized_components', methods=['POST'])
@@ -1368,7 +1407,8 @@ def export_ml_masks():
                 segments=session['segments'],
                 image_path=session['image_path'],
                 output_path=str(output_path),
-                include_rle=include_rle
+                include_rle=include_rle,
+                rotation_center=session.get('rotation_center')
             )
         else:
             # Simple format export
@@ -1376,7 +1416,8 @@ def export_ml_masks():
             result = ml_export_handler.export_simple_format(
                 segments=session['segments'],
                 image_path=session['image_path'],
-                output_path=str(output_path)
+                output_path=str(output_path),
+                rotation_center=session.get('rotation_center')
             )
         
         return jsonify({
@@ -1421,7 +1462,8 @@ def export_ml_dataset():
             segments=session['segments'],
             image_path=session['image_path'],
             output_dir=str(dataset_dir),
-            format=export_format
+            format=export_format,
+            rotation_center=session.get('rotation_center')
         )
         
         # Create ZIP file
@@ -1456,7 +1498,7 @@ if __name__ == '__main__':
     print("PyPotteryTrace Interactive Server")
     print("=" * 60)
     print("Starting server...")
-    print("Open your browser at: http://localhost:5000")
+    print("Open your browser at: http://localhost:5004")
     print("=" * 60)
 
 
@@ -1573,6 +1615,244 @@ def save_modified_svg():
         traceback.print_exc()
         return jsonify({'success': False, 'error': str(e)})
 
-    
-    # Run Flask app
-    app.run(debug=False, host='0.0.0.0', port=5000)
+
+@app.route('/api/postprocess_export', methods=['POST'])
+def postprocess_export():
+    """
+    Post-processing batch export endpoint.
+    Receives client-converted files (SVG/PNG/JPG) with category metadata extracted from SVG layers.
+    """
+    try:
+        import tempfile
+        import shutil
+        import traceback
+        import xml.etree.ElementTree as ET
+        from PIL import Image
+        from io import BytesIO
+        import base64
+        
+        # Parse JSON payload
+        data = request.get_json()
+        
+        # Get files and settings
+        svg_files = data.get('svg_files', [])
+        png_files = data.get('png_files', [])
+        jpg_files = data.get('jpg_files', [])
+        
+        settings = data.get('settings', {})
+        
+        print(f"\nReceived: {len(svg_files)} SVG, {len(png_files)} PNG, {len(jpg_files)} JPG files")
+        
+        if not svg_files and not png_files and not jpg_files:
+            return jsonify({'error': 'No files provided'}), 400
+        
+        # Create temporary directory for processing
+        temp_dir = Path(tempfile.mkdtemp())
+        output_dir = temp_dir / 'output'
+        output_dir.mkdir(exist_ok=True)
+        
+        # Extract settings
+        formats = settings.get('formats', {})
+        raster_settings = settings.get('raster', {})
+        archive_settings = settings.get('archive', {})
+        organize_by_category = archive_settings.get('organizeByCategory', False)
+        categories_filter = archive_settings.get('categories', [])
+        
+        dpi = raster_settings.get('dpi', 300)
+        jpg_quality = raster_settings.get('jpgQuality', 90)
+        
+        processed_files = []
+        total_files = 0
+        
+        def extract_svg_category(svg_content):
+            """Extract category from SVG layer IDs like 'layer_Profile_Mirrored'
+            Returns the PRIMARY category (first found with highest priority)"""
+            categories_found = []
+            try:
+                root = ET.fromstring(svg_content)
+                # Find all <g> elements with id starting with "layer_"
+                for g in root.findall(".//{http://www.w3.org/2000/svg}g[@id]"):
+                    layer_id = g.get('id', '')
+                    if layer_id.startswith('layer_'):
+                        # Extract category after "layer_" prefix
+                        category_raw = layer_id.replace('layer_', '')
+                        
+                        # Handle special cases with priority
+                        if 'Profile_Mirrored' in category_raw or 'Mirrored' in category_raw:
+                            categories_found.append(('Profile_Mirrored', 1))  # Priority 1 (highest)
+                        elif 'Symmetry' in category_raw:
+                            categories_found.append(('Symmetry_Line', 2))
+                        elif 'Diameter' in category_raw:
+                            categories_found.append(('Diameter', 3))
+                        elif 'Profile' in category_raw:
+                            categories_found.append(('Profile', 4))
+                        elif 'Application' in category_raw:
+                            categories_found.append(('Application', 5))
+                        elif 'Handle' in category_raw:
+                            categories_found.append(('Handle', 6))
+                        elif 'Decoration' in category_raw:
+                            categories_found.append(('Decoration', 7))
+                        elif 'Section' in category_raw:
+                            categories_found.append(('Section', 8))
+                        elif 'Detail' in category_raw:
+                            categories_found.append(('Detail', 9))
+                        else:
+                            # Generic category
+                            first_part = category_raw.split('_')[0] if '_' in category_raw else category_raw
+                            categories_found.append((first_part, 10))
+                
+                # Sort by priority and return first (highest priority)
+                if categories_found:
+                    categories_found.sort(key=lambda x: x[1])
+                    return categories_found[0][0]
+                    
+            except Exception as e:
+                print(f"  ⚠ Error parsing SVG for category: {e}")
+            return 'Other'
+        
+        def get_output_path(base_name, category, extension):
+            """Get output path based on organization settings."""
+            if organize_by_category:
+                cat_dir = output_dir / category
+                cat_dir.mkdir(exist_ok=True)
+                return cat_dir / f"{base_name}.{extension}"
+            else:
+                return output_dir / f"{base_name}.{extension}"
+        
+        # Process SVG files
+        for file_data in svg_files:
+            try:
+                filename = file_data['name']
+                # Remove '_vectorized' suffix from filename
+                clean_filename = filename.replace('_vectorized', '')
+                base_name = Path(clean_filename).stem
+                svg_content = file_data['content']
+                
+                # Extract category from SVG layers
+                category = extract_svg_category(svg_content)
+                print(f"  📄 {filename} → Clean: {clean_filename} → Category: {category}")
+                
+                # Skip if category is filtered
+                if categories_filter and category not in categories_filter:
+                    print(f"  ⚠ Skipping {filename} (category '{category}' not selected)")
+                    continue
+                
+                # Export as SVG
+                if formats.get('svg', False):
+                    svg_output = get_output_path(base_name, category, 'svg')
+                    with open(svg_output, 'w', encoding='utf-8') as f:
+                        f.write(svg_content)
+                    processed_files.append(str(svg_output))
+                    total_files += 1
+                    print(f"  ✓ Saved SVG: {svg_output}")
+                
+            except Exception as e:
+                print(f"Error processing SVG file {filename}: {e}")
+                traceback.print_exc()
+                continue
+        
+        # Process PNG files (client-converted from SVG)
+        for file_data in png_files:
+            try:
+                filename = file_data['name']
+                # Remove '_vectorized' suffix from filename
+                clean_filename = filename.replace('_vectorized', '')
+                base_name = Path(clean_filename).stem
+                category = file_data.get('category', 'Other')
+                
+                # Skip if category is filtered
+                if categories_filter and category not in categories_filter:
+                    print(f"  ⚠ Skipping {filename} (category '{category}' not selected)")
+                    continue
+                
+                # Decode base64 PNG
+                png_bytes = base64.b64decode(file_data['content'])
+                img = Image.open(BytesIO(png_bytes))
+                
+                # Export as PNG
+                if formats.get('png', False):
+                    png_output = get_output_path(base_name, category, 'png')
+                    img.save(png_output, 'PNG', dpi=(dpi, dpi))
+                    processed_files.append(str(png_output))
+                    total_files += 1
+                    print(f"  ✓ Saved PNG: {png_output}")
+                
+            except Exception as e:
+                print(f"Error processing PNG file {filename}: {e}")
+                traceback.print_exc()
+                continue
+        
+        # Process JPG files (client-converted from SVG)
+        for file_data in jpg_files:
+            try:
+                filename = file_data['name']
+                # Remove '_vectorized' suffix from filename
+                clean_filename = filename.replace('_vectorized', '')
+                base_name = Path(clean_filename).stem
+                category = file_data.get('category', 'Other')
+                
+                # Skip if category is filtered
+                if categories_filter and category not in categories_filter:
+                    print(f"  ⚠ Skipping {filename} (category '{category}' not selected)")
+                    continue
+                
+                # Decode base64 JPG
+                jpg_bytes = base64.b64decode(file_data['content'])
+                img = Image.open(BytesIO(jpg_bytes))
+                
+                # Export as JPG
+                if formats.get('jpg', False):
+                    jpg_output = get_output_path(base_name, category, 'jpg')
+                    img.save(jpg_output, 'JPEG', quality=jpg_quality, dpi=(dpi, dpi))
+                    processed_files.append(str(jpg_output))
+                    total_files += 1
+                    print(f"  ✓ Saved JPG: {jpg_output}")
+                
+            except Exception as e:
+                print(f"Error processing JPG file {filename}: {e}")
+                traceback.print_exc()
+                continue
+        
+        # Create ZIP if requested
+        if archive_settings.get('createZip', True):
+            zip_path = temp_dir / 'postprocess_export.zip'
+            
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for file_path in processed_files:
+                    # Get relative path from output_dir
+                    rel_path = Path(file_path).relative_to(output_dir)
+                    zip_file.write(file_path, rel_path)
+            
+            # Store ZIP path for download (you may want to move it to a permanent location)
+            # For now, we'll keep it in temp and provide download link
+            session_id = str(uuid.uuid4())
+            permanent_zip_dir = Path(app.config['UPLOAD_FOLDER']) / session_id
+            permanent_zip_dir.mkdir(parents=True, exist_ok=True)
+            permanent_zip_path = permanent_zip_dir / 'postprocess_export.zip'
+            shutil.move(str(zip_path), str(permanent_zip_path))
+            
+            # Clean up temp directory
+            shutil.rmtree(temp_dir)
+            
+            return jsonify({
+                'success': True,
+                'total_files': total_files,
+                'formats': [k for k, v in formats.items() if v],
+                'download_url': f'/api/download/{session_id}/postprocess_export.zip'
+            })
+        else:
+            # Return individual files (not implemented for simplicity)
+            # In a real scenario, you'd need to handle individual file downloads
+            shutil.rmtree(temp_dir)
+            return jsonify({
+                'success': True,
+                'total_files': total_files,
+                'formats': [k for k, v in formats.items() if v],
+                'message': 'Files processed successfully'
+            })
+        
+    except Exception as e:
+        print(f"Error in postprocess_export: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
