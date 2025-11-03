@@ -259,7 +259,7 @@ class VectorizationHandler:
                 output_svg_path=str(svg_output_path),
                 epsilon=epsilon,
                 smoothing_factor=smoothing_factor,
-                lines_threshold=200,
+                lines_threshold=100,
                 points_threshold=30,
                 min_dotted_area=10,
                 max_dotted_area=200,
@@ -388,13 +388,13 @@ class VectorizationHandler:
                 output_svg_path=tmp_output_path,
                 epsilon=epsilon,
                 smoothing_factor=smoothing_factor,
-                lines_threshold=200,  # High to get clean lines
+                lines_threshold=25,  # High to get clean lines
                 points_threshold=30,
                 min_dotted_area=10,
                 max_dotted_area=200,
                 dotted_circularity=0.2,
-                dark_threshold=100,
-                min_decoration_area=20000,
+                dark_threshold=100, #100
+                min_decoration_area=20000000,
                 filter_branches=True,
                 show_debug_plots=False,
                 save_debug_images=False,
