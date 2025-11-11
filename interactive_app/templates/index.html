@@ -121,9 +121,22 @@
             </div>
         </header>
 
+        <!-- Project Info Bar -->
+        <div id="project-info-bar" class="project-info-bar" style="display: none;">
+            <div class="project-info-content">
+                <span class="project-icon" id="project-icon">🏺</span>
+                <span class="project-label">Current Project:</span>
+                <span id="current-project-name" class="project-name">No project selected</span>
+            </div>
+        </div>
+
         <!-- Tab Navigation -->
         <div class="tab-navigation">
-            <button class="tab-button active" data-tab="model-tab">
+            <button class="tab-button active" data-tab="projects-tab">
+                <span class="tab-icon">📂</span>
+                <span class="tab-label">Projects</span>
+            </button>
+            <button class="tab-button" data-tab="model-tab">
                 <span class="tab-icon">⚙️</span>
                 <span class="tab-label">Setup</span>
             </button>
@@ -141,8 +154,93 @@
             </button>
         </div>
 
+        <!-- Tab 0: Projects -->
+        <div class="tab-content active" id="projects-tab">
+            <div class="projects-page">
+                <!-- Top Bar -->
+                <div class="projects-top-bar">
+                    <div class="top-bar-left">
+                        <h2>📁 Projects</h2>
+                        <p>Manage your pottery analysis projects</p>
+                    </div>
+                    <div class="top-bar-right">
+                        <button class="btn btn-secondary" id="refresh-projects-btn">
+                            🔄 Refresh
+                        </button>
+                        <button class="btn btn-primary" id="new-project-btn">
+                            ➕ New Project
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Projects Grid -->
+                <div class="projects-main">
+                    <div id="projects-list" class="projects-grid">
+                        <div class="loading-message">Loading projects...</div>
+                    </div>
+                </div>
+
+                <!-- Create Project Modal (Hidden by default) -->
+                <div id="create-project-modal" class="project-modal" style="display: none;">
+                    <div class="modal-overlay"></div>
+                    <div class="modal-dialog">
+                        <div class="modal-header">
+                            <h3>Create New Project</h3>
+                            <button class="modal-close" id="close-create-modal">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label for="new-project-name">Project Name *</label>
+                                <input type="text" 
+                                       id="new-project-name" 
+                                       class="form-control" 
+                                       placeholder="e.g., Pompeii_Pottery_2024"
+                                       required>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="new-project-description">Description</label>
+                                <textarea id="new-project-description" 
+                                          class="form-control" 
+                                          rows="3"
+                                          placeholder="Brief description of your project..."></textarea>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Choose an Icon</label>
+                                <div id="icon-selector" class="icon-selector">
+                                    <button class="icon-option active" data-icon="icon1">
+                                        <img src="{{ url_for('static', filename='imgs/icons/1.png') }}" alt="Icon 1">
+                                    </button>
+                                    <button class="icon-option" data-icon="icon2">
+                                        <img src="{{ url_for('static', filename='imgs/icons/2.png') }}" alt="Icon 2">
+                                    </button>
+                                    <button class="icon-option" data-icon="icon3">
+                                        <img src="{{ url_for('static', filename='imgs/icons/3.png') }}" alt="Icon 3">
+                                    </button>
+                                    <button class="icon-option" data-icon="icon4">
+                                        <img src="{{ url_for('static', filename='imgs/icons/4.png') }}" alt="Icon 4">
+                                    </button>
+                                    <button class="icon-option" data-icon="icon5">
+                                        <img src="{{ url_for('static', filename='imgs/icons/5.png') }}" alt="Icon 5">
+                                    </button>
+                                    <button class="icon-option" data-icon="icon6">
+                                        <img src="{{ url_for('static', filename='imgs/icons/6.png') }}" alt="Icon 6">
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" id="cancel-create-btn">Cancel</button>
+                            <button class="btn btn-primary" id="create-project-btn">Create Project</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Tab 1: Setup -->
-        <div class="tab-content active" id="model-tab">
+        <div class="tab-content" id="model-tab">
             <div class="setup-container">
                 <div class="setup-header">
                     <h2>📁 Setup - Select Folder and Model</h2>
@@ -162,19 +260,6 @@
                                 <p><strong>Folder:</strong> <span id="folder-name"></span></p>
                                 <p><strong>Images found:</strong> <span id="images-count">0</span></p>
                                 <div id="images-preview" class="images-preview"></div>
-                            </div>
-                        </div>
-                        
-                        <div class="folder-selection" style="margin-top: 20px;">
-                            <h4 style="margin-bottom: 10px;">📤 Output Folder</h4>
-                            <input type="file" id="output-folder-input" webkitdirectory directory style="display: none;">
-                            <button type="button" id="select-output-folder-btn" class="btn btn-secondary">
-                                <span>📁</span> Select Output Folder
-                            </button>
-                            <div id="output-folder-info" class="folder-info" style="display: block; margin-top: 10px;">
-                                <p style="font-size: 0.9rem; color: #666;">
-                                    <strong>Output:</strong> <span id="output-folder-name">(auto: input_folder_vectorized)</span>
-                                </p>
                             </div>
                         </div>
                     </div>
@@ -211,21 +296,6 @@
                                     <span class="model-desc">~900MB - Slow - Best accuracy</span>
                                 </label>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Panel 3: Training Data -->
-                    <div class="setup-panel">
-                        <h3>🎓 ML Training Data</h3>
-                        <div class="training-option">
-                            <label class="checkbox-label">
-                                <input type="checkbox" id="save-training-data">
-                                <span>💾 Save segmentation data for ML training</span>
-                            </label>
-                            <p class="option-description">
-                                Automatically export masks and annotations in COCO format to train custom models.
-                                <br><small style="color: #10b981;">✓ Data will be saved in output_folder/ml_training/</small>
-                            </p>
                         </div>
                     </div>
                 </div>
@@ -370,6 +440,14 @@
                     <button id="undo-btn" class="toolbar-btn" title="Undo" disabled>
                         <span>↶</span>
                     </button>
+                </div>
+
+                <!-- Image Navigation Grid -->
+                <div class="image-grid-panel">
+                    <h3>📁 Project Images (<span id="grid-image-count">0</span>)</h3>
+                    <div id="image-navigation-grid" class="image-navigation-grid">
+                        <p class="empty-message">No images in project</p>
+                    </div>
                 </div>
             </main>
 
@@ -1076,6 +1154,8 @@
 
     <!-- Scripts -->
     <script src="{{ url_for('static', filename='js/tabs.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/projects.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/image-grid.js') }}"></script>
     <script src="{{ url_for('static', filename='js/canvas.js') }}"></script>
     <script src="{{ url_for('static', filename='js/segmentation.js') }}"></script>
     <script src="{{ url_for('static', filename='js/svg-editor.js') }}"></script>

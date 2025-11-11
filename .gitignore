@@ -218,3 +218,6 @@ test_vectorized/*
 .vscode/*
 
 .vscode/*
+
+projects/*
+projects

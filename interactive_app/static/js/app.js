@@ -18,6 +18,11 @@ class PyPotteryTraceApp {
         this.currentImageIndex = 0;
         this.saveTrainingData = false;
         
+        // Project context for persistence
+        this.currentProjectId = null;
+        this.currentImageName = null;
+        this.saveTimeout = null;  // For debouncing auto-save
+        
         console.log('Calling init()');
         this.init();
         console.log('Constructor complete');
@@ -27,6 +32,17 @@ class PyPotteryTraceApp {
         this.setupEventListeners();
         this.setupHelpModal();
         this.updateUI();
+        
+        // Listen for image selection from grid
+        document.addEventListener('imageSelected', async (e) => {
+            const { projectId, filename, index } = e.detail;
+            await this.loadProjectImage(projectId, filename, index);
+        });
+        
+        // Listen for session loaded event from ImageGrid
+        document.addEventListener('sessionLoaded', (e) => {
+            this.loadSession(e.detail);
+        });
     }
     
     setupEventListeners() {
@@ -435,6 +451,8 @@ class PyPotteryTraceApp {
                     id: data.segment_id,
                     name: name,
                     category: category,
+                    mask: segmentationManager.currentMask,  // Save mask data for persistence
+                    contours: contoursToSave,  // Save contours for redrawing
                     should_vectorize: shouldVectorize
                 });
                 
@@ -445,6 +463,9 @@ class PyPotteryTraceApp {
                     // Clear SVG overlay since we now have updated masks
                     window.canvasManager.clearSVG();
                 }
+                
+                // Save annotations to project if we have a project ID
+                await this.saveAnnotationsToProject();
                 
                 // Update UI
                 this.updateSegmentsList();
@@ -579,6 +600,9 @@ class PyPotteryTraceApp {
                 this.updateSegmentsList();
                 this.updateStats();
                 
+                // Save to project
+                await this.saveAnnotationsToProject();
+                
                 this.showNotification('Segment deleted', 'success');
             } else {
                 throw new Error(data.error || 'Failed to delete segment');
@@ -626,6 +650,9 @@ class PyPotteryTraceApp {
                 if (window.canvasManager) {
                     window.canvasManager.drawRotationCenter(x, y);
                 }
+                
+                // Save to project
+                await this.saveAnnotationsToProject();
                 
                 this.showNotification('Rotation center set', 'success');
             } else {
@@ -904,6 +931,303 @@ class PyPotteryTraceApp {
         }
     }
     
+    /**
+     * Load an image from project (called when clicking thumbnail)
+     */
+    async loadProjectImage(projectId, filename, index) {
+        try {
+            console.log('Loading project image:', filename);
+            
+            // Store project info for later use
+            this.currentProjectId = projectId;
+            this.currentImageName = filename;
+            
+            // CLEAR EVERYTHING FROM PREVIOUS IMAGE
+            this.segments = [];
+            this.rotationCenter = null;
+            
+            // Clear canvas masks
+            if (window.canvasManager) {
+                window.canvasManager.savedMasks = [];
+                window.canvasManager.clearRotationCenter();
+            }
+            
+            // Clear segmentation preview
+            if (window.segmentationManager) {
+                window.segmentationManager.currentMask = null;
+                window.segmentationManager.previewContours = null;
+                window.segmentationManager.points = [];
+                window.segmentationManager.labels = [];
+            }
+            
+            // Update UI immediately to show empty state
+            this.updateSegmentsList();
+            this.updateStats();
+            document.getElementById('rotation-center-info').style.display = 'none';
+            
+            // Create a session for this image
+            const imageUrl = `/api/projects/${projectId}/images/${encodeURIComponent(filename)}?folder=uploads`;
+            
+            // Create a fake File object to upload
+            const response = await fetch(imageUrl);
+            const blob = await response.blob();
+            const file = new File([blob], filename, { type: blob.type });
+            
+            // Upload image to create session
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const uploadResponse = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const uploadData = await uploadResponse.json();
+            
+            if (uploadData.success) {
+                this.sessionId = uploadData.session_id;
+                this.currentImage = uploadData.image_url;
+                this.currentImageFilename = filename;  // Store filename for SVG export
+                
+                // Update UI
+                document.getElementById('filename').textContent = filename;
+                document.getElementById('current-image-number').textContent = index + 1;
+                
+                console.log('Session created:', this.sessionId);
+                
+                // Load saved annotations from project if they exist
+                await this.loadAnnotationsFromProject(projectId, filename);
+                
+                this.showNotification('Image loaded successfully', 'success');
+            }
+        } catch (error) {
+            console.error('Error loading project image:', error);
+            this.showNotification('Failed to load image: ' + error.message, 'error');
+        }
+    }
+    
+    /**
+     * Save annotations to project (with debounce)
+     */
+    async saveAnnotationsToProject() {
+        if (!this.currentProjectId || !this.currentImageName) {
+            console.log('No project context, skipping save');
+            return;
+        }
+        
+        // Clear previous timeout
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+        }
+        
+        // Debounce: save after 500ms of inactivity
+        this.saveTimeout = setTimeout(async () => {
+            try {
+                console.log('💾 Auto-saving annotations...');
+                console.log('  Segments:', this.segments.length);
+                console.log('  Rotation center:', this.rotationCenter);
+                
+                const response = await fetch(
+                    `/api/projects/${this.currentProjectId}/annotations/${encodeURIComponent(this.currentImageName)}`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            segments: this.segments,
+                            rotation_center: this.rotationCenter
+                        })
+                    }
+                );
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    console.log('✓ Annotations saved to project');
+                    
+                    // Show subtle indicator (optional)
+                    const indicator = document.createElement('div');
+                    indicator.style.cssText = `
+                        position: fixed;
+                        bottom: 20px;
+                        right: 20px;
+                        background: #10b981;
+                        color: white;
+                        padding: 8px 16px;
+                        border-radius: 4px;
+                        font-size: 12px;
+                        z-index: 1000;
+                        opacity: 0;
+                        transition: opacity 0.3s;
+                    `;
+                    indicator.textContent = '💾 Saved';
+                    document.body.appendChild(indicator);
+                    
+                    setTimeout(() => indicator.style.opacity = '1', 10);
+                    setTimeout(() => {
+                        indicator.style.opacity = '0';
+                        setTimeout(() => indicator.remove(), 300);
+                    }, 1500);
+                } else {
+                    console.error('Failed to save annotations:', data.error);
+                }
+            } catch (error) {
+                console.error('Error saving annotations to project:', error);
+            }
+        }, 500);  // 500ms debounce
+    }
+    
+    /**
+     * Load annotations from project
+     */
+    async loadAnnotationsFromProject(projectId, imageName) {
+        try {
+            const response = await fetch(
+                `/api/projects/${projectId}/annotations/${encodeURIComponent(imageName)}`
+            );
+            
+            const data = await response.json();
+            
+            if (data.success && data.has_annotations) {
+                console.log('📂 Loading saved annotations:', data);
+                console.log('  Segments loaded:', data.segments.length);
+                console.log('  Rotation center:', data.rotation_center);
+                
+                // Load segments
+                this.segments = data.segments || [];
+                this.rotationCenter = data.rotation_center;
+                
+                console.log('✓ Segments assigned to this.segments:', this.segments.length);
+                this.segments.forEach((seg, idx) => {
+                    console.log(`  [${idx}] ${seg.name} (${seg.category}) - has contours: ${!!seg.contours}, id: ${seg.id}`);
+                });
+                
+                // Sync segments with backend session
+                if (this.segments.length > 0 && this.sessionId) {
+                    console.log('🔄 Syncing loaded segments with backend session...');
+                    await this.syncSegmentsWithBackend();
+                }
+                
+                // Redraw all masks on canvas
+                if (window.canvasManager && this.segments.length > 0) {
+                    // Clear previous masks
+                    window.canvasManager.savedMasks = [];
+                    
+                    // Add all loaded masks
+                    this.segments.forEach(seg => {
+                        if (seg.contours) {
+                            window.canvasManager.addSavedMask(
+                                seg.contours,
+                                seg.category,
+                                seg.name,
+                                seg.id
+                            );
+                        }
+                    });
+                    
+                    window.canvasManager.redraw();
+                }
+                
+                // Load rotation center
+                if (this.rotationCenter) {
+                    document.getElementById('rotation-center-info').style.display = 'block';
+                    document.getElementById('rotation-coords').textContent = 
+                        `(${Math.round(this.rotationCenter.x)}, ${Math.round(this.rotationCenter.y)})`;
+                    
+                    if (window.canvasManager) {
+                        window.canvasManager.drawRotationCenter(this.rotationCenter.x, this.rotationCenter.y);
+                        window.canvasManager.redraw();
+                    }
+                }
+                
+                // Update UI
+                this.updateUI();
+                
+                this.showNotification(`Loaded ${this.segments.length} saved segments`, 'info');
+            } else {
+                console.log('No saved annotations for this image');
+            }
+        } catch (error) {
+            console.error('Error loading annotations from project:', error);
+        }
+    }
+    
+    /**
+     * Load a saved session (segments and rotation center)
+     */
+    loadSession(sessionData) {
+        console.log('Loading session:', sessionData);
+        
+        // Clear current segments
+        this.segments = [];
+        
+        // Load segments from session
+        if (sessionData.segments && Array.isArray(sessionData.segments)) {
+            this.segments = sessionData.segments.map(seg => ({
+                id: seg.id,
+                name: seg.name,
+                category: seg.category,
+                mask: seg.mask,
+                contours: seg.contours || null,
+                should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : true
+            }));
+            
+            console.log(`Loaded ${this.segments.length} segments from session`);
+            
+            // Redraw all masks on canvas
+            if (window.canvasManager && this.segments.length > 0) {
+                // Clear previous masks
+                window.canvasManager.savedMasks = [];
+                
+                // Add all loaded masks
+                this.segments.forEach(seg => {
+                    if (seg.contours) {
+                        window.canvasManager.addMask(seg.contours, this.getCategoryColor(seg.category));
+                    }
+                });
+                
+                window.canvasManager.redraw();
+            }
+        }
+        
+        // Load rotation center
+        if (sessionData.rotation_center) {
+            this.rotationCenter = sessionData.rotation_center;
+            
+            // Update UI
+            document.getElementById('rotation-center-info').style.display = 'block';
+            document.getElementById('rotation-coords').textContent = 
+                `(${Math.round(this.rotationCenter.x)}, ${Math.round(this.rotationCenter.y)})`;
+            
+            // Draw on canvas
+            if (window.canvasManager) {
+                window.canvasManager.setRotationCenter(this.rotationCenter.x, this.rotationCenter.y);
+            }
+        }
+        
+        // Update UI
+        this.updateUI();
+        
+        this.showNotification(`Loaded ${this.segments.length} segments from previous session`, 'success');
+    }
+    
+    /**
+     * Get color for category
+     */
+    getCategoryColor(category) {
+        const colors = {
+            'Profile': 'rgba(59, 130, 246, 0.5)',         // Blue
+            'Prospectus': 'rgba(16, 185, 129, 0.5)',      // Green
+            'Decoration': 'rgba(245, 158, 11, 0.5)',      // Orange
+            'Application': 'rgba(139, 92, 246, 0.5)',     // Purple
+            'Handle': 'rgba(236, 72, 153, 0.5)',          // Pink
+            'Section': 'rgba(251, 146, 60, 0.5)',         // Amber
+            'Detail': 'rgba(34, 197, 94, 0.5)'            // Emerald
+        };
+        return colors[category] || 'rgba(156, 163, 175, 0.5)'; // Gray fallback
+    }
+    
     showNotification(message, type = 'info') {
         // Simple notification system (can be enhanced with a library)
         const colors = {
@@ -934,6 +1258,49 @@ class PyPotteryTraceApp {
             notification.style.animation = 'slideOut 0.3s ease';
             setTimeout(() => notification.remove(), 300);
         }, 3000);
+    }
+    
+    /**
+     * Sync loaded segments with backend session
+     * This is needed when loading annotations from project file
+     */
+    async syncSegmentsWithBackend() {
+        if (!this.sessionId || this.segments.length === 0) {
+            return;
+        }
+        
+        try {
+            // Convert segments to format expected by backend
+            const segmentsData = this.segments.map(seg => ({
+                id: seg.id,
+                name: seg.name,
+                category: seg.category,
+                contours: seg.contours,
+                should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : true
+            }));
+            
+            // Send to backend to update session
+            const response = await fetch('/api/sync_segments', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    session_id: this.sessionId,
+                    segments: segmentsData
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                console.log('✓ Segments synced with backend:', data.total_segments, 'segments');
+            } else {
+                console.error('Failed to sync segments:', data.error);
+            }
+        } catch (error) {
+            console.error('Error syncing segments with backend:', error);
+        }
     }
     
     updateUI() {

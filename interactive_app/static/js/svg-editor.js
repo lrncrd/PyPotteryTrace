@@ -1993,7 +1993,7 @@ class SVGEditor {
             const serializer = new XMLSerializer();
             const svgString = serializer.serializeToString(svgClone);
             
-            // Send to backend to save in the output folder
+            // Send to backend to save in the project folder
             const response = await fetch('/api/save_modified_svg', {
                 method: 'POST',
                 headers: {
@@ -2003,7 +2003,8 @@ class SVGEditor {
                     svg_content: svgString,
                     include_background: includeBackground,
                     session_id: this.sessionId || 'default',
-                    image_name: this.currentImageName || 'output'
+                    image_name: this.currentImageName || 'output',
+                    project_id: window.app ? window.app.currentProjectId : null
                 })
             });
             
@@ -2017,6 +2018,12 @@ class SVGEditor {
                     window.app.showNotification(message, 'success');
                 }
                 console.log('Modified SVG saved to:', data.output_path);
+                
+                // Mark current image as vectorized in ImageGrid
+                if (window.ImageGrid && this.sessionId) {
+                    await window.ImageGrid.markAsVectorized(this.sessionId);
+                    console.log('✓ Image marked as vectorized in thumbnails');
+                }
                 
                 // Also show alert with full path
                 alert(`Modified SVG saved successfully!\n\nPath:\n${data.output_path}`);

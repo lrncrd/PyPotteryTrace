@@ -23,6 +23,19 @@ class CanvasManager {
         this.setupEventListeners();
         this.resize();
         window.addEventListener('resize', () => this.resize());
+        
+        // Listen for image selection from grid
+        document.addEventListener('imageSelected', (e) => {
+            const { projectId, filename } = e.detail;
+            const imageUrl = `/api/projects/${projectId}/images/${encodeURIComponent(filename)}?folder=uploads`;
+            this.loadImage(imageUrl);
+            
+            // Hide the "Upload an image" message
+            const canvasMessage = document.getElementById('canvas-message');
+            if (canvasMessage) {
+                canvasMessage.style.display = 'none';
+            }
+        });
     }
     
     setupEventListeners() {
@@ -87,6 +100,12 @@ class CanvasManager {
     
     loadImage(imageUrl) {
         console.log('CanvasManager.loadImage called with:', imageUrl);
+        
+        // Clear all previous data when loading a new image
+        this.savedMasks = [];
+        this.svgImage = null;
+        this.rotationCenter = null;
+        
         const img = new Image();
         img.onload = () => {
             console.log('Image loaded successfully:', img.width, 'x', img.height);
@@ -303,6 +322,20 @@ class CanvasManager {
     clearSavedMasks() {
         this.savedMasks = [];
         this.redraw();
+    }
+    
+    /**
+     * Add a mask to the canvas (used when loading saved sessions)
+     */
+    addMask(contours, color = 'rgba(59, 130, 246, 0.5)') {
+        const maskData = {
+            contours: contours,
+            color: color,
+            fillColor: color,
+            category: 'Loaded',
+            name: 'Loaded Segment'
+        };
+        this.savedMasks.push(maskData);
     }
     
     // Clear everything (masks, SVG overlay, rotation center) - used when loading new image

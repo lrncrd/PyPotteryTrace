@@ -25,6 +25,11 @@ Web-based, SAM2-powered precision tool for complex drawings. Manually segment el
 
 👉 **[See Interactive Mode Documentation](README_INTERACTIVE.md)**
 
+### **Project Management** (NEW! 📂)
+Organized workspace system for managing multiple pottery tracing projects. Track workflow, maintain settings, and keep all project files in one place.
+
+👉 **[See Project Management Documentation](PROJECTS_README.md)**
+
 
 ---
 

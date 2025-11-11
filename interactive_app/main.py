@@ -31,6 +31,7 @@ import traceback
 from sam2_handler import SAM2Handler
 from vectorization_handler import VectorizationHandler
 from ml_export_handler import MLExportHandler
+from project_manager import ProjectManager
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
@@ -44,6 +45,10 @@ CORS(app)
 sam2_handler = SAM2Handler(model_size='small')  # Initialize immediately
 vectorization_handler = VectorizationHandler()
 ml_export_handler = MLExportHandler()
+
+# Initialize project manager with path one level up from interactive_app
+project_root = Path(__file__).parent.parent / 'projects'
+project_manager = ProjectManager(projects_root=str(project_root))
 
 # Store session data (in production, use Redis or database)
 sessions_data = {}
@@ -68,7 +73,7 @@ def load_model():
     
     data = request.json
     model_size = data.get('model_size', 'small')
-    save_training_data = data.get('save_training_data', False)
+    # ML training data is ALWAYS saved for project persistence
     
     if model_size not in ['tiny', 'small', 'base', 'large']:
         return jsonify({'error': 'Invalid model size'}), 400
@@ -77,13 +82,12 @@ def load_model():
         # Reinitialize SAM2 handler with new model
         sam2_handler = SAM2Handler(model_size=model_size)
         
-        # Store training data flag in app config (for future implementation)
-        app.config['SAVE_TRAINING_DATA'] = save_training_data
+        # ML training data is always enabled for persistence
+        app.config['SAVE_TRAINING_DATA'] = True
         
         return jsonify({
             'success': True,
-            'model_size': model_size,
-            'save_training_data': save_training_data
+            'model_size': model_size
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -795,6 +799,45 @@ def add_segment():
     })
 
 
+@app.route('/api/sync_segments', methods=['POST'])
+def sync_segments():
+    """
+    Sync segments from frontend to backend session.
+    Used when loading annotations from project file.
+    """
+    data = request.json
+    session_id = data.get('session_id')
+    segments = data.get('segments', [])
+    
+    if session_id not in sessions_data:
+        return jsonify({'error': 'Session not found'}), 404
+    
+    print(f"SYNCING SEGMENTS for session {session_id}")
+    print(f"  Received {len(segments)} segments from frontend")
+    
+    # Clear existing segments and replace with loaded ones
+    sessions_data[session_id]['segments'] = []
+    
+    for seg in segments:
+        segment = {
+            'id': seg.get('id', str(uuid.uuid4())),
+            'name': seg.get('name', 'Unnamed'),
+            'category': seg.get('category', 'Profile'),
+            'mask': None,  # Mask data not needed for export
+            'contours': seg.get('contours'),
+            'should_vectorize': seg.get('should_vectorize', True),
+            'created_at': datetime.now().isoformat()
+        }
+        sessions_data[session_id]['segments'].append(segment)
+    
+    print(f"  ✓ Synced {len(sessions_data[session_id]['segments'])} segments to backend session")
+    
+    return jsonify({
+        'success': True,
+        'total_segments': len(sessions_data[session_id]['segments'])
+    })
+
+
 @app.route('/api/set_rotation_center', methods=['POST'])
 def set_rotation_center():
     """Set the rotation center for profile mirroring."""
@@ -1494,6 +1537,9 @@ if __name__ == '__main__':
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
+    # ALWAYS save ML training data (for project persistence)
+    app.config['SAVE_TRAINING_DATA'] = True
+    
     print("=" * 60)
     print("PyPotteryTrace Interactive Server")
     print("=" * 60)
@@ -1505,7 +1551,7 @@ if __name__ == '__main__':
 @app.route('/api/save_modified_svg', methods=['POST'])
 def save_modified_svg():
     """
-    Save the modified SVG from the SVG Editor back to the output folder.
+    Save the modified SVG from the SVG Editor to the project's vectorized folder.
     This replaces the original vectorized SVG with the edited version.
     """
     try:
@@ -1514,6 +1560,7 @@ def save_modified_svg():
         include_background = data.get('include_background', False)
         session_id = data.get('session_id', 'default')
         image_name = data.get('image_name', 'output')
+        project_id = data.get('project_id')
         
         if not svg_content:
             return jsonify({'success': False, 'error': 'No SVG content provided'})
@@ -1528,22 +1575,26 @@ def save_modified_svg():
         if not image_path:
             return jsonify({'success': False, 'error': 'No image in session'})
         
-        # Determine output folder path
-        # Use the output_folder_path from session, or default to 'output'
-        output_folder_name = session.get('output_folder_path', '')
-        
-        if not output_folder_name:
-            # If not set, use a default based on the session folder
-            output_folder_name = 'output'
-        
-        # If output_folder_name is a relative path, resolve it from project root
-        # If it's absolute, use it as is
-        if os.path.isabs(output_folder_name):
-            output_folder = Path(output_folder_name)
+        # Determine output folder path based on project_id
+        if project_id:
+            # Save to project's vectorized folder
+            project = project_manager.get_project(project_id)
+            if not project:
+                return jsonify({'success': False, 'error': 'Project not found'})
+            
+            output_folder = project_manager.projects_root / project_id / 'vectorized'
         else:
-            # Get the project root directory (parent of interactive_app)
-            project_root = Path(__file__).parent.parent
-            output_folder = project_root / output_folder_name
+            # Fallback to old behavior (output folder)
+            output_folder_name = session.get('output_folder_path', '')
+            
+            if not output_folder_name:
+                output_folder_name = 'output'
+            
+            if os.path.isabs(output_folder_name):
+                output_folder = Path(output_folder_name)
+            else:
+                project_root = Path(__file__).parent.parent
+                output_folder = project_root / output_folder_name
         
         # Create output folder if it doesn't exist
         output_folder.mkdir(parents=True, exist_ok=True)
@@ -1855,4 +1906,481 @@ def postprocess_export():
         print(f"Error in postprocess_export: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# PROJECT MANAGEMENT API ROUTES
+# ============================================================================
+
+@app.route('/api/projects', methods=['GET'])
+def list_projects():
+    """List all projects."""
+    try:
+        projects = project_manager.list_projects()
+        return jsonify({
+            'success': True,
+            'projects': projects,
+            'total': len(projects)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects', methods=['POST'])
+def create_project():
+    """Create a new project."""
+    try:
+        data = request.json
+        project_name = data.get('project_name')
+        description = data.get('description', '')
+        icon = data.get('icon', '🏺')
+        
+        if not project_name:
+            return jsonify({'error': 'Project name is required'}), 400
+        
+        metadata = project_manager.create_project(project_name, description, icon)
+        
+        return jsonify({
+            'success': True,
+            'project': metadata
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>', methods=['GET'])
+def get_project(project_id):
+    """Get project details."""
+    try:
+        metadata = project_manager.get_project(project_id)
+        
+        if not metadata:
+            return jsonify({'error': 'Project not found'}), 404
+        
+        # Get project statistics
+        stats = project_manager.get_project_stats(project_id)
+        
+        return jsonify({
+            'success': True,
+            'project': metadata,
+            'stats': stats
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>', methods=['DELETE'])
+def delete_project(project_id):
+    """Delete a project."""
+    try:
+        success = project_manager.delete_project(project_id)
+        
+        if not success:
+            return jsonify({'error': 'Project not found or could not be deleted'}), 404
+        
+        return jsonify({
+            'success': True,
+            'message': 'Project deleted successfully'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/settings', methods=['PUT'])
+def update_project_settings(project_id):
+    """Update project settings."""
+    try:
+        data = request.json
+        settings = data.get('settings', {})
+        
+        success = project_manager.update_settings(project_id, settings)
+        
+        if not success:
+            return jsonify({'error': 'Project not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'message': 'Settings updated successfully'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/workflow', methods=['PUT'])
+def update_project_workflow(project_id):
+    """Update project workflow status."""
+    try:
+        data = request.json
+        status_updates = data.get('status', {})
+        
+        success = project_manager.update_workflow_status(project_id, status_updates)
+        
+        if not success:
+            return jsonify({'error': 'Project not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'message': 'Workflow status updated successfully'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/images', methods=['GET'])
+def get_project_images(project_id):
+    """Get list of images in a project folder."""
+    try:
+        folder_type = request.args.get('folder', 'uploads')
+        include_status = request.args.get('include_status', 'false').lower() == 'true'
+        images = project_manager.get_images_list(project_id, folder_type, include_status)
+        
+        return jsonify({
+            'success': True,
+            'images': images,
+            'folder': folder_type,
+            'total': len(images)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/sessions', methods=['GET'])
+def get_project_sessions(project_id):
+    """Get list of sessions in a project."""
+    try:
+        sessions = project_manager.list_sessions(project_id)
+        
+        return jsonify({
+            'success': True,
+            'sessions': sessions,
+            'total': len(sessions)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/upload', methods=['POST'])
+def upload_to_project(project_id):
+    """Upload images to a project."""
+    try:
+        if 'files' not in request.files:
+            return jsonify({'error': 'No files provided'}), 400
+        
+        files = request.files.getlist('files')
+        
+        if len(files) == 0:
+            return jsonify({'error': 'No files selected'}), 400
+        
+        # Get project upload folder
+        upload_path = project_manager.get_project_path(project_id, 'uploads')
+        
+        if not upload_path:
+            return jsonify({'error': 'Project not found'}), 404
+        
+        # Save all files
+        uploaded_count = 0
+        for file in files:
+            if file.filename == '':
+                continue
+                
+            if not allowed_file(file.filename):
+                continue
+            
+            # Save file
+            filename = secure_filename(file.filename)
+            file_path = upload_path / filename
+            file.save(file_path)
+            uploaded_count += 1
+        
+        if uploaded_count == 0:
+            return jsonify({'error': 'No valid image files uploaded'}), 400
+        
+        # Update workflow status
+        project_manager.update_workflow_status(project_id, {
+            'images_uploaded': uploaded_count
+        })
+        
+        return jsonify({
+            'success': True,
+            'count': uploaded_count,
+            'message': f'{uploaded_count} images uploaded successfully'
+        })
+    except Exception as e:
+        print(f"Error uploading files: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/images/<filename>', methods=['GET'])
+def get_project_image(project_id, filename):
+    """Get a specific image from project."""
+    try:
+        folder_type = request.args.get('folder', 'uploads')
+        image_path = project_manager.get_project_path(project_id, folder_type) / filename
+        
+        if not image_path.exists():
+            return jsonify({'error': 'Image not found'}), 404
+        
+        return send_file(image_path)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/annotations/<image_name>', methods=['POST'])
+def save_project_annotations(project_id, image_name):
+    """Save annotations for a specific image in the project (COCO format)."""
+    try:
+        data = request.json
+        
+        # Get segments and rotation center from request
+        segments = data.get('segments', [])
+        rotation_center = data.get('rotation_center')
+        
+        print(f"\n{'='*60}")
+        print(f"SAVING ANNOTATIONS for {image_name}")
+        print(f"  Segments: {len(segments)}")
+        print(f"  Rotation center: {rotation_center}")
+        print(f"{'='*60}\n")
+        
+        # Get image path and dimensions
+        image_path = project_manager.get_project_path(project_id, 'uploads') / image_name
+        
+        if not image_path.exists():
+            return jsonify({'error': 'Image not found'}), 404
+        
+        import cv2
+        img = cv2.imread(str(image_path))
+        height, width = img.shape[:2]
+        
+        # Create COCO format annotation
+        coco_data = {
+            "info": {
+                "description": "PyPotteryTrace annotations",
+                "version": "1.0",
+                "date_created": datetime.now().isoformat()
+            },
+            "images": [{
+                "id": 1,
+                "file_name": image_name,
+                "width": width,
+                "height": height
+            }],
+            "annotations": [],
+            "categories": []
+        }
+        
+        # Add rotation center if present
+        if rotation_center:
+            coco_data["rotation_center"] = {
+                "x": rotation_center.get('x'),
+                "y": rotation_center.get('y')
+            }
+        
+        # Collect categories
+        category_names = list(set(seg['category'] for seg in segments))
+        category_names.sort()
+        category_map = {name: idx + 1 for idx, name in enumerate(category_names)}
+        
+        for cat_name, cat_id in category_map.items():
+            coco_data["categories"].append({
+                "id": cat_id,
+                "name": cat_name,
+                "supercategory": "pottery"
+            })
+        
+        # Add annotations (only contours, no masks)
+        for idx, segment in enumerate(segments):
+            if 'contours' not in segment or not segment['contours']:
+                continue
+            
+            # Convert contours to segmentation format (list of [x,y,x,y,...])
+            segmentation = []
+            for contour in segment['contours']:
+                if len(contour) > 0:
+                    # Flatten contour points: [[x,y], [x,y], ...] -> [x,y,x,y,...]
+                    flat_contour = []
+                    for point in contour:
+                        flat_contour.extend([float(point[0]), float(point[1])])
+                    segmentation.append(flat_contour)
+            
+            # Calculate bbox from contours
+            all_points = []
+            for contour in segment['contours']:
+                all_points.extend(contour)
+            
+            if all_points:
+                xs = [p[0] for p in all_points]
+                ys = [p[1] for p in all_points]
+                x_min, x_max = min(xs), max(xs)
+                y_min, y_max = min(ys), max(ys)
+                bbox = [x_min, y_min, x_max - x_min, y_max - y_min]
+                area = (x_max - x_min) * (y_max - y_min)
+            else:
+                bbox = [0, 0, 0, 0]
+                area = 0
+            
+            coco_data["annotations"].append({
+                "id": idx + 1,
+                "image_id": 1,
+                "category_id": category_map[segment['category']],
+                "segmentation": segmentation,
+                "area": area,
+                "bbox": bbox,
+                "iscrowd": 0,
+                "attributes": {
+                    "name": segment.get('name', ''),
+                    "should_vectorize": segment.get('should_vectorize', True)
+                }
+            })
+        
+        # Save using project manager
+        success = project_manager.save_annotation_data(project_id, image_name, coco_data)
+        
+        if not success:
+            return jsonify({'error': 'Failed to save annotations'}), 500
+        
+        return jsonify({
+            'success': True,
+            'message': 'Annotations saved successfully'
+        })
+    except Exception as e:
+        print(f"Error saving annotations: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/annotations/<image_name>', methods=['GET'])
+def get_project_annotations(project_id, image_name):
+    """Get annotations for a specific image in the project (COCO format)."""
+    try:
+        annotation_data = project_manager.load_annotation_data(project_id, image_name)
+        
+        if annotation_data is None:
+            return jsonify({
+                'success': True,
+                'has_annotations': False,
+                'segments': [],
+                'rotation_center': None
+            })
+        
+        # Parse COCO format back to segments
+        segments = []
+        rotation_center = annotation_data.get('rotation_center')
+        
+        annotations = annotation_data.get('annotations', [])
+        categories_list = annotation_data.get('categories', [])
+        
+        # Create category ID to name mapping
+        category_map = {cat['id']: cat['name'] for cat in categories_list}
+        
+        for ann in annotations:
+            # Convert segmentation back to contours format
+            contours = []
+            for seg in ann.get('segmentation', []):
+                # seg is [x,y,x,y,...], convert to [[x,y], [x,y], ...]
+                contour = []
+                for i in range(0, len(seg), 2):
+                    if i + 1 < len(seg):
+                        contour.append([seg[i], seg[i+1]])
+                contours.append(contour)
+            
+            category_name = category_map.get(ann['category_id'], 'Unknown')
+            attributes = ann.get('attributes', {})
+            
+            segments.append({
+                'id': str(ann['id']),
+                'category': category_name,
+                'name': attributes.get('name', f"{category_name} {ann['id']}"),
+                'contours': contours,
+                'should_vectorize': attributes.get('should_vectorize', True)
+            })
+        
+        return jsonify({
+            'success': True,
+            'has_annotations': True,
+            'segments': segments,
+            'rotation_center': rotation_center,
+            'saved_at': annotation_data.get('info', {}).get('date_created')
+        })
+    except Exception as e:
+        print(f"Error loading annotations: {e}")
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/export', methods=['POST'])
+def export_project(project_id):
+    """Export project as ZIP archive."""
+    try:
+        # Create temporary ZIP file
+        temp_zip = Path(app.config['UPLOAD_FOLDER']) / f'{project_id}_export.zip'
+        
+        success = project_manager.export_project_data(project_id, str(temp_zip))
+        
+        if not success:
+            return jsonify({'error': 'Failed to export project'}), 500
+        
+        return send_file(
+            temp_zip,
+            as_attachment=True,
+            download_name=f'{project_id}_export.zip'
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/import', methods=['POST'])
+def import_project():
+    """Import project from ZIP archive."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        if not file.filename.endswith('.zip'):
+            return jsonify({'error': 'File must be a ZIP archive'}), 400
+        
+        # Save temporary file
+        temp_path = Path(app.config['UPLOAD_FOLDER']) / 'temp_import.zip'
+        file.save(temp_path)
+        
+        # Import project
+        project_id = project_manager.import_project_data(str(temp_path))
+        
+        # Clean up temp file
+        temp_path.unlink()
+        
+        if not project_id:
+            return jsonify({'error': 'Failed to import project'}), 500
+        
+        return jsonify({
+            'success': True,
+            'project_id': project_id,
+            'message': 'Project imported successfully'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects/<project_id>/stats', methods=['GET'])
+def get_project_statistics(project_id):
+    """Get detailed project statistics."""
+    try:
+        stats = project_manager.get_project_stats(project_id)
+        
+        if not stats:
+            return jsonify({'error': 'Project not found'}), 404
+        
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+    except Exception as e:
         return jsonify({'error': str(e)}), 500

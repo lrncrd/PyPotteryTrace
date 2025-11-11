@@ -74,27 +74,22 @@ class TabManager {
         folderInput.addEventListener('change', (e) => {
             this.handleFolderSelection(e.target.files);
         });
-        
-        // Output folder selection
-        const selectOutputButton = document.getElementById('select-output-folder-btn');
-        const outputFolderInput = document.getElementById('output-folder-input');
-        
-        selectOutputButton.addEventListener('click', () => {
-            outputFolderInput.click();
-        });
-        
-        outputFolderInput.addEventListener('change', (e) => {
-            this.handleOutputFolderSelection(e.target.files);
-        });
     }
     
     handleFolderSelection(files) {
+        console.log('=== handleFolderSelection START ===');
+        console.log('Received files:', files);
+        console.log('Files count:', files.length);
+        
         // Filter only image files
         const imageExtensions = ['jpg', 'jpeg', 'png', 'tiff', 'bmp', 'gif'];
         this.imageFiles = Array.from(files).filter(file => {
             const ext = file.name.split('.').pop().toLowerCase();
+            console.log(`File: ${file.name}, ext: ${ext}, webkitRelativePath: ${file.webkitRelativePath}`);
             return imageExtensions.includes(ext);
         });
+        
+        console.log('Filtered imageFiles count:', this.imageFiles.length);
         
         if (this.imageFiles.length === 0) {
             alert('No image files found in the selected folder!');
@@ -107,9 +102,8 @@ class TabManager {
         // Extract folder path from first file
         this.folderPath = this.imageFiles[0].webkitRelativePath.split('/')[0];
         
-        // ALWAYS set default output folder (input_folder + "_vectorized")
+        // Output folder is automatically set to project's exports folder
         this.outputFolderPath = this.folderPath + '_vectorized';
-        document.getElementById('output-folder-name').textContent = this.outputFolderPath;
         
         // Enable post-processing tab immediately (can work independently)
         this.enableTab('postprocess-tab');
@@ -126,15 +120,72 @@ class TabManager {
         this.checkStartButton();
     }
     
-    handleOutputFolderSelection(files) {
-        if (files.length === 0) return;
-        
-        // Extract folder path from first file
-        const folderPath = files[0].webkitRelativePath.split('/')[0];
-        this.outputFolderPath = folderPath;
-        
-        // Update UI
-        document.getElementById('output-folder-name').textContent = folderPath;
+    /**
+     * Load images from a project (called by ProjectManager)
+     */
+    async loadProjectImages(projectId, projectName) {
+        try {
+            console.log('=== loadProjectImages START ===');
+            console.log('Project ID:', projectId);
+            console.log('Project Name:', projectName);
+            
+            // Fetch images list from project
+            const response = await fetch(`/api/projects/${projectId}/images?folder=uploads`);
+            const data = await response.json();
+            
+            console.log('API Response:', data);
+            
+            if (!data.success || !data.images || data.images.length === 0) {
+                console.log('No images in project uploads folder');
+                return false;
+            }
+            
+            console.log(`Loading ${data.images.length} images from project...`);
+            
+            // Fetch each image and create File objects with webkitRelativePath
+            const files = [];
+            
+            for (const imgName of data.images) {
+                try {
+                    // imgName is just a string (filename), not an object
+                    const filename = typeof imgName === 'string' ? imgName : imgName.filename;
+                    console.log(`Fetching image: ${filename}`);
+                    const imgResponse = await fetch(`/api/projects/${projectId}/images/${filename}?folder=uploads`);
+                    const blob = await imgResponse.blob();
+                    
+                    // Create File object with fake webkitRelativePath
+                    const file = new File([blob], filename, { type: blob.type });
+                    
+                    // Add fake webkitRelativePath property (needed by handleFolderSelection)
+                    Object.defineProperty(file, 'webkitRelativePath', {
+                        value: `${projectName}_uploads/${filename}`,
+                        writable: false
+                    });
+                    
+                    files.push(file);
+                    console.log(`✓ Loaded: ${filename}`);
+                } catch (err) {
+                    console.error(`Failed to load image ${filename}:`, err);
+                }
+            }
+            
+            console.log(`Total files loaded: ${files.length}`);
+            
+            if (files.length === 0) {
+                console.log('No files to load!');
+                return false;
+            }
+            
+            // Use the existing handleFolderSelection function!
+            console.log('Calling handleFolderSelection with', files.length, 'files');
+            this.handleFolderSelection(files);
+            
+            console.log('=== loadProjectImages END ===');
+            return true;
+        } catch (error) {
+            console.error('Error loading project images:', error);
+            return false;
+        }
     }
     
     showImagePreviews() {
@@ -185,8 +236,8 @@ class TabManager {
         
         const modelSize = selectedModel.value;
         
-        // Get training data checkbox
-        const saveTraining = document.getElementById('save-training-data').checked;
+        // Training data is always saved (no checkbox anymore)
+        const saveTraining = true;
         
         // Load model
         const statusDiv = document.getElementById('model-loading-status');
