@@ -367,7 +367,7 @@
                         <option value="Handle">🪢 Handle</option>
                         <option value="Prospectus">👁️ Prospectus</option>
                         <option value="Decoration">🎨 Decoration</option>
-                        <option value="Section">✂️ Section</option>
+                        <option value="Running_Element">🏃 Running element</option>
                         <option value="Detail">📌 Detail</option>
                     </select>
 
@@ -815,11 +815,11 @@
                                     <h5 style="margin: 0 0 8px 0; font-size: 0.9rem;">Main Elements:</h5>
                                     <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                         <span>Profile / Prospectus:</span>
-                                        <input type="number" id="postprocess-stroke-profile" min="0.5" max="5" step="0.1" value="1.5" style="width: 70px; padding: 4px;">
+                                        <input type="number" id="postprocess-stroke-profile" min="0.5" max="5" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
                                     </label>
                                     <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                         <span>Application:</span>
-                                        <input type="number" id="postprocess-stroke-application" min="0.5" max="5" step="0.1" value="1.2" style="width: 70px; padding: 4px;">
+                                        <input type="number" id="postprocess-stroke-application" min="0.5" max="5" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
                                     </label>
                                     <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                         <span>Handle:</span>
@@ -827,15 +827,15 @@
                                     </label>
                                     <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                         <span>Decoration:</span>
-                                        <input type="number" id="postprocess-stroke-decoration" min="0.3" max="3" step="0.1" value="0.5" style="width: 70px; padding: 4px;">
+                                        <input type="number" id="postprocess-stroke-decoration" min="0.3" max="3" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
                                     </label>
                                     <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span>Section:</span>
-                                        <input type="number" id="postprocess-stroke-section" min="0.5" max="5" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
+                                        <span>Running element:</span>
+                                        <input type="number" id="postprocess-stroke-runningelement" min="0.5" max="5" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
                                     </label>
                                     <label style="display: flex; justify-content: space-between; align-items: center;">
                                         <span>Detail:</span>
-                                        <input type="number" id="postprocess-stroke-detail" min="0.3" max="3" step="0.1" value="0.8" style="width: 70px; padding: 4px;">
+                                        <input type="number" id="postprocess-stroke-detail" min="0.3" max="3" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
                                     </label>
                                 </div>
                                 
@@ -847,7 +847,34 @@
                                     </label>
                                     <label style="display: flex; justify-content: space-between; align-items: center;">
                                         <span>Diameter:</span>
-                                        <input type="number" id="postprocess-stroke-diameter" min="0.1" max="2" step="0.1" value="0.8" style="width: 70px; padding: 4px;">
+                                        <input type="number" id="postprocess-stroke-diameter" min="0.1" max="2" step="0.1" value="0.5" style="width: 70px; padding: 4px;">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <h4 style="margin-bottom: 10px;">🔧 Vectorization Parameters (Main Elements Only)</h4>
+                                <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
+                                    Adjust path simplification and smoothing for Profile, Application, Handle, Decoration, Running element, Detail
+                                </p>
+                                
+                                <div style="background: #f8f9fa; padding: 12px; border-radius: 6px;">
+                                    <label style="display: block; margin-bottom: 12px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                            <span>Simplification (Epsilon):</span>
+                                            <span id="postprocess-epsilon-value" style="font-weight: bold;">0</span>
+                                        </div>
+                                        <input type="range" id="postprocess-epsilon" min="0" max="5" step="0.1" value="0" style="width: 100%;">
+                                        <small style="color: #666;">0 = no changes, Higher = simpler paths</small>
+                                    </label>
+                                    
+                                    <label style="display: block;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                            <span>Smoothing:</span>
+                                            <span id="postprocess-smoothing-value" style="font-weight: bold;">0</span>
+                                        </div>
+                                        <input type="range" id="postprocess-smoothing" min="0" max="1" step="0.1" value="0" style="width: 100%;">
+                                        <small style="color: #666;">0 = no smoothing, 1 = maximum smoothing</small>
                                     </label>
                                 </div>
                             </div>
@@ -974,7 +1001,7 @@
                             <li><strong>Handle:</strong> Vessel handles</li>
                             <li><strong>Prospectus:</strong> Front/side views</li>
                             <li><strong>Decoration:</strong> Painted or incised decorations</li>
-                            <li><strong>Section:</strong> Cross-sections</li>
+                            <li><strong>Running element:</strong> Running elements</li>
                             <li><strong>Detail:</strong> Close-up details</li>
                         </ul>
                     </div>

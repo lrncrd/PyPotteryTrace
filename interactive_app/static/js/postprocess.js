@@ -94,6 +94,16 @@ class PostProcessingManager {
         document.getElementById('postprocess-jpg-quality').addEventListener('input', (e) => {
             document.getElementById('postprocess-jpg-quality-value').textContent = e.target.value;
         });
+        
+        // Epsilon slider
+        document.getElementById('postprocess-epsilon').addEventListener('input', (e) => {
+            document.getElementById('postprocess-epsilon-value').textContent = e.target.value;
+        });
+        
+        // Smoothing slider
+        document.getElementById('postprocess-smoothing').addEventListener('input', (e) => {
+            document.getElementById('postprocess-smoothing-value').textContent = e.target.value;
+        });
 
         // Select all categories
         document.getElementById('postprocess-select-all-categories').addEventListener('change', (e) => {
@@ -347,8 +357,8 @@ class PostProcessingManager {
                     category = 'Handle';
                 } else if (categoryRaw.includes('Decoration')) {
                     category = 'Decoration';
-                } else if (categoryRaw.includes('Section')) {
-                    category = 'Section';
+                } else if (categoryRaw.includes('Running')) {
+                    category = 'Running_Element';
                 } else if (categoryRaw.includes('Detail')) {
                     category = 'Detail';
                 } else if (categoryRaw.includes('Prospectus')) {
@@ -415,8 +425,8 @@ class PostProcessingManager {
                     category = 'Handle';
                 } else if (categoryRaw.includes('Decoration')) {
                     category = 'Decoration';
-                } else if (categoryRaw.includes('Section')) {
-                    category = 'Section';
+                } else if (categoryRaw.includes('Running')) {
+                    category = 'Running_Element';
                 } else if (categoryRaw.includes('Detail')) {
                     category = 'Detail';
                 } else if (categoryRaw.includes('Prospectus')) {
@@ -465,6 +475,255 @@ class PostProcessingManager {
             return svgContent; // Return original if error
         }
     }
+    
+    applyVectorizationParametersToSVG(svgContent, epsilon, smoothing) {
+        /**
+         * Re-process SVG paths with new epsilon (simplification) and smoothing
+         * Only applies to main elements (Profile, Application, Handle, Decoration, Running_Element, Detail, Prospectus)
+         * Returns modified SVG content
+         */
+        
+        // If both parameters are 0, skip processing
+        if (epsilon === 0 && smoothing === 0) {
+            console.log(`  ⏭️ Skipping vectorization (both parameters are 0)`);
+            return svgContent;
+        }
+        
+        try {
+            const parser = new DOMParser();
+            const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+            
+            // Main element categories that should be re-vectorized
+            const mainCategories = ['Profile', 'Profile_Mirrored', 'Prospectus', 'Application', 'Handle', 'Decoration', 'Running_Element', 'Running_Element_Mirrored', 'Detail'];
+            
+            // Find all <g> elements with id starting with "layer_"
+            const groups = svgDoc.querySelectorAll('g[id^="layer_"]');
+            
+            console.log(`  Applying vectorization parameters (ε=${epsilon}, s=${smoothing}) to main elements`);
+            
+            for (const g of groups) {
+                const layerId = g.getAttribute('id');
+                if (!layerId) continue;
+                
+                // Extract category
+                const categoryRaw = layerId.replace('layer_', '');
+                let category = null;
+                
+                if (categoryRaw.includes('Profile_Mirrored') || categoryRaw.includes('Mirrored')) {
+                    category = 'Profile_Mirrored';
+                } else if (categoryRaw.includes('Symmetry')) {
+                    category = 'Symmetry_Line';
+                } else if (categoryRaw.includes('Diameter')) {
+                    category = 'Diameter';
+                } else if (categoryRaw.includes('Profile')) {
+                    category = 'Profile';
+                } else if (categoryRaw.includes('Application')) {
+                    category = 'Application';
+                } else if (categoryRaw.includes('Handle')) {
+                    category = 'Handle';
+                } else if (categoryRaw.includes('Decoration')) {
+                    category = 'Decoration';
+                } else if (categoryRaw.includes('Running')) {
+                    category = 'Running_Element';
+                } else if (categoryRaw.includes('Detail')) {
+                    category = 'Detail';
+                } else if (categoryRaw.includes('Prospectus')) {
+                    category = 'Prospectus';
+                }
+                
+                // Only process main elements
+                if (category && mainCategories.includes(category)) {
+                    // Process all path elements inside this group
+                    const paths = g.querySelectorAll('path');
+                    
+                    paths.forEach(path => {
+                        const dAttr = path.getAttribute('d');
+                        if (!dAttr) return;
+                        
+                        try {
+                            // Parse path data
+                            const points = this.parsePathData(dAttr);
+                            if (points.length < 2) return;
+                            
+                            // Apply simplification (Douglas-Peucker algorithm)
+                            let simplifiedPoints = this.douglasPeucker(points, epsilon);
+                            
+                            // Apply smoothing if needed
+                            if (smoothing > 0) {
+                                simplifiedPoints = this.smoothPath(simplifiedPoints, smoothing);
+                            }
+                            
+                            // Reconstruct path data
+                            const newD = this.pointsToPathData(simplifiedPoints);
+                            path.setAttribute('d', newD);
+                            
+                        } catch (err) {
+                            console.warn(`  ⚠️ Could not process path in ${layerId}:`, err);
+                        }
+                    });
+                    
+                    console.log(`  ✓ Re-vectorized ${paths.length} paths in layer: ${layerId} (${category})`);
+                }
+            }
+            
+            // Serialize back to string
+            const serializer = new XMLSerializer();
+            const modifiedSvg = serializer.serializeToString(svgDoc);
+            
+            return modifiedSvg;
+            
+        } catch (e) {
+            console.error('Error applying vectorization parameters:', e);
+            return svgContent; // Return original if error
+        }
+    }
+    
+    parsePathData(d) {
+        /**
+         * Parse SVG path data string into array of {x, y} points
+         * Simplified parser - handles M, L, C commands
+         */
+        const points = [];
+        const commands = d.match(/[MLCZmlcz][^MLCZmlcz]*/g) || [];
+        
+        let currentX = 0, currentY = 0;
+        
+        for (const cmd of commands) {
+            const type = cmd[0];
+            const coords = cmd.slice(1).trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+            
+            if (type === 'M' || type === 'm') {
+                for (let i = 0; i < coords.length; i += 2) {
+                    if (type === 'M') {
+                        currentX = coords[i];
+                        currentY = coords[i + 1];
+                    } else {
+                        currentX += coords[i];
+                        currentY += coords[i + 1];
+                    }
+                    points.push({ x: currentX, y: currentY });
+                }
+            } else if (type === 'L' || type === 'l') {
+                for (let i = 0; i < coords.length; i += 2) {
+                    if (type === 'L') {
+                        currentX = coords[i];
+                        currentY = coords[i + 1];
+                    } else {
+                        currentX += coords[i];
+                        currentY += coords[i + 1];
+                    }
+                    points.push({ x: currentX, y: currentY });
+                }
+            } else if (type === 'C' || type === 'c') {
+                // For curves, just take the end point (ignore control points for simplification)
+                for (let i = 0; i < coords.length; i += 6) {
+                    if (type === 'C') {
+                        currentX = coords[i + 4];
+                        currentY = coords[i + 5];
+                    } else {
+                        currentX += coords[i + 4];
+                        currentY += coords[i + 5];
+                    }
+                    points.push({ x: currentX, y: currentY });
+                }
+            }
+        }
+        
+        return points;
+    }
+    
+    douglasPeucker(points, epsilon) {
+        /**
+         * Douglas-Peucker line simplification algorithm
+         */
+        if (points.length < 3) return points;
+        
+        let maxDist = 0;
+        let maxIndex = 0;
+        const end = points.length - 1;
+        
+        for (let i = 1; i < end; i++) {
+            const dist = this.perpendicularDistance(points[i], points[0], points[end]);
+            if (dist > maxDist) {
+                maxDist = dist;
+                maxIndex = i;
+            }
+        }
+        
+        if (maxDist > epsilon) {
+            const left = this.douglasPeucker(points.slice(0, maxIndex + 1), epsilon);
+            const right = this.douglasPeucker(points.slice(maxIndex), epsilon);
+            return left.slice(0, -1).concat(right);
+        } else {
+            return [points[0], points[end]];
+        }
+    }
+    
+    perpendicularDistance(point, lineStart, lineEnd) {
+        /**
+         * Calculate perpendicular distance from point to line
+         */
+        const dx = lineEnd.x - lineStart.x;
+        const dy = lineEnd.y - lineStart.y;
+        const norm = Math.sqrt(dx * dx + dy * dy);
+        
+        if (norm === 0) {
+            return Math.sqrt(
+                (point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2
+            );
+        }
+        
+        return Math.abs(
+            dy * point.x - dx * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x
+        ) / norm;
+    }
+    
+    smoothPath(points, factor) {
+        /**
+         * Apply simple moving average smoothing to path points
+         */
+        if (points.length < 3 || factor === 0) return points;
+        
+        const smoothed = [];
+        const window = Math.max(1, Math.floor(factor * 5)); // Window size based on factor
+        
+        for (let i = 0; i < points.length; i++) {
+            if (i === 0 || i === points.length - 1) {
+                // Keep first and last points unchanged
+                smoothed.push(points[i]);
+            } else {
+                let sumX = 0, sumY = 0, count = 0;
+                
+                for (let j = Math.max(0, i - window); j <= Math.min(points.length - 1, i + window); j++) {
+                    sumX += points[j].x;
+                    sumY += points[j].y;
+                    count++;
+                }
+                
+                smoothed.push({
+                    x: sumX / count,
+                    y: sumY / count
+                });
+            }
+        }
+        
+        return smoothed;
+    }
+    
+    pointsToPathData(points) {
+        /**
+         * Convert array of points back to SVG path data string
+         */
+        if (points.length === 0) return '';
+        
+        let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+        
+        for (let i = 1; i < points.length; i++) {
+            d += ` L ${points[i].x.toFixed(2)} ${points[i].y.toFixed(2)}`;
+        }
+        
+        return d;
+    }
 
     extractAllCategoriesFromSVG(svgContent) {
         /**
@@ -507,8 +766,8 @@ class PostProcessingManager {
                     category = 'Handle';
                 } else if (categoryRaw.includes('Decoration')) {
                     category = 'Decoration';
-                } else if (categoryRaw.includes('Section')) {
-                    category = 'Section';
+                } else if (categoryRaw.includes('Running')) {
+                    category = 'Running_Element';
                 } else if (categoryRaw.includes('Detail')) {
                     category = 'Detail';
                 } else {
@@ -539,10 +798,10 @@ class PostProcessingManager {
         const svgCount = document.getElementById('postprocess-svg-count');
         const pngCount = document.getElementById('postprocess-png-count');
 
-        svgCount.textContent = this.files.svg.length;
-        pngCount.textContent = this.files.png.length;
+        if (svgCount) svgCount.textContent = this.files.svg.length || 0;
+        if (pngCount) pngCount.textContent = this.files.png.length || 0;
 
-        folderInfo.style.display = 'block';
+        if (folderInfo) folderInfo.style.display = 'block';
 
         // Update categories display
         this.updateCategoriesDisplay();
@@ -645,10 +904,15 @@ class PostProcessingManager {
                     Application: parseFloat(document.getElementById('postprocess-stroke-application').value),
                     Handle: parseFloat(document.getElementById('postprocess-stroke-handle').value),
                     Decoration: parseFloat(document.getElementById('postprocess-stroke-decoration').value),
-                    Section: parseFloat(document.getElementById('postprocess-stroke-section').value),
+                    Running_Element: parseFloat(document.getElementById('postprocess-stroke-runningelement').value),
+                    Running_Element_Mirrored: parseFloat(document.getElementById('postprocess-stroke-runningelement').value),
                     Detail: parseFloat(document.getElementById('postprocess-stroke-detail').value),
                     Symmetry_Line: parseFloat(document.getElementById('postprocess-stroke-symmetry').value),
                     Diameter: parseFloat(document.getElementById('postprocess-stroke-diameter').value)
+                },
+                vectorization: {
+                    epsilon: parseFloat(document.getElementById('postprocess-epsilon').value),
+                    smoothing: parseFloat(document.getElementById('postprocess-smoothing').value)
                 },
                 archive: {
                     createZip: document.getElementById('postprocess-create-zip').checked,
@@ -681,6 +945,13 @@ class PostProcessingManager {
                     
                     // Apply custom stroke widths and ensure black colors
                     processedSvgText = this.applyStrokeWidthsAndColorsToSVG(processedSvgText, settings.strokeWidths);
+                    
+                    // Apply vectorization parameters (simplification and smoothing) - only for main elements
+                    processedSvgText = this.applyVectorizationParametersToSVG(
+                        processedSvgText, 
+                        settings.vectorization.epsilon,
+                        settings.vectorization.smoothing
+                    );
                     
                     // Check if ANY category remains selected
                     const hasSelectedCategory = allCategories.some(cat => this.selectedCategories.has(cat));

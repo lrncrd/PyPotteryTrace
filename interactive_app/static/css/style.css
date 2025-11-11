@@ -750,7 +750,7 @@ kbd {
 }
 
 .info-modal-content .close {
-    color: white;
+    color: rgb(49, 49, 49);
     opacity: 0.8;
     z-index: 10;
     right: 1.5rem;
@@ -759,7 +759,7 @@ kbd {
 
 .info-modal-content .close:hover {
     opacity: 1;
-    color: white;
+    color: rgb(0, 0, 0);
 }
 
 .info-header {
@@ -779,7 +779,7 @@ kbd {
     font-size: 1.75rem;
     font-weight: 700;
     margin: 0;
-    color: white;
+    color: rgb(0, 0, 0);
 }
 
 .info-metadata {
@@ -801,12 +801,12 @@ kbd {
 
 .info-label {
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.8);
+    color: rgba(0, 0, 0, 0.8);
     font-size: 0.95rem;
 }
 
 .info-value {
-    color: white;
+    color: #000000;
     font-weight: 500;
     font-size: 0.95rem;
 }
@@ -819,7 +819,7 @@ kbd {
     font-size: 1.1rem;
     font-weight: 600;
     margin-bottom: 1rem;
-    color: white;
+    color: rgb(0, 0, 0);
 }
 
 .info-section .info-row {

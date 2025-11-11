@@ -111,11 +111,17 @@ class VectorizationHandler:
             'fill': 'black',
             'description': 'Painted decorations'
         },
-        'Section': {
+        'Running_Element': {
             'color': '#000000',
             'stroke_width': 1.0,
             'fill': 'none',
-            'description': 'Cross-section view'
+            'description': 'Running element (mirrored, no construction lines)'
+        },
+        'Running_Element_Mirrored': {
+            'color': '#000000',
+            'stroke_width': 1.0,
+            'fill': 'none',
+            'description': 'Mirrored running element'
         },
         'Detail': {
             'color': '#000000',
@@ -250,9 +256,9 @@ class VectorizationHandler:
             print(f"  → Vectorizing from PNG: {Path(png_path).name}")
             
             # Determine if we should use extract_profile_mode for Profile category
-            is_profile_mode = (category == 'Profile')
+            is_profile_mode = (category == 'Profile' or category == 'Running_Element')
             if is_profile_mode:
-                print(f"  → Using extract_profile_mode for Profile category")
+                print(f"  → Using extract_profile_mode for {category} category")
             
             result = vectorize_archaeological_drawing(
                 image_path=png_path,  # Use the saved PNG directly!
@@ -912,6 +918,58 @@ class VectorizationHandler:
         
         print(f"✓ Mirrored profile SVG saved: {output_path}")
     
+    def create_outer_contour_svg(
+        self,
+        profile_path: np.ndarray,
+        output_path: str,
+        width: int,
+        height: int,
+        epsilon: float = 1.5,
+        smoothing_factor: float = 0.3,
+        layer_id: str = 'outer_contour',
+        stroke_color: str = '#000000',
+        stroke_width: float = 1.0
+    ):
+        """
+        Create SVG with outer contour only (open path, not mirrored).
+        Used for Running_Element category.
+        
+        Args:
+            profile_path: Profile contour as numpy array (y, x)
+            output_path: Path to save SVG
+            width: SVG width
+            height: SVG height
+            epsilon: RDP simplification
+            smoothing_factor: Bezier smoothing
+            layer_id: SVG group ID
+            stroke_color: Stroke color
+            stroke_width: Stroke width
+        """
+        from archaeological_vectorizer import smooth_path_to_bezier, create_simple_path
+        
+        # Create SVG
+        dwg = svgwrite.Drawing(output_path, size=(f'{width}px', f'{height}px'), profile='full')
+        
+        # Create group for outer contour
+        contour_group = dwg.g(id=layer_id, stroke=stroke_color, stroke_width=stroke_width, fill='none')
+        
+        # Apply RDP simplification
+        simplified = rdp(profile_path, epsilon=epsilon)
+        
+        if len(simplified) >= 2:
+            # Create SVG path with smoothing (OPEN path - no Z command)
+            if smoothing_factor > 0:
+                path_data = smooth_path_to_bezier(simplified, smoothing_factor)
+            else:
+                path_data = create_simple_path(simplified)
+            
+            contour_group.add(dwg.path(d=path_data))
+        
+        dwg.add(contour_group)
+        dwg.save()
+        
+        print(f"✓ Outer contour SVG saved: {output_path}")
+    
     def create_symmetry_line_svg(
         self,
         center_x: int,
@@ -983,6 +1041,213 @@ class VectorizationHandler:
         dwg.save()
         
         print(f"✓ Diameter line SVG saved: {output_path}")
+    
+    def merge_profile_with_running_element(
+        self,
+        profile_mirrored_path: np.ndarray,
+        running_element_mirrored_path: np.ndarray,
+        output_path: str,
+        width: int,
+        height: int,
+        epsilon: float = 1.5,
+        smoothing_factor: float = 0.3,
+        proximity_threshold: float = 50.0
+    ):
+        """
+        Merge Profile_Mirrored with Running_Element_Mirrored by removing overlapping sections.
+        
+        Strategy:
+        1. Find closest points between the two paths
+        2. Cut Profile_Mirrored at the intersection region
+        3. Connect the remaining Profile_Mirrored segments with Running_Element_Mirrored
+        
+        Args:
+            profile_mirrored_path: Profile contour as numpy array (y, x)
+            running_element_mirrored_path: Running element contour as numpy array (y, x)
+            output_path: Path to save merged SVG
+            width: SVG width
+            height: SVG height
+            epsilon: RDP simplification
+            smoothing_factor: Bezier smoothing
+            proximity_threshold: Distance threshold to consider points "close"
+        """
+        from archaeological_vectorizer import smooth_path_to_bezier, create_simple_path
+        from scipy.spatial import distance_matrix
+        
+        print(f"\n{'='*60}")
+        print(f"Merging Profile_Mirrored with Running_Element_Mirrored")
+        print(f"Profile points: {len(profile_mirrored_path)}")
+        print(f"Running element points: {len(running_element_mirrored_path)}")
+        print(f"Proximity threshold: {proximity_threshold}px")
+        print(f"{'='*60}\n")
+        
+        # Calculate distance matrix between all points
+        distances = distance_matrix(profile_mirrored_path, running_element_mirrored_path)
+        
+        # Find points where distance is below threshold
+        close_points = np.where(distances < proximity_threshold)
+        
+        if len(close_points[0]) == 0:
+            print("⚠️ No close points found - keeping Profile_Mirrored unchanged")
+            # Just save the original profile_mirrored
+            self.create_outer_contour_svg(
+                profile_mirrored_path, output_path, width, height, 
+                epsilon, smoothing_factor, 'merged_profile', '#000000', 1.5
+            )
+            return
+        
+        # Find the START and END indices in profile where it's close to running element
+        profile_close_indices = close_points[0]
+        cut_start = np.min(profile_close_indices)
+        cut_end = np.max(profile_close_indices)
+        
+        print(f"  Found {len(profile_close_indices)} close points")
+        print(f"  Profile cut region: indices {cut_start} to {cut_end}")
+        
+        # Split Profile_Mirrored into segments
+        # Keep: [0:cut_start] and [cut_end:end]
+        # Remove: [cut_start:cut_end] (the part close to running element)
+        
+        if cut_start > 0 and cut_end < len(profile_mirrored_path) - 1:
+            # Profile is cut in the middle - keep both ends
+            segment_before = profile_mirrored_path[:cut_start]
+            segment_after = profile_mirrored_path[cut_end:]
+            
+            print(f"  Profile segment BEFORE: {len(segment_before)} points")
+            print(f"  Profile segment AFTER: {len(segment_after)} points")
+            
+            # Merged path: segment_before + running_element + segment_after
+            merged_path = np.vstack([segment_before, running_element_mirrored_path, segment_after])
+            
+        elif cut_start == 0:
+            # Cut at the beginning - keep only the end
+            segment_after = profile_mirrored_path[cut_end:]
+            print(f"  Profile cut at START - keeping end segment: {len(segment_after)} points")
+            merged_path = np.vstack([running_element_mirrored_path, segment_after])
+            
+        elif cut_end == len(profile_mirrored_path) - 1:
+            # Cut at the end - keep only the beginning
+            segment_before = profile_mirrored_path[:cut_start]
+            print(f"  Profile cut at END - keeping start segment: {len(segment_before)} points")
+            merged_path = np.vstack([segment_before, running_element_mirrored_path])
+            
+        else:
+            # Shouldn't happen, but fallback
+            print("  ⚠️ Unexpected cut configuration - using full running element")
+            merged_path = running_element_mirrored_path
+        
+        print(f"  ✓ Merged path: {len(merged_path)} total points\n")
+        
+        # Create SVG with merged path
+        dwg = svgwrite.Drawing(output_path, size=(f'{width}px', f'{height}px'), profile='full')
+        merged_group = dwg.g(id='merged_profile', stroke='#000000', stroke_width=1.5, fill='none')
+        
+        # Apply RDP simplification
+        simplified = rdp(merged_path, epsilon=epsilon)
+        
+        if len(simplified) >= 2:
+            # Create SVG path with smoothing
+            if smoothing_factor > 0:
+                path_data = smooth_path_to_bezier(simplified, smoothing_factor)
+            else:
+                path_data = create_simple_path(simplified)
+            
+            merged_group.add(dwg.path(d=path_data))
+        
+        dwg.add(merged_group)
+        dwg.save()
+        
+        print(f"✓ Merged profile SVG saved: {output_path}")
+    
+    def extend_running_element_to_profile(
+        self,
+        running_element_path: np.ndarray,
+        profile_path: np.ndarray,
+        output_path: str,
+        width: int,
+        height: int,
+        epsilon: float = 1.5,
+        smoothing_factor: float = 0.3,
+        layer_id: str = 'running_element_extended',
+        stroke_color: str = '#000000',
+        stroke_width: float = 1.0
+    ):
+        """
+        Extend the endpoints of Running_Element to touch the Profile.
+        
+        Args:
+            running_element_path: Running element contour as numpy array (y, x)
+            profile_path: Profile contour as numpy array (y, x)
+            output_path: Path to save extended SVG
+            width: SVG width
+            height: SVG height
+            epsilon: RDP simplification
+            smoothing_factor: Bezier smoothing
+            layer_id: SVG group ID
+            stroke_color: Stroke color
+            stroke_width: Stroke width
+        """
+        from archaeological_vectorizer import smooth_path_to_bezier, create_simple_path
+        from scipy.spatial import distance_matrix
+        
+        print(f"\n{'='*60}")
+        print(f"Extending Running_Element endpoints to touch Profile")
+        print(f"Running element points: {len(running_element_path)}")
+        print(f"Profile points: {len(profile_path)}")
+        print(f"{'='*60}\n")
+        
+        # Get the two endpoints of running element (first and last points)
+        start_point = running_element_path[0]
+        end_point = running_element_path[-1]
+        
+        print(f"  Running element START: y={start_point[0]:.1f}, x={start_point[1]:.1f}")
+        print(f"  Running element END: y={end_point[0]:.1f}, x={end_point[1]:.1f}")
+        
+        # Find closest points on profile to each endpoint
+        distances_to_start = np.sqrt(np.sum((profile_path - start_point)**2, axis=1))
+        distances_to_end = np.sqrt(np.sum((profile_path - end_point)**2, axis=1))
+        
+        closest_to_start_idx = np.argmin(distances_to_start)
+        closest_to_end_idx = np.argmin(distances_to_end)
+        
+        closest_to_start = profile_path[closest_to_start_idx]
+        closest_to_end = profile_path[closest_to_end_idx]
+        
+        dist_start = distances_to_start[closest_to_start_idx]
+        dist_end = distances_to_end[closest_to_end_idx]
+        
+        print(f"\n  Closest profile point to START: y={closest_to_start[0]:.1f}, x={closest_to_start[1]:.1f} (dist={dist_start:.1f}px)")
+        print(f"  Closest profile point to END: y={closest_to_end[0]:.1f}, x={closest_to_end[1]:.1f} (dist={dist_end:.1f}px)")
+        
+        # Create extended path: [profile_start] + [running_element] + [profile_end]
+        extended_path = np.vstack([
+            [closest_to_start],  # Add connection to profile at start
+            running_element_path,  # Original running element
+            [closest_to_end]  # Add connection to profile at end
+        ])
+        
+        print(f"\n  ✓ Extended path: {len(extended_path)} points (added 2 connection points)\n")
+        
+        # Create SVG
+        dwg = svgwrite.Drawing(output_path, size=(f'{width}px', f'{height}px'), profile='full')
+        contour_group = dwg.g(id=layer_id, stroke=stroke_color, stroke_width=stroke_width, fill='none')
+        
+        # Apply RDP simplification
+        simplified = rdp(extended_path, epsilon=epsilon)
+        
+        if len(simplified) >= 2:
+            # Create SVG path with smoothing (OPEN path)
+            if smoothing_factor > 0:
+                path_data = smooth_path_to_bezier(simplified, smoothing_factor)
+            else:
+                path_data = create_simple_path(simplified)
+            
+            contour_group.add(dwg.path(d=path_data))
+        
+        dwg.add(contour_group)
+        dwg.save()
+        
+        print(f"✓ Extended Running_Element SVG saved: {output_path}")
     
     def mirror_profile(
         self,

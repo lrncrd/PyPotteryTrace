@@ -536,8 +536,8 @@ class PyPotteryTraceApp {
     }
     
     getDefaultVectorization(category) {
-        // Profile and Application are vectorized by default
-        return category === 'Profile' || category === 'Application';
+        // Profile, Application, and Running_Element are vectorized by default
+        return category === 'Profile' || category === 'Application' || category === 'Running_Element';
     }
     
     async deleteSegment(segmentId) {
@@ -1222,7 +1222,7 @@ class PyPotteryTraceApp {
             'Decoration': 'rgba(245, 158, 11, 0.5)',      // Orange
             'Application': 'rgba(139, 92, 246, 0.5)',     // Purple
             'Handle': 'rgba(236, 72, 153, 0.5)',          // Pink
-            'Section': 'rgba(251, 146, 60, 0.5)',         // Amber
+            'Running_Element': 'rgba(96, 165, 250, 0.5)', // Light Blue
             'Detail': 'rgba(34, 197, 94, 0.5)'            // Emerald
         };
         return colors[category] || 'rgba(156, 163, 175, 0.5)'; // Gray fallback

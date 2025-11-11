@@ -271,6 +271,10 @@ def generate_svg_preview():
         topmost_profile_info = None
         all_profile_infos = []  # Store all profiles to process diameter line later
         
+        # Track running elements for merging with profiles
+        running_element_info = None  # Store running element outer contour for merging
+        profile_outer_contour = None  # Store profile outer contour for extension
+        
         for mask_info in mask_files:
             try:
                 segment = mask_info['segment']
@@ -332,6 +336,9 @@ def generate_svg_preview():
                                 }
                                 all_profile_infos.append(profile_info)
                                 
+                                # Store profile outer contour for Running_Element extension
+                                profile_outer_contour = outer_contour
+                                
                                 # Track the topmost profile (smallest y_top)
                                 if topmost_profile_y is None or y_top < topmost_profile_y:
                                     topmost_profile_y = y_top
@@ -357,7 +364,9 @@ def generate_svg_preview():
                                     'category': 'Profile_Mirrored',
                                     'paths': vectorization_handler._extract_paths_from_svg(str(mirrored_svg_path)),
                                     'style': {'color': '#000000', 'stroke_width': 1.5, 'fill': 'none'},
-                                    'svg_file': str(mirrored_svg_path)
+                                    'svg_file': str(mirrored_svg_path),
+                                    '_outer_contour': outer_contour,  # Store for potential merging
+                                    '_center_x': center_x
                                 })
                                 
                                 # 2. Create symmetry line SVG (vertical axis of rotation)
@@ -389,6 +398,101 @@ def generate_svg_preview():
                             print(f"  ✗ profile_data not found in element_vectors, skipping additional layers")
                             print(f"     This usually means extract_profile_mode was not activated")
                     
+                    # NEW: Generate mirrored layer for Running_Element (no construction lines)
+                    elif segment['category'] == 'Running_Element' and session.get('rotation_center'):
+                        center_x = session['rotation_center']['x']
+                        print(f"\n{'='*60}")
+                        print(f"  ✓ Rotation center detected for Running_Element at x={center_x}")
+                        print(f"  → Checking for profile_data in element_vectors...")
+                        print(f"{'='*60}\n")
+                        
+                        # Check if we have profile_data from extract_profile_mode
+                        if 'stats' in element_vectors and 'profile_data' in element_vectors.get('stats', {}):
+                            profile_data = element_vectors['stats']['profile_data']
+                            outer_contour = profile_data.get('outer_contour')
+                            
+                            print(f"  ✓ Found profile_data for Running_Element!")
+                            print(f"  → outer_contour length: {len(outer_contour) if outer_contour is not None else 'None'}")
+                            
+                            if outer_contour is not None and len(outer_contour) > 0:
+                                print(f"  → Creating Running_Element outer contour and mirrored layer (no construction lines)...")
+                                
+                                # Check if we have Profile outer contour to extend to
+                                if profile_outer_contour is not None:
+                                    print(f"  → Profile found! Extending Running_Element endpoints to touch Profile...")
+                                    
+                                    # 1. Create EXTENDED Running_Element (touches Profile on right side)
+                                    main_svg_path = svg_debug_dir / f"Running_Element_{safe_name}.svg"
+                                    vectorization_handler.extend_running_element_to_profile(
+                                        running_element_path=outer_contour,
+                                        profile_path=profile_outer_contour,
+                                        output_path=str(main_svg_path),
+                                        width=width,
+                                        height=height,
+                                        epsilon=epsilon,
+                                        smoothing_factor=smoothing,
+                                        layer_id='running_element',
+                                        stroke_color='#000000',
+                                        stroke_width=1.0
+                                    )
+                                else:
+                                    print(f"  → No Profile found, creating Running_Element without extension...")
+                                    
+                                    # 1. Create Running_Element SVG with ONLY outer contour (open path)
+                                    main_svg_path = svg_debug_dir / f"Running_Element_{safe_name}.svg"
+                                    vectorization_handler.create_outer_contour_svg(
+                                        profile_path=outer_contour,
+                                        output_path=str(main_svg_path),
+                                        width=width,
+                                        height=height,
+                                        epsilon=epsilon,
+                                        smoothing_factor=smoothing,
+                                        layer_id='running_element',
+                                        stroke_color='#000000',
+                                        stroke_width=1.0
+                                    )
+                                
+                                # Update the main element to use the outer contour SVG
+                                element_vectors['paths'] = vectorization_handler._extract_paths_from_svg(str(main_svg_path))
+                                element_vectors['svg_file'] = str(main_svg_path)
+                                
+                                # 2. Create mirrored running element SVG (using outer contour)
+                                mirrored_svg_path = svg_debug_dir / f"Running_Element_{safe_name}_Mirrored.svg"
+                                vectorization_handler.create_mirrored_profile_svg(
+                                    profile_path=outer_contour,
+                                    center_x=center_x,
+                                    output_path=str(mirrored_svg_path),
+                                    width=width,
+                                    height=height,
+                                    epsilon=epsilon,
+                                    smoothing_factor=smoothing
+                                )
+                                
+                                # Add mirrored running element as separate vectorized element
+                                vectorized_elements.append({
+                                    'name': f"{segment['name']} (Mirrored)",
+                                    'category': 'Running_Element_Mirrored',
+                                    'paths': vectorization_handler._extract_paths_from_svg(str(mirrored_svg_path)),
+                                    'style': {'color': '#000000', 'stroke_width': 1.0, 'fill': 'none'},
+                                    'svg_file': str(mirrored_svg_path),
+                                    '_outer_contour': outer_contour,  # Store for potential merging
+                                    '_center_x': center_x
+                                })
+                                
+                                # Store running element info for later merging with Profile_Mirrored
+                                running_element_info = {
+                                    'outer_contour': outer_contour,
+                                    'center_x': center_x,
+                                    'safe_name': safe_name
+                                }
+                                
+                                print(f"  ✓ Created outer contour and mirrored Running_Element layers")
+                                print(f"  ✓ Stored Running_Element info for potential merge with Profile")
+                            else:
+                                print(f"  ✗ outer_contour is None or empty, skipping mirrored layer")
+                        else:
+                            print(f"  ✗ profile_data not found, skipping mirrored layer")
+                    
                     vectorized_elements.append(element_vectors)
                     categories_found.add(segment['category'])
                     print(f"  ✓ Vectorized: {len(element_vectors.get('paths', []))} paths\n")
@@ -410,6 +514,84 @@ def generate_svg_preview():
                 import traceback
                 traceback.print_exc()
                 continue
+        
+        # EXTEND & MERGE: Handle Profile + Running_Element connections
+        if running_element_info is not None and profile_outer_contour is not None:
+            print(f"\n{'='*60}")
+            print(f"  ✓ Found both Profile and Running_Element")
+            print(f"  → RIGHT SIDE: Extending Running_Element to touch Profile")
+            print(f"  → LEFT SIDE: Merging Profile_Mirrored with Running_Element_Mirrored")
+            print(f"{'='*60}\n")
+            
+            # RIGHT SIDE is already handled in Running_Element creation (extended)
+            # Now handle LEFT SIDE (mirrored) - MERGE them
+            
+            # Find Profile_Mirrored and Running_Element_Mirrored elements
+            profile_mirrored_elem = None
+            profile_mirrored_idx = None
+            running_mirrored_elem = None
+            running_mirrored_idx = None
+            
+            for idx, elem in enumerate(vectorized_elements):
+                if elem.get('category') == 'Profile_Mirrored' and '_outer_contour' in elem:
+                    profile_mirrored_elem = elem
+                    profile_mirrored_idx = idx
+                elif elem.get('category') == 'Running_Element_Mirrored':
+                    running_mirrored_elem = elem
+                    running_mirrored_idx = idx
+            
+            if profile_mirrored_elem and running_mirrored_elem:
+                # Get outer contours
+                profile_outer = profile_mirrored_elem['_outer_contour']
+                running_outer = running_element_info['outer_contour']
+                center_x = running_element_info['center_x']
+                
+                # Mirror both contours to work on left side
+                profile_mirrored_contour = profile_outer.copy()
+                profile_mirrored_contour[:, 1] = 2 * center_x - profile_outer[:, 1]
+                
+                running_mirrored_contour = running_outer.copy()
+                running_mirrored_contour[:, 1] = 2 * center_x - running_outer[:, 1]
+                
+                # Create merged SVG (Profile_Mirrored + Running_Element_Mirrored fused)
+                safe_name = profile_mirrored_elem.get('name', 'merged').replace(' ', '_').replace('/', '_')
+                merged_svg_path = svg_debug_dir / f"Profile_Merged_{safe_name}.svg"
+                
+                try:
+                    vectorization_handler.merge_profile_with_running_element(
+                        profile_mirrored_path=profile_mirrored_contour,
+                        running_element_mirrored_path=running_mirrored_contour,
+                        output_path=str(merged_svg_path),
+                        width=width,
+                        height=height,
+                        epsilon=epsilon,
+                        smoothing_factor=smoothing,
+                        proximity_threshold=50.0
+                    )
+                    
+                    # Replace Profile_Mirrored with merged version
+                    vectorized_elements[profile_mirrored_idx] = {
+                        'name': 'Profile (Merged with Running Element)',
+                        'category': 'Profile_Mirrored',
+                        'paths': vectorization_handler._extract_paths_from_svg(str(merged_svg_path)),
+                        'style': {'color': '#000000', 'stroke_width': 1.5, 'fill': 'none'},
+                        'svg_file': str(merged_svg_path)
+                    }
+                    
+                    # Remove Running_Element_Mirrored (merged into Profile_Mirrored)
+                    vectorized_elements = [
+                        elem for elem in vectorized_elements 
+                        if elem.get('category') != 'Running_Element_Mirrored'
+                    ]
+                    
+                    print(f"  ✓ LEFT SIDE: Successfully merged Profile_Mirrored with Running_Element_Mirrored")
+                    print(f"  ✓ Removed Running_Element_Mirrored (merged into Profile_Mirrored)")
+                    
+                except Exception as extend_error:
+                    print(f"  ✗ Error during merge: {extend_error}")
+                    print(f"  → Keeping original Profile_Mirrored and Running_Element_Mirrored")
+                    import traceback
+                    traceback.print_exc()
         
         # After processing all profiles, create diameter line ONLY for the topmost one
         if topmost_profile_info is not None:
@@ -1785,8 +1967,8 @@ def postprocess_export():
                             categories_found.append(('Handle', 6))
                         elif 'Decoration' in category_raw:
                             categories_found.append(('Decoration', 7))
-                        elif 'Section' in category_raw:
-                            categories_found.append(('Section', 8))
+                        elif 'Running' in category_raw:
+                            categories_found.append(('Running_Element', 8))
                         elif 'Detail' in category_raw:
                             categories_found.append(('Detail', 9))
                         else:
