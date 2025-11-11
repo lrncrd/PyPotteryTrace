@@ -151,8 +151,50 @@ def generate_svg_preview():
             try:
                 print(f"Preparing mask {i+1}/{len(session['segments'])}: {segment['name']}")
                 
-                # Convert mask to numpy array
-                mask = np.array(segment['mask'], dtype=np.uint8)
+                # Check if mask exists, if not try to regenerate from contours
+                if segment['mask'] is None:
+                    print(f"  ⚠ WARNING: Mask is None, attempting to regenerate from contours...")
+                    if 'contours' in segment and segment['contours']:
+                        # Create blank mask
+                        mask = np.zeros((img.shape[0], img.shape[1]), dtype=np.uint8)
+                        
+                        # Draw contours on mask
+                        contours_data = segment['contours']
+                        if isinstance(contours_data, list) and len(contours_data) > 0:
+                            # Convert contours to numpy format
+                            contours_np = []
+                            for contour in contours_data:
+                                if isinstance(contour, list) and len(contour) > 0:
+                                    # Check format of first point
+                                    first_point = contour[0]
+                                    if isinstance(first_point, dict):
+                                        # Format: [{'x': 10, 'y': 20}, ...]
+                                        pts = np.array([[int(pt['x']), int(pt['y'])] for pt in contour], dtype=np.int32)
+                                    elif isinstance(first_point, (list, tuple)) and len(first_point) == 2:
+                                        # Format: [[10, 20], ...] or [(10, 20), ...]
+                                        pts = np.array([[int(pt[0]), int(pt[1])] for pt in contour], dtype=np.int32)
+                                    else:
+                                        print(f"  ⚠ Unknown contour format: {type(first_point)}, value: {first_point}")
+                                        continue
+                                    
+                                    contours_np.append(pts)
+                            
+                            # Fill contours on mask
+                            if len(contours_np) > 0:
+                                cv2.drawContours(mask, contours_np, -1, 255, thickness=cv2.FILLED)
+                                print(f"  ✓ Regenerated mask from {len(contours_np)} contours")
+                            else:
+                                print(f"  ✗ ERROR: No valid contours found")
+                                continue
+                        else:
+                            print(f"  ✗ ERROR: Contours data is invalid or empty")
+                            continue
+                    else:
+                        print(f"  ✗ ERROR: No contours available to regenerate mask")
+                        continue
+                else:
+                    # Convert mask to numpy array
+                    mask = np.array(segment['mask'], dtype=np.uint8)
                 
                 # Improve mask quality
                 mask_improved = vectorization_handler.improve_mask(
@@ -2119,13 +2161,47 @@ def get_project_image(project_id, filename):
     """Get a specific image from project."""
     try:
         folder_type = request.args.get('folder', 'uploads')
+        thumbnail = request.args.get('thumbnail', 'false').lower() == 'true'
+        max_size = int(request.args.get('max_size', '150'))
+        
         image_path = project_manager.get_project_path(project_id, folder_type) / filename
         
         if not image_path.exists():
             return jsonify({'error': 'Image not found'}), 404
         
-        return send_file(image_path)
+        # If thumbnail requested, generate and send thumbnail
+        if thumbnail:
+            from PIL import Image
+            import io
+            
+            # Open image
+            img = Image.open(image_path)
+            
+            # Convert to RGB if necessary (for transparency handling)
+            if img.mode in ('RGBA', 'LA', 'P'):
+                # Create a white background
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                background.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                img = background
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # Calculate thumbnail size maintaining aspect ratio
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # Save to bytes buffer
+            buffer = io.BytesIO()
+            img.save(buffer, format='JPEG', quality=85, optimize=True)
+            buffer.seek(0)
+            
+            return send_file(buffer, mimetype='image/jpeg')
+        else:
+            # Send original image
+            return send_file(image_path)
     except Exception as e:
+        print(f"Error serving image: {e}")
         return jsonify({'error': str(e)}), 500
 
 

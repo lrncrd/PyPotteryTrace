@@ -88,13 +88,13 @@ class VectorizationHandler:
             'description': 'Diameter line (horizontal)'
         },
         'Application': {
-            'color': '#FF6600',
+            'color': '#000000',
             'stroke_width': 1.2,
             'fill': 'none',
             'description': 'Applied elements (handles, spouts)'
         },
         'Handle': {
-            'color': '#CC6600',
+            'color': '#000000',
             'stroke_width': 1.0,
             'fill': 'none',
             'description': 'Handles and attachments'
@@ -112,13 +112,13 @@ class VectorizationHandler:
             'description': 'Painted decorations'
         },
         'Section': {
-            'color': '#666666',
+            'color': '#000000',
             'stroke_width': 1.0,
             'fill': 'none',
             'description': 'Cross-section view'
         },
         'Detail': {
-            'color': '#FF0000',
+            'color': '#000000',
             'stroke_width': 0.8,
             'fill': 'none',
             'description': 'Detail or annotation'

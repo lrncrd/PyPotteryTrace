@@ -170,17 +170,18 @@ class SVGEditor {
         
         // Add Image button
         const addImageBtn = document.getElementById('svg-add-image-btn');
-        const imageUpload = document.getElementById('svg-image-upload');
         
-        if (addImageBtn && imageUpload) {
+        if (addImageBtn) {
             addImageBtn.addEventListener('click', () => {
-                imageUpload.click();
-            });
-            
-            imageUpload.addEventListener('change', (e) => {
-                if (e.target.files && e.target.files[0]) {
-                    this.addImageFromFile(e.target.files[0]);
-                    e.target.value = ''; // Reset input
+                // Load current image automatically instead of opening file picker
+                if (window.app && window.app.currentImage) {
+                    this.addImageFromUrl(window.app.currentImage, window.app.currentImageFilename || 'Original Image');
+                } else {
+                    if (window.app) {
+                        window.app.showNotification('No image loaded. Please load an image first.', 'warning');
+                    } else {
+                        alert('No image loaded. Please load an image first.');
+                    }
                 }
             });
         }
@@ -640,9 +641,16 @@ class SVGEditor {
             const clickedImage = this.findImageAt(mouseX, mouseY);
             
             if (clickedImage) {
-                // Click directly on image to drag it (no Shift needed)
-                // Use Shift to pan the view instead
-                if (!e.shiftKey) {
+                // Check if image is locked
+                if (clickedImage.isLocked) {
+                    // Locked image - pan the view instead
+                    this.isDragging = true;
+                    this.lastMouseX = mouseX;
+                    this.lastMouseY = mouseY;
+                    this.canvas.style.cursor = 'grabbing';
+                } else if (!e.shiftKey) {
+                    // Click directly on image to drag it (no Shift needed)
+                    // Use Shift to pan the view instead
                     // Direct click on image = drag image
                     this.draggedImage = clickedImage;
                     this.lastMouseX = mouseX;
@@ -1825,6 +1833,57 @@ class SVGEditor {
                 this.redraw();
             }
         }
+    }
+    
+    addImageFromUrl(imageUrl, imageName) {
+        const img = new Image();
+        
+        img.onload = () => {
+            // Center the image in the viewport
+            const centerX = (this.svgData ? this.svgData.width / 2 : 500) - img.width / 2;
+            const centerY = (this.svgData ? this.svgData.height / 2 : 500) - img.height / 2;
+            
+            const imageId = `current-image-${Date.now()}`;
+            const cleanName = imageName ? imageName.replace(/\.[^/.]+$/, '') : 'Image';
+            
+            const imageData = {
+                id: imageId,
+                name: cleanName,
+                element: null, // No original SVG element
+                img,
+                x: Math.max(0, centerX),
+                y: Math.max(0, centerY),
+                width: img.width,
+                height: img.height,
+                opacity: 0.7, // Start semi-transparent
+                visible: true,
+                loaded: true,
+                isUserAdded: true, // Flag for user-added images
+                isLocked: true // Lock the current image so it can't be moved
+            };
+            
+            this.images.push(imageData);
+            this.imageVisibility[imageId] = true;
+            
+            this.saveState();
+            this.updateLayersList();
+            this.redraw();
+            
+            if (window.app) {
+                window.app.showNotification(`Image "${cleanName}" added (locked)!`, 'success');
+            }
+        };
+        
+        img.onerror = () => {
+            console.error('Failed to load image from URL:', imageUrl);
+            if (window.app) {
+                window.app.showNotification('Failed to load image', 'error');
+            }
+        };
+        
+        // Set crossOrigin to allow loading from same origin
+        img.crossOrigin = 'anonymous';
+        img.src = imageUrl;
     }
     
     addImageFromFile(file) {

@@ -1,12 +1,12 @@
 /**
  * PyPotteryTrace Interactive - Post-Processing Module
- * Handles batch export of vectorized files
+ * Handles batch export of vectorized files from current project
  */
 
 class PostProcessingManager {
     constructor() {
-        this.selectedFolder = null;
-        this.workingFolder = null;  // Track working folder from Setup tab
+        this.currentProjectId = null;
+        this.vectorizedFolder = null;
         this.files = {
             svg: [],
             png: []
@@ -16,44 +16,60 @@ class PostProcessingManager {
         this.selectedCategories = new Set();
         
         this.initializeEventListeners();
-        this.checkForDefaultFolder();
+        this.checkForCurrentProject();
     }
     
-    checkForDefaultFolder() {
-        // Check if working folder was set in Setup tab
-        // This will be called periodically to sync with Setup tab
+    checkForCurrentProject() {
+        // Check if a project is loaded
         setInterval(() => {
-            if (window.tabManager && window.tabManager.outputFolderPath) {
-                const newFolder = window.tabManager.outputFolderPath;
-                if (this.workingFolder !== newFolder) {
-                    this.workingFolder = newFolder;
-                    this.updateDefaultFolderHint();
-                }
+            const projectId = sessionStorage.getItem('current_project_id');
+            const projectName = sessionStorage.getItem('current_project_name');
+            
+            if (projectId && projectId !== this.currentProjectId) {
+                this.currentProjectId = projectId;
+                this.updateProjectInfo(projectId, projectName);
+            } else if (!projectId && this.currentProjectId) {
+                // Project was unloaded
+                this.currentProjectId = null;
+                this.updateProjectInfo(null, null);
             }
         }, 1000);
     }
     
-    updateDefaultFolderHint() {
-        const hintDiv = document.getElementById('postprocess-default-hint');
-        const folderSpan = document.getElementById('postprocess-default-folder');
+    updateProjectInfo(projectId, projectName) {
+        const projectInfoDiv = document.getElementById('postprocess-project-info');
+        const noProjectDiv = document.getElementById('postprocess-no-project');
+        const loadBtn = document.getElementById('postprocess-load-folder-btn');
+        const folderInfoDiv = document.getElementById('postprocess-folder-info');
         
-        if (this.workingFolder) {
-            folderSpan.textContent = this.workingFolder;
-            hintDiv.style.display = 'block';
+        if (projectId && projectName) {
+            // Show project info
+            projectInfoDiv.style.display = 'block';
+            noProjectDiv.style.display = 'none';
+            loadBtn.style.display = 'block';
+            
+            document.getElementById('postprocess-project-name').textContent = projectName;
+            document.getElementById('postprocess-folder-path').textContent = `projects/${projectId}/vectorized`;
+            
+            // Hide old folder info when switching projects
+            folderInfoDiv.style.display = 'none';
         } else {
-            hintDiv.style.display = 'none';
+            // No project loaded
+            projectInfoDiv.style.display = 'none';
+            noProjectDiv.style.display = 'block';
+            loadBtn.style.display = 'none';
+            folderInfoDiv.style.display = 'none';
         }
     }
 
     initializeEventListeners() {
-        // Folder selection
-        document.getElementById('postprocess-select-folder-btn').addEventListener('click', () => {
-            document.getElementById('postprocess-folder-input').click();
-        });
-
-        document.getElementById('postprocess-folder-input').addEventListener('change', (e) => {
-            this.handleFolderSelection(e);
-        });
+        // Load folder button (loads vectorized files from current project)
+        const loadBtn = document.getElementById('postprocess-load-folder-btn');
+        if (loadBtn) {
+            loadBtn.addEventListener('click', () => {
+                this.loadProjectVectorizedFiles();
+            });
+        }
 
         // Format checkboxes
         document.getElementById('postprocess-format-svg').addEventListener('change', () => {
@@ -90,6 +106,111 @@ class PostProcessingManager {
         document.getElementById('postprocess-export-btn').addEventListener('click', () => {
             this.handleExport();
         });
+    }
+    
+    /**
+     * Load vectorized files from current project
+     */
+    async loadProjectVectorizedFiles() {
+        if (!this.currentProjectId) {
+            alert('No project loaded!');
+            return;
+        }
+        
+        try {
+            // Show loading
+            if (window.tabManager) {
+                window.tabManager.showLoadingOverlay('Loading Vectorized Files...', 'Please wait while we load your files');
+            }
+            
+            // Fetch vectorized files list from project
+            const response = await fetch(`/api/projects/${this.currentProjectId}/images?folder=vectorized`);
+            const data = await response.json();
+            
+            console.log('Vectorized files response:', data);
+            
+            if (!data.success) {
+                if (window.tabManager) window.tabManager.hideLoadingOverlay();
+                alert(`Error loading files: ${data.error || 'Unknown error'}`);
+                return;
+            }
+            
+            if (!data.images || data.images.length === 0) {
+                if (window.tabManager) window.tabManager.hideLoadingOverlay();
+                alert('No vectorized files found in project!\n\nPlease generate some SVG files in the Segmentation tab first.');
+                return;
+            }
+            
+            console.log(`Loading ${data.images.length} vectorized files from project...`);
+            
+            // Clear previous data
+            this.files.svg = [];
+            this.files.png = [];
+            this.categories.clear();
+            this.svgCache.clear();
+            
+            // Fetch each file
+            const files = [];
+            for (const filename of data.images) {
+                try {
+                    console.log(`Fetching file: ${filename}`);
+                    const fileResponse = await fetch(`/api/projects/${this.currentProjectId}/images/${filename}?folder=vectorized`);
+                    
+                    if (!fileResponse.ok) {
+                        console.error(`Failed to fetch ${filename}: ${fileResponse.status}`);
+                        continue;
+                    }
+                    
+                    const blob = await fileResponse.blob();
+                    
+                    // Create File object
+                    const file = new File([blob], filename, { type: blob.type });
+                    files.push(file);
+                    
+                    // Process file
+                    const ext = filename.split('.').pop().toLowerCase();
+                    if (ext === 'svg') {
+                        // Read SVG content
+                        const content = await file.text();
+                        this.files.svg.push(file);
+                        this.svgCache.set(filename, content);
+                        
+                        // Extract categories
+                        const allCategories = this.extractAllCategoriesFromSVG(content);
+                        allCategories.forEach(cat => this.categories.add(cat));
+                    } else if (ext === 'png') {
+                        this.files.png.push(file);
+                        const category = this.extractCategory(filename);
+                        if (category) {
+                            this.categories.add(category);
+                        }
+                    }
+                } catch (err) {
+                    console.error(`Failed to load file ${filename}:`, err);
+                }
+            }
+            
+            console.log(`✓ Loaded ${this.files.svg.length} SVG, ${this.files.png.length} PNG`);
+            console.log(`✓ Found categories:`, Array.from(this.categories));
+            
+            // Hide loading
+            if (window.tabManager) window.tabManager.hideLoadingOverlay();
+            
+            if (this.files.svg.length === 0 && this.files.png.length === 0) {
+                alert('No valid SVG or PNG files found!\n\nPlease check that files were properly exported.');
+                return;
+            }
+            
+            // Update UI
+            this.updateFolderInfo();
+            this.populateCategoryFilters();
+            this.updateExportButton();
+            
+        } catch (error) {
+            console.error('Error loading project vectorized files:', error);
+            if (window.tabManager) window.tabManager.hideLoadingOverlay();
+            alert(`Error loading files: ${error.message}`);
+        }
     }
 
     handleFolderSelection(event) {
@@ -257,6 +378,93 @@ class PostProcessingManager {
             return svgContent; // Return original if error
         }
     }
+    
+    applyStrokeWidthsAndColorsToSVG(svgContent, strokeWidths) {
+        /**
+         * Apply custom stroke widths and ensure black colors to SVG layers
+         * Returns modified SVG content
+         */
+        try {
+            const parser = new DOMParser();
+            const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+            
+            // Find all <g> elements with id starting with "layer_"
+            const groups = svgDoc.querySelectorAll('g[id^="layer_"]');
+            
+            console.log(`  Applying stroke widths to ${groups.length} layer groups`);
+            
+            for (const g of groups) {
+                const layerId = g.getAttribute('id');
+                if (!layerId) continue;
+                
+                // Extract category
+                const categoryRaw = layerId.replace('layer_', '');
+                let category = null;
+                
+                if (categoryRaw.includes('Profile_Mirrored') || categoryRaw.includes('Mirrored')) {
+                    category = 'Profile_Mirrored';
+                } else if (categoryRaw.includes('Symmetry')) {
+                    category = 'Symmetry_Line';
+                } else if (categoryRaw.includes('Diameter')) {
+                    category = 'Diameter';
+                } else if (categoryRaw.includes('Profile')) {
+                    category = 'Profile';
+                } else if (categoryRaw.includes('Application')) {
+                    category = 'Application';
+                } else if (categoryRaw.includes('Handle')) {
+                    category = 'Handle';
+                } else if (categoryRaw.includes('Decoration')) {
+                    category = 'Decoration';
+                } else if (categoryRaw.includes('Section')) {
+                    category = 'Section';
+                } else if (categoryRaw.includes('Detail')) {
+                    category = 'Detail';
+                } else if (categoryRaw.includes('Prospectus')) {
+                    category = 'Prospectus';
+                }
+                
+                if (category && strokeWidths[category] !== undefined) {
+                    const strokeWidth = strokeWidths[category];
+                    
+                    // Apply to group
+                    g.setAttribute('stroke-width', strokeWidth);
+                    
+                    // Apply black color to main elements (not construction lines)
+                    if (category !== 'Symmetry_Line' && category !== 'Diameter') {
+                        g.setAttribute('stroke', '#000000');
+                    } else {
+                        // Keep gray for construction lines
+                        if (category === 'Symmetry_Line') {
+                            g.setAttribute('stroke', '#999999');
+                        } else if (category === 'Diameter') {
+                            g.setAttribute('stroke', '#666666');
+                        }
+                    }
+                    
+                    // Also apply to all path elements inside
+                    const paths = g.querySelectorAll('path, polyline, line, circle, rect');
+                    paths.forEach(path => {
+                        path.setAttribute('stroke-width', strokeWidth);
+                        if (category !== 'Symmetry_Line' && category !== 'Diameter') {
+                            path.setAttribute('stroke', '#000000');
+                        }
+                    });
+                    
+                    console.log(`  ✓ Applied width ${strokeWidth} to layer: ${layerId} (${category})`);
+                }
+            }
+            
+            // Serialize back to string
+            const serializer = new XMLSerializer();
+            const modifiedSvg = serializer.serializeToString(svgDoc);
+            
+            return modifiedSvg;
+            
+        } catch (e) {
+            console.error('Error applying stroke widths:', e);
+            return svgContent; // Return original if error
+        }
+    }
 
     extractAllCategoriesFromSVG(svgContent) {
         /**
@@ -328,11 +536,9 @@ class PostProcessingManager {
 
     updateFolderInfo() {
         const folderInfo = document.getElementById('postprocess-folder-info');
-        const folderPath = document.getElementById('postprocess-folder-path');
         const svgCount = document.getElementById('postprocess-svg-count');
         const pngCount = document.getElementById('postprocess-png-count');
 
-        folderPath.textContent = this.selectedFolder;
         svgCount.textContent = this.files.svg.length;
         pngCount.textContent = this.files.png.length;
 
@@ -432,6 +638,18 @@ class PostProcessingManager {
                     bgColor: document.getElementById('postprocess-bg-color').value,
                     jpgQuality: parseInt(document.getElementById('postprocess-jpg-quality').value)
                 },
+                strokeWidths: {
+                    Profile: parseFloat(document.getElementById('postprocess-stroke-profile').value),
+                    Profile_Mirrored: parseFloat(document.getElementById('postprocess-stroke-profile').value),
+                    Prospectus: parseFloat(document.getElementById('postprocess-stroke-profile').value),
+                    Application: parseFloat(document.getElementById('postprocess-stroke-application').value),
+                    Handle: parseFloat(document.getElementById('postprocess-stroke-handle').value),
+                    Decoration: parseFloat(document.getElementById('postprocess-stroke-decoration').value),
+                    Section: parseFloat(document.getElementById('postprocess-stroke-section').value),
+                    Detail: parseFloat(document.getElementById('postprocess-stroke-detail').value),
+                    Symmetry_Line: parseFloat(document.getElementById('postprocess-stroke-symmetry').value),
+                    Diameter: parseFloat(document.getElementById('postprocess-stroke-diameter').value)
+                },
                 archive: {
                     createZip: document.getElementById('postprocess-create-zip').checked,
                     organizeByCategory: document.getElementById('postprocess-organize-by-category').checked,
@@ -459,7 +677,10 @@ class PostProcessingManager {
                     console.log(`Processing SVG: ${file.name} → Categories: [${allCategories.join(', ')}]`);
                     
                     // Remove unselected layers from SVG
-                    const filteredSvgText = this.removeUnselectedLayersFromSVG(svgText, this.selectedCategories);
+                    let processedSvgText = this.removeUnselectedLayersFromSVG(svgText, this.selectedCategories);
+                    
+                    // Apply custom stroke widths and ensure black colors
+                    processedSvgText = this.applyStrokeWidthsAndColorsToSVG(processedSvgText, settings.strokeWidths);
                     
                     // Check if ANY category remains selected
                     const hasSelectedCategory = allCategories.some(cat => this.selectedCategories.has(cat));
@@ -472,7 +693,7 @@ class PostProcessingManager {
                     // Use the first SELECTED category for organization
                     const primaryCategory = allCategories.find(cat => this.selectedCategories.has(cat)) || allCategories[0];
                     
-                    return { file, svgText: filteredSvgText, category: primaryCategory };
+                    return { file, svgText: processedSvgText, category: primaryCategory };
                 })
                 .filter(item => item !== null);
 

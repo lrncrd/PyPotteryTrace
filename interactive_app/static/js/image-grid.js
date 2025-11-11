@@ -22,6 +22,9 @@ const ImageGrid = {
         this.projectId = projectId;
         
         try {
+            // Show loading overlay
+            this.showLoadingOverlay('Loading Thumbnails...', 'Preparing image grid for segmentation');
+            
             const response = await fetch(`/api/projects/${projectId}/images?folder=uploads&include_status=true`);
             const data = await response.json();
             
@@ -45,16 +48,24 @@ const ImageGrid = {
                     }
                 });
                 
-                // Render grid
+                // Render grid (this will start loading thumbnails)
                 this.renderGrid();
+                
+                // Hide loading after a brief delay to allow first thumbnails to load
+                setTimeout(() => {
+                    this.hideLoadingOverlay();
+                }, 500);
                 
                 // Load first image if available
                 if (this.images.length > 0) {
                     this.selectImage(0);
                 }
+            } else {
+                this.hideLoadingOverlay();
             }
         } catch (error) {
             console.error('Error loading project images:', error);
+            this.hideLoadingOverlay();
         }
     },
     
@@ -109,8 +120,9 @@ const ImageGrid = {
                  data-index="${index}"
                  onclick="ImageGrid.selectImage(${index})"
                  title="${img.filename}${img.vectorized ? ' (Vectorized)' : ''}">
-                <img src="/api/projects/${this.projectId}/images/${encodeURIComponent(img.filename)}?folder=uploads" 
+                <img src="/api/projects/${this.projectId}/images/${encodeURIComponent(img.filename)}?folder=uploads&thumbnail=true&max_size=150" 
                      alt="${img.filename}"
+                     loading="lazy"
                      onerror="this.style.display='none'; this.nextElementSibling.style.paddingTop='20px';">
                 <div class="grid-image-name">${this.getShortName(img.filename)}</div>
             </div>
@@ -206,40 +218,6 @@ const ImageGrid = {
     },
     
     /**
-     * Update navigation buttons state
-     */
-    updateNavigationButtons() {
-        const prevBtn = document.getElementById('prev-image-btn');
-        const nextBtn = document.getElementById('next-image-btn');
-        
-        if (prevBtn) {
-            prevBtn.disabled = this.currentIndex <= 0;
-        }
-        
-        if (nextBtn) {
-            nextBtn.disabled = this.currentIndex >= this.images.length - 1;
-        }
-    },
-    
-    /**
-     * Navigate to previous image
-     */
-    previousImage() {
-        if (this.currentIndex > 0) {
-            this.selectImage(this.currentIndex - 1);
-        }
-    },
-    
-    /**
-     * Navigate to next image
-     */
-    nextImage() {
-        if (this.currentIndex < this.images.length - 1) {
-            this.selectImage(this.currentIndex + 1);
-        }
-    },
-    
-    /**
      * Mark current image as vectorized
      */
     async markAsVectorized(sessionId) {
@@ -304,23 +282,38 @@ const ImageGrid = {
         if (countEl) {
             countEl.textContent = '0';
         }
+    },
+    
+    // Loading overlay utilities
+    showLoadingOverlay(title, message) {
+        const overlay = document.getElementById('loading-overlay');
+        const titleEl = document.getElementById('loading-overlay-title');
+        const messageEl = document.getElementById('loading-overlay-message');
+        const progressContainer = overlay?.querySelector('.loading-overlay-progress');
+        
+        if (overlay) {
+            overlay.classList.add('active');
+            if (titleEl) titleEl.textContent = title;
+            if (messageEl) messageEl.textContent = message;
+            // Hide progress bar for simple loading
+            if (progressContainer) progressContainer.style.display = 'none';
+        }
+    },
+    
+    hideLoadingOverlay() {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+            overlay.classList.remove('active');
+            // Reset progress bar visibility
+            const progressContainer = overlay.querySelector('.loading-overlay-progress');
+            if (progressContainer) progressContainer.style.display = 'block';
+        }
     }
 };
 
 // Initialize on DOM load
 document.addEventListener('DOMContentLoaded', () => {
     ImageGrid.init();
-    
-    // Setup navigation button listeners
-    const prevBtn = document.getElementById('prev-image-btn');
-    if (prevBtn) {
-        prevBtn.addEventListener('click', () => ImageGrid.previousImage());
-    }
-    
-    const nextBtn = document.getElementById('next-image-btn');
-    if (nextBtn) {
-        nextBtn.addEventListener('click', () => ImageGrid.nextImage());
-    }
 });
 
 // Export for use in other modules

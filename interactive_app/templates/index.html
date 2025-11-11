@@ -325,14 +325,6 @@
                         <p><strong>File:</strong> <span id="filename">No image loaded</span></p>
                         <p><strong>Image:</strong> <span id="current-image-number">-</span> / <span id="total-images">-</span></p>
                     </div>
-                    <div class="image-navigation">
-                        <button id="prev-image-btn" class="btn btn-secondary" disabled>
-                            <span>⬅️</span> Previous
-                        </button>
-                        <button id="next-image-btn" class="btn btn-secondary" disabled>
-                            <span>➡️</span> Next
-                        </button>
-                    </div>
                 </div>
 
                 <div class="panel">
@@ -649,9 +641,8 @@
                     <div class="panel">
                         <h2>📋 Layers</h2>
                         <button id="svg-add-image-btn" class="btn btn-secondary btn-small" style="width: 100%; margin-bottom: 10px;">
-                            <span>📷</span> Add PNG Image
+                            <span>📷</span> Add Current Image
                         </button>
-                        <input type="file" id="svg-image-upload" accept="image/png,image/jpeg,image/jpg" style="display: none;">
                         <div id="svg-layers-list" class="segments-list">
                             <p class="empty-message">No layers loaded</p>
                         </div>
@@ -710,30 +701,36 @@
                 </header>
 
                 <div class="postprocess-panels">
-                    <!-- Left Panel: Folder Selection & Preview -->
+                    <!-- Left Panel: Project Info & Preview -->
                     <div class="postprocess-left">
                         <div class="panel">
-                            <h3>📂 Select Vectorized Folder</h3>
+                            <h3>📂 Current Project</h3>
                             <p style="color: #666; font-size: 0.9rem; margin-bottom: 15px;">
-                                Select a folder ending with "_vectorized" containing your processed files
+                                Export vectorized files from the current project
                             </p>
                             
-                            <div id="postprocess-default-hint" style="display: none; background: #eff6ff; border: 1px solid #3b82f6; padding: 12px; border-radius: 6px; margin-bottom: 15px;">
-                                <p style="margin: 0; color: #1e40af; font-size: 0.9rem;">
-                                    💡 <strong>Suggested folder:</strong><br>
-                                    <span id="postprocess-default-folder" style="font-family: monospace; font-size: 0.85rem;"></span>
+                            <div id="postprocess-project-info" style="display: none; background: #eff6ff; border: 1px solid #3b82f6; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+                                <h4 style="margin: 0 0 10px 0; color: #1e40af;">📁 <span id="postprocess-project-name">Project Name</span></h4>
+                                <p style="margin: 5px 0; color: #475569; font-size: 0.85rem;">
+                                    <strong>Vectorized folder:</strong><br>
+                                    <span id="postprocess-folder-path" style="font-family: monospace; font-size: 0.8rem; word-break: break-all;"></span>
                                 </p>
                             </div>
                             
-                            <input type="file" id="postprocess-folder-input" webkitdirectory directory style="display: none;">
-                            <button id="postprocess-select-folder-btn" class="btn btn-primary btn-large">
-                                <span>📁</span> Select Vectorized Folder
+                            <div id="postprocess-no-project" style="background: #fef3c7; border: 1px solid #f59e0b; padding: 15px; border-radius: 8px; text-align: center;">
+                                <p style="margin: 0; color: #92400e; font-size: 0.9rem;">
+                                    ⚠️ <strong>No project loaded</strong><br>
+                                    Please load a project from the Projects tab first
+                                </p>
+                            </div>
+                            
+                            <button id="postprocess-load-folder-btn" class="btn btn-primary btn-large" style="margin-top: 15px; display: none;">
+                                <span>�</span> Load Vectorized Files
                             </button>
                             
                             <div id="postprocess-folder-info" style="display: none; margin-top: 20px;">
                                 <div style="background: #f0fdf4; border: 1px solid #86efac; padding: 15px; border-radius: 8px;">
-                                    <h4 style="margin: 0 0 10px 0; color: #15803d;">✓ Folder Loaded</h4>
-                                    <p style="margin: 5px 0;"><strong>Path:</strong> <span id="postprocess-folder-path"></span></p>
+                                    <h4 style="margin: 0 0 10px 0; color: #15803d;">✓ Files Loaded</h4>
                                     <p style="margin: 5px 0;"><strong>SVG Files:</strong> <span id="postprocess-svg-count">0</span></p>
                                     <p style="margin: 5px 0;"><strong>PNG Files:</strong> <span id="postprocess-png-count">0</span></p>
                                 </div>
@@ -809,7 +806,54 @@
                             </div>
 
                             <div class="form-group" style="margin-top: 20px;">
-                                <h4 style="margin-bottom: 10px;">🏷️ Category Filter</h4>
+                                <h4 style="margin-bottom: 10px;">� Stroke Width Settings</h4>
+                                <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
+                                    Customize stroke widths for different element types (in pixels)
+                                </p>
+                                
+                                <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 10px;">
+                                    <h5 style="margin: 0 0 8px 0; font-size: 0.9rem;">Main Elements:</h5>
+                                    <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span>Profile / Prospectus:</span>
+                                        <input type="number" id="postprocess-stroke-profile" min="0.5" max="5" step="0.1" value="1.5" style="width: 70px; padding: 4px;">
+                                    </label>
+                                    <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span>Application:</span>
+                                        <input type="number" id="postprocess-stroke-application" min="0.5" max="5" step="0.1" value="1.2" style="width: 70px; padding: 4px;">
+                                    </label>
+                                    <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span>Handle:</span>
+                                        <input type="number" id="postprocess-stroke-handle" min="0.5" max="5" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
+                                    </label>
+                                    <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span>Decoration:</span>
+                                        <input type="number" id="postprocess-stroke-decoration" min="0.3" max="3" step="0.1" value="0.5" style="width: 70px; padding: 4px;">
+                                    </label>
+                                    <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span>Section:</span>
+                                        <input type="number" id="postprocess-stroke-section" min="0.5" max="5" step="0.1" value="1.0" style="width: 70px; padding: 4px;">
+                                    </label>
+                                    <label style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span>Detail:</span>
+                                        <input type="number" id="postprocess-stroke-detail" min="0.3" max="3" step="0.1" value="0.8" style="width: 70px; padding: 4px;">
+                                    </label>
+                                </div>
+                                
+                                <div style="background: #f8f9fa; padding: 12px; border-radius: 6px;">
+                                    <h5 style="margin: 0 0 8px 0; font-size: 0.9rem;">Construction Lines:</h5>
+                                    <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <span>Symmetry Line:</span>
+                                        <input type="number" id="postprocess-stroke-symmetry" min="0.1" max="2" step="0.1" value="0.5" style="width: 70px; padding: 4px;">
+                                    </label>
+                                    <label style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span>Diameter:</span>
+                                        <input type="number" id="postprocess-stroke-diameter" min="0.1" max="2" step="0.1" value="0.8" style="width: 70px; padding: 4px;">
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="form-group" style="margin-top: 20px;">
+                                <h4 style="margin-bottom: 10px;">�🏷️ Category Filter</h4>
                                 <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
                                     Select which layer categories to include in the export. Unselected layers will be removed from SVG files.
                                 </p>
@@ -1149,6 +1193,19 @@
                     <span class="info-value" id="info-mps">Not Available</span>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay (for image uploads) -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-overlay-content">
+            <div class="loading-overlay-spinner"></div>
+            <h3 class="loading-overlay-title" id="loading-overlay-title">Loading Images...</h3>
+            <p class="loading-overlay-message" id="loading-overlay-message">Please wait while we process your images</p>
+            <div class="loading-overlay-progress">
+                <div class="loading-overlay-progress-bar" id="loading-overlay-progress-bar"></div>
+            </div>
+            <p class="loading-overlay-progress-text" id="loading-overlay-progress-text">0 / 0 images loaded</p>
         </div>
     </div>
 

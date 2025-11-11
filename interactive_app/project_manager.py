@@ -258,11 +258,16 @@ class ProjectManager:
         if not folder_path or not folder_path.exists():
             return []
         
-        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'}
+        # For vectorized folder, also include SVG files
+        if folder_type == 'vectorized':
+            valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.svg'}
+        else:
+            valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff'}
+        
         images = []
         
         for file_path in folder_path.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+            if file_path.is_file() and file_path.suffix.lower() in valid_extensions:
                 if include_status:
                     # Check if vectorized SVG exists
                     vectorized_path = self.get_project_path(project_id, 'vectorized')

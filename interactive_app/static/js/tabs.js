@@ -81,43 +81,66 @@ class TabManager {
         console.log('Received files:', files);
         console.log('Files count:', files.length);
         
-        // Filter only image files
-        const imageExtensions = ['jpg', 'jpeg', 'png', 'tiff', 'bmp', 'gif'];
-        this.imageFiles = Array.from(files).filter(file => {
-            const ext = file.name.split('.').pop().toLowerCase();
-            console.log(`File: ${file.name}, ext: ${ext}, webkitRelativePath: ${file.webkitRelativePath}`);
-            return imageExtensions.includes(ext);
-        });
+        // Show loading overlay
+        this.showLoadingOverlay('Loading Images...', 'Processing your image files', 0, files.length);
         
-        console.log('Filtered imageFiles count:', this.imageFiles.length);
-        
-        if (this.imageFiles.length === 0) {
-            alert('No image files found in the selected folder!');
-            return;
-        }
-        
-        // Sort files by name
-        this.imageFiles.sort((a, b) => a.name.localeCompare(b.name));
-        
-        // Extract folder path from first file
-        this.folderPath = this.imageFiles[0].webkitRelativePath.split('/')[0];
-        
-        // Output folder is automatically set to project's exports folder
-        this.outputFolderPath = this.folderPath + '_vectorized';
-        
-        // Enable post-processing tab immediately (can work independently)
-        this.enableTab('postprocess-tab');
-        
-        // Update UI
-        document.getElementById('folder-info').style.display = 'block';
-        document.getElementById('folder-name').textContent = this.folderPath;
-        document.getElementById('images-count').textContent = this.imageFiles.length;
-        
-        // Show preview thumbnails
-        this.showImagePreviews();
-        
-        // Enable start button
-        this.checkStartButton();
+        // Use setTimeout to allow UI to update
+        setTimeout(() => {
+            // Filter only image files
+            const imageExtensions = ['jpg', 'jpeg', 'png', 'tiff', 'bmp', 'gif'];
+            this.imageFiles = [];
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const ext = file.name.split('.').pop().toLowerCase();
+                console.log(`File: ${file.name}, ext: ${ext}, webkitRelativePath: ${file.webkitRelativePath}`);
+                
+                if (imageExtensions.includes(ext)) {
+                    this.imageFiles.push(file);
+                }
+                
+                // Update progress every 10 files or at the end
+                if (i % 10 === 0 || i === files.length - 1) {
+                    this.updateLoadingProgress(i + 1, files.length);
+                }
+            }
+            
+            console.log('Filtered imageFiles count:', this.imageFiles.length);
+            
+            if (this.imageFiles.length === 0) {
+                this.hideLoadingOverlay();
+                alert('No image files found in the selected folder!');
+                return;
+            }
+            
+            // Sort files by name
+            this.imageFiles.sort((a, b) => a.name.localeCompare(b.name));
+            
+            // Extract folder path from first file
+            this.folderPath = this.imageFiles[0].webkitRelativePath.split('/')[0];
+            
+            // Output folder is automatically set to project's exports folder
+            this.outputFolderPath = this.folderPath + '_vectorized';
+            
+            // Enable post-processing tab immediately (can work independently)
+            this.enableTab('postprocess-tab');
+            
+            // Update UI
+            document.getElementById('folder-info').style.display = 'block';
+            document.getElementById('folder-name').textContent = this.folderPath;
+            document.getElementById('images-count').textContent = this.imageFiles.length;
+            
+            // Show preview thumbnails
+            this.showImagePreviews();
+            
+            // Enable start button
+            this.checkStartButton();
+            
+            // Hide loading overlay after a brief delay
+            setTimeout(() => {
+                this.hideLoadingOverlay();
+            }, 300);
+        }, 100);
     }
     
     /**
@@ -140,16 +163,22 @@ class TabManager {
                 return false;
             }
             
-            console.log(`Loading ${data.images.length} images from project...`);
+            const totalImages = data.images.length;
+            console.log(`Loading ${totalImages} images from project...`);
+            
+            // Show loading overlay
+            this.showLoadingOverlay('Loading Project Images...', `Loading ${totalImages} images from project`, 0, totalImages);
             
             // Fetch each image and create File objects with webkitRelativePath
             const files = [];
             
-            for (const imgName of data.images) {
+            for (let i = 0; i < data.images.length; i++) {
                 try {
+                    const imgName = data.images[i];
                     // imgName is just a string (filename), not an object
                     const filename = typeof imgName === 'string' ? imgName : imgName.filename;
-                    console.log(`Fetching image: ${filename}`);
+                    console.log(`Fetching image ${i + 1}/${totalImages}: ${filename}`);
+                    
                     const imgResponse = await fetch(`/api/projects/${projectId}/images/${filename}?folder=uploads`);
                     const blob = await imgResponse.blob();
                     
@@ -164,6 +193,9 @@ class TabManager {
                     
                     files.push(file);
                     console.log(`✓ Loaded: ${filename}`);
+                    
+                    // Update progress
+                    this.updateLoadingProgress(i + 1, totalImages);
                 } catch (err) {
                     console.error(`Failed to load image ${filename}:`, err);
                 }
@@ -172,6 +204,7 @@ class TabManager {
             console.log(`Total files loaded: ${files.length}`);
             
             if (files.length === 0) {
+                this.hideLoadingOverlay();
                 console.log('No files to load!');
                 return false;
             }
@@ -184,6 +217,7 @@ class TabManager {
             return true;
         } catch (error) {
             console.error('Error loading project images:', error);
+            this.hideLoadingOverlay();
             return false;
         }
     }
@@ -294,6 +328,42 @@ class TabManager {
             messageEl.textContent = `Error: ${error.message}`;
         }
     }
+    
+    // Loading overlay utilities
+    showLoadingOverlay(title, message, current, total) {
+        const overlay = document.getElementById('loading-overlay');
+        const titleEl = document.getElementById('loading-overlay-title');
+        const messageEl = document.getElementById('loading-overlay-message');
+        const progressBar = document.getElementById('loading-overlay-progress-bar');
+        const progressText = document.getElementById('loading-overlay-progress-text');
+        
+        if (overlay) {
+            overlay.classList.add('active');
+            if (titleEl) titleEl.textContent = title;
+            if (messageEl) messageEl.textContent = message;
+            if (progressBar) progressBar.style.width = '0%';
+            if (progressText) progressText.textContent = `${current} / ${total} images loaded`;
+        }
+    }
+    
+    updateLoadingProgress(current, total) {
+        const progressBar = document.getElementById('loading-overlay-progress-bar');
+        const progressText = document.getElementById('loading-overlay-progress-text');
+        
+        if (progressBar && progressText) {
+            const percentage = Math.round((current / total) * 100);
+            progressBar.style.width = `${percentage}%`;
+            progressText.textContent = `${current} / ${total} images loaded`;
+        }
+    }
+    
+    hideLoadingOverlay() {
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) {
+            overlay.classList.remove('active');
+        }
+    }
 }
 
 // Note: TabManager is initialized in app.js to avoid double initialization
+

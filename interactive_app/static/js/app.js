@@ -46,15 +46,6 @@ class PyPotteryTraceApp {
     }
     
     setupEventListeners() {
-        // Image navigation
-        document.getElementById('prev-image-btn').addEventListener('click', () => {
-            this.navigateImage(-1);
-        });
-        
-        document.getElementById('next-image-btn').addEventListener('click', () => {
-            this.navigateImage(1);
-        });
-        
         // Mode selection
         document.querySelectorAll('.mode-btn').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -315,10 +306,6 @@ class PyPotteryTraceApp {
                 document.getElementById('current-image-number').textContent = index + 1;
                 document.getElementById('total-images').textContent = this.imageFiles.length;
                 document.getElementById('canvas-message').style.display = 'none';
-                
-                // Update navigation buttons
-                document.getElementById('prev-image-btn').disabled = (index === 0);
-                document.getElementById('next-image-btn').disabled = (index === this.imageFiles.length - 1);
                 
                 // Load image in canvas
                 console.log('Loading image in canvas:', this.currentImage);
@@ -1134,6 +1121,19 @@ class PyPotteryTraceApp {
                     document.getElementById('rotation-center-info').style.display = 'block';
                     document.getElementById('rotation-coords').textContent = 
                         `(${Math.round(this.rotationCenter.x)}, ${Math.round(this.rotationCenter.y)})`;
+                    
+                    // Sync rotation center with backend session
+                    if (this.sessionId) {
+                        await fetch('/api/set_rotation_center', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                session_id: this.sessionId,
+                                x: this.rotationCenter.x,
+                                y: this.rotationCenter.y
+                            })
+                        });
+                    }
                     
                     if (window.canvasManager) {
                         window.canvasManager.drawRotationCenter(this.rotationCenter.x, this.rotationCenter.y);

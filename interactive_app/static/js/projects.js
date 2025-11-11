@@ -736,16 +736,8 @@ const ProjectManager = {
                         <span class="project-stat-value">${stats.images_uploaded || 0}</span>
                     </div>
                     <div class="project-stat">
-                        <span class="project-stat-label">Segmented</span>
-                        <span class="project-stat-value">${stats.images_segmented || 0}</span>
-                    </div>
-                    <div class="project-stat">
                         <span class="project-stat-label">Vectorized</span>
                         <span class="project-stat-value">${stats.images_vectorized || 0}</span>
-                    </div>
-                    <div class="project-stat">
-                        <span class="project-stat-label">Exported</span>
-                        <span class="project-stat-value">${stats.images_exported || 0}</span>
                     </div>
                 </div>
                 
