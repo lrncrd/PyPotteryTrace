@@ -169,13 +169,14 @@ body {
 
 /* Header */
 .app-header {
-    background: var(--bg-primary);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     padding: 1rem 2rem;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: none;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: var(--shadow-sm);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    color: white;
 }
 
 .logo-section {
@@ -185,20 +186,32 @@ body {
 }
 
 .logo {
-    height: 40px;
-    width: auto;
+    width: 70px;
+    height: 70px;
+    object-fit: contain;
+}
+
+.version-badge {
+    font-size: 0.7rem;
+    background: rgba(255,255,255,0.2);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.4);
+    font-weight: 500;
 }
 
 .app-header h1 {
     font-size: 1.5rem;
     font-weight: 700;
-    color: var(--primary-color);
+    color: white;
 }
 
 .app-header .version {
     font-size: 0.875rem;
     font-weight: 400;
-    color: var(--text-secondary);
+    color: white;
+    opacity: 0.9;
 }
 
 /* Main Content Layout */

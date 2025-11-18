@@ -109,7 +109,15 @@
         <header class="app-header">
             <div class="logo-section">
                 <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="logo">
-                <h1>PyPotteryTrace</h1>
+                <div>
+                    <h1 style="margin: 0;">PyPotteryTrace</h1>
+                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                        <span class="version-badge">v0.2.0</span>
+                        <p style="margin: 0; font-size: 0.85rem; opacity: 0.9; font-weight: 400;">
+                            AI-powered application for semantic segmentation and vectorization of archaeological pottery
+                        </p>
+                    </div>
+                </div>
             </div>
             <div class="header-actions" style="display: flex; gap: 10px;">
                 <button id="info-btn" class="btn btn-secondary">
