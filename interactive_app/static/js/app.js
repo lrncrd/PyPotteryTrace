@@ -128,15 +128,24 @@ class PyPotteryTraceApp {
         // Help Modal
         const helpModal = document.getElementById('help-modal');
         const helpBtn = document.getElementById('help-btn');
-        const helpClose = helpModal.querySelector('.close');
+        const helpClose = helpModal?.querySelector('.close');
         
-        helpBtn.onclick = () => {
-            helpModal.style.display = 'flex';
-        };
-        
-        helpClose.onclick = () => {
-            helpModal.style.display = 'none';
-        };
+        if (helpBtn && helpModal && helpClose) {
+            helpBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                helpModal.style.display = 'flex';
+                console.log('Help modal opened');
+            };
+            
+            helpClose.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                helpModal.style.display = 'none';
+            };
+        } else {
+            console.error('Help modal elements not found:', { helpBtn, helpModal, helpClose });
+        }
         
         // Help Modal Tabs
         const helpTabBtns = document.querySelectorAll('.help-tab-btn');
@@ -164,16 +173,32 @@ class PyPotteryTraceApp {
         // Info Modal
         const infoModal = document.getElementById('info-modal');
         const infoBtn = document.getElementById('info-btn');
-        const infoClose = infoModal.querySelector('.info-close');
+        const infoClose = infoModal?.querySelector('.info-close');
         
-        infoBtn.onclick = () => {
-            infoModal.style.display = 'flex';
-            this.loadSystemInfo(); // Load system info when modal opens
-        };
-        
-        infoClose.onclick = () => {
-            infoModal.style.display = 'none';
-        };
+        if (infoBtn && infoModal && infoClose) {
+            infoBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                console.log('BEFORE - Info modal display:', infoModal.style.display);
+                
+                // Forza display flex con z-index altissimo
+                infoModal.style.cssText = 'display: flex !important; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99999; justify-content: center; align-items: center;';
+                
+                console.log('AFTER - Info modal display:', window.getComputedStyle(infoModal).display);
+                console.log('AFTER - Info modal rect:', infoModal.getBoundingClientRect());
+                
+                this.loadSystemInfo();
+            };
+            
+            infoClose.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                infoModal.style.display = 'none';
+            };
+        } else {
+            console.error('Info modal elements not found:', { infoBtn, infoModal, infoClose });
+        }
         
         // Close modals when clicking outside
         window.onclick = (event) => {
@@ -723,9 +748,10 @@ class PyPotteryTraceApp {
                     // Enable SVG Editor tab
                     document.getElementById('svg-editor-tab-btn').disabled = false;
                     
-                    // Set session ID and image name in SVG Editor (for saving)
+                    // Set session ID, image name, and project ID in SVG Editor (for saving)
                     window.svgEditor.sessionId = this.sessionId;
                     window.svgEditor.currentImageName = this.currentImageFilename;
+                    window.svgEditor.currentProjectId = this.currentProjectId;
                     
                     // Load SVG in editor
                     await window.svgEditor.loadSVG(unifiedSVG.url);

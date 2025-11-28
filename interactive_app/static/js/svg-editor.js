@@ -36,6 +36,7 @@ class SVGEditor {
         this.zipDownloadUrl = null;
         this.sessionId = null;  // Session ID for backend communication
         this.currentImageName = null;  // Current image name for output filename
+        this.currentProjectId = null;  // Current project ID for saving
         
         // View transform
         this.scale = 1;
@@ -2063,7 +2064,7 @@ class SVGEditor {
                     include_background: includeBackground,
                     session_id: this.sessionId || 'default',
                     image_name: this.currentImageName || 'output',
-                    project_id: window.app ? window.app.currentProjectId : null
+                    project_id: this.currentProjectId || (window.app ? window.app.currentProjectId : null)
                 })
             });
             

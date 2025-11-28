@@ -1802,8 +1802,14 @@ def save_modified_svg():
         # Determine output folder path based on project_id
         if project_id:
             # Save to project's vectorized folder
+            print(f"[DEBUG] Received project_id: {project_id}")
+            print(f"[DEBUG] Projects root: {project_manager.projects_root}")
+            print(f"[DEBUG] Project path exists: {(project_manager.projects_root / project_id).exists()}")
+            
             project = project_manager.get_project(project_id)
             if not project:
+                print(f"[ERROR] Project not found: {project_id}")
+                print(f"[DEBUG] Available projects: {[p.name for p in project_manager.projects_root.iterdir() if p.is_dir()]}")
                 return jsonify({'success': False, 'error': 'Project not found'})
             
             output_folder = project_manager.projects_root / project_id / 'vectorized'

@@ -167,7 +167,7 @@ class VectorizationHandler:
         
         return contour_list
     
-    def improve_mask(self, mask: np.ndarray, dilate_size: int = 5, close_size: int = 7) -> np.ndarray:
+    def improve_mask(self, mask: np.ndarray, dilate_size: int = 5, close_size: int = 7) -> np.ndarray: #5
         """
         Improve mask quality with morphological operations.
         
