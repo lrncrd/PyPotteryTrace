@@ -257,7 +257,7 @@
                             <input type="file" id="folder-input" webkitdirectory directory multiple
                                 style="display: none;">
                             <button type="button" id="select-folder-btn" class="btn btn-primary btn-large">
-                                <span>📁</span> Select Folder
+                                <span>�</span> Select Folder
                             </button>
                             <div id="folder-info" class="folder-info" style="display: none;">
                                 <p><strong>Folder:</strong> <span id="folder-name"></span></p>
@@ -303,12 +303,7 @@
                     </div>
                 </div>
 
-                <!-- Start Button -->
-                <div class="setup-actions">
-                    <button id="start-processing-btn" class="btn btn-success btn-xl" disabled>
-                        <span>🚀</span> Start Processing
-                    </button>
-                </div>
+                <!-- Start Button removed: processing is triggered automatically or from other controls -->
 
                 <div class="model-status" id="model-loading-status" style="display: none;">
                     <div class="spinner"></div>
@@ -1050,13 +1045,7 @@
                         </ul>
                     </div>
                 </div>
-                <div class="help-step">
-                    <span class="help-step-number">3</span>
-                    <div class="help-step-content">
-                        <h4>Start Processing</h4>
-                        <p>Click "🚀 Start Processing" to load the images and initialize the segmentation model.</p>
-                    </div>
-                </div>
+                <!-- Help step about Start Processing removed because the Start button was removed -->
             </div>
 
             <div class="help-tab-content" data-help-content="segmentation">

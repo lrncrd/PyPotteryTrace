@@ -135,7 +135,7 @@ const ProjectManager = {
                 // Update UI
                 this.updateProjectUI();
                 
-                // Show upload dialog
+                // Immediately open folder selector to upload images (no confirmation dialog)
                 this.showUploadImagesDialog(data.project.project_id);
                 
                 // Reload projects list
@@ -156,25 +156,18 @@ const ProjectManager = {
      * Show upload images dialog after project creation
      */
     showUploadImagesDialog(projectId) {
-        const message = `Project created successfully!\n\nWould you like to upload images now?`;
-        
-        if (confirm(message)) {
-            // Trigger folder selection
-            this.uploadImagesToProject(projectId);
-        } else {
-            // Just reload the project list
-            this.showNotification('You can upload images later from the Setup tab', 'info');
-        }
+        // Open the folder selector directly so the user can pick images without an extra confirmation dialog
+        this.uploadImagesToProject(projectId);
     },
     
     /**
      * Upload images to project
      */
     uploadImagesToProject(projectId) {
-        // Create a temporary file input for folder selection
+        // Create a temporary file input for selecting image files (multiple)
         const input = document.createElement('input');
         input.type = 'file';
-        input.webkitdirectory = true;
+        input.accept = 'image/*';
         input.multiple = true;
         
         input.onchange = async (e) => {
@@ -188,7 +181,7 @@ const ProjectManager = {
             });
             
             if (imageFiles.length === 0) {
-                this.showNotification('No image files found in selected folder', 'error');
+                this.showNotification('No image files selected', 'error');
                 return;
             }
             

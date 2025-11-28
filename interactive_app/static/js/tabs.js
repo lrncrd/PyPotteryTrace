@@ -14,7 +14,6 @@ class TabManager {
     init() {
         this.setupTabButtons();
         this.setupFolderSelection();
-        this.setupStartButton();
     }
     
     setupTabButtons() {
@@ -245,89 +244,18 @@ class TabManager {
         }
     }
     
-    setupStartButton() {
-        const startButton = document.getElementById('start-processing-btn');
-        
-        startButton.addEventListener('click', async () => {
-            await this.startProcessing();
-        });
-    }
     
     checkStartButton() {
-        const startButton = document.getElementById('start-processing-btn');
         const hasImages = this.imageFiles.length > 0;
-        
-        startButton.disabled = !hasImages;
+
+        // If images are present, enable segmentation tab so user can proceed.
+        // Model loading is handled separately by server-side endpoints or other UI flows.
+        if (hasImages) {
+            this.enableTab('segmentation-tab');
+        }
     }
     
-    async startProcessing() {
-        // Get selected model
-        const selectedModel = document.querySelector('input[name="model"]:checked');
-        if (!selectedModel) {
-            alert('Please select a model!');
-            return;
-        }
-        
-        const modelSize = selectedModel.value;
-        
-        // Training data is always saved (no checkbox anymore)
-        const saveTraining = true;
-        
-        // Load model
-        const statusDiv = document.getElementById('model-loading-status');
-        const messageEl = document.getElementById('model-status-message');
-        
-        statusDiv.style.display = 'block';
-        messageEl.textContent = `Loading ${modelSize} model...`;
-        
-        try {
-            const response = await fetch('/api/load_model', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ 
-                    model_size: modelSize,
-                    save_training_data: saveTraining
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (data.success) {
-                this.selectedModel = modelSize;
-                messageEl.textContent = `${modelSize} model loaded successfully!`;
-                
-                // Store settings in app
-                if (window.app) {
-                    window.app.imageFiles = this.imageFiles;
-                    window.app.currentImageIndex = 0;
-                    window.app.saveTrainingData = saveTraining;
-                }
-                
-                // Switch to segmentation tab FIRST
-                setTimeout(async () => {
-                    statusDiv.style.display = 'none';
-                    this.enableTab('segmentation-tab');
-                    this.enableTab('postprocess-tab');
-                    this.switchTab('segmentation-tab');
-                    
-                    // Wait a bit for tab switch and canvas resize
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    
-                    // NOW load the first image
-                    if (window.app && window.app.imageFiles.length > 0) {
-                        await window.app.loadImageAtIndex(0);
-                    }
-                }, 500);
-            } else {
-                throw new Error(data.error || 'Failed to load model');
-            }
-        } catch (error) {
-            console.error('Error loading model:', error);
-            messageEl.textContent = `Error: ${error.message}`;
-        }
-    }
+    // startProcessing removed: model loading can be triggered via other UI flows or server-side endpoints.
     
     // Loading overlay utilities
     showLoadingOverlay(title, message, current, total) {
