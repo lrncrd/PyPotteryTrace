@@ -147,12 +147,35 @@ def generate_svg_preview():
         print(f"{'='*80}\n")
         
         mask_files = []
+        manual_polygon_elements = []  # Store manual polygon elements for processing
+        
         for i, segment in enumerate(session['segments']):
             try:
                 print(f"Preparing mask {i+1}/{len(session['segments'])}: {segment['name']}")
                 
+                # Check if this is a manual mask (polygon)
+                is_manual = segment.get('is_manual', False)
+                mask_data = segment['mask']
+                
+                # Handle polygon masks (manual drawing) - Process through vectorization_handler
+                if isinstance(mask_data, dict) and mask_data.get('type') == 'polygon':
+                    vertices = mask_data.get('vertices', [])
+                    print(f"  → Manual polygon mask with {len(vertices)} vertices")
+                    
+                    if len(vertices) >= 3:
+                        # Store for later processing (after we have image dimensions)
+                        manual_polygon_elements.append({
+                            'segment': segment,
+                            'vertices': vertices,
+                            'index': i
+                        })
+                        print(f"  ✓ Queued manual polygon for vectorization")
+                        continue  # Skip rasterization for this segment
+                    else:
+                        print(f"  ✗ ERROR: Polygon has less than 3 vertices")
+                        continue
                 # Check if mask exists, if not try to regenerate from contours
-                if segment['mask'] is None:
+                elif mask_data is None:
                     print(f"  ⚠ WARNING: Mask is None, attempting to regenerate from contours...")
                     if 'contours' in segment and segment['contours']:
                         # Create blank mask
@@ -193,14 +216,15 @@ def generate_svg_preview():
                         print(f"  ✗ ERROR: No contours available to regenerate mask")
                         continue
                 else:
-                    # Convert mask to numpy array
-                    mask = np.array(segment['mask'], dtype=np.uint8)
+                    # Convert mask to numpy array (standard SAM2 mask)
+                    mask = np.array(mask_data, dtype=np.uint8)
                 
-                # Improve mask quality
+                # Improve mask quality (skip dilation for manual masks)
                 mask_improved = vectorization_handler.improve_mask(
                     mask,
                     dilate_size=10,
-                    close_size=10
+                    close_size=10,
+                    is_manual=is_manual  # Skip dilation for manual masks
                 )
                 
                 # Check if mask has pixels
@@ -250,7 +274,8 @@ def generate_svg_preview():
                 traceback.print_exc()
                 continue
         
-        if not mask_files:
+        # Check if we have anything to export (either mask_files OR manual_polygon_elements)
+        if not mask_files and not manual_polygon_elements:
             return jsonify({'error': 'No valid masks to vectorize'}), 400
         
         # Get image dimensions (needed for creating additional SVG layers)
@@ -259,7 +284,7 @@ def generate_svg_preview():
         
         # Step 2: Process each saved PNG (vectorize or keep as PNG)
         print(f"\n{'='*80}")
-        print(f"STEP 2: Processing {len(mask_files)} saved PNGs")
+        print(f"STEP 2: Processing {len(mask_files)} saved PNGs + {len(manual_polygon_elements)} manual polygons")
         print(f"{'='*80}\n")
         
         vectorized_elements = []
@@ -275,6 +300,193 @@ def generate_svg_preview():
         running_element_info = None  # Store running element outer contour for merging
         profile_outer_contour = None  # Store profile outer contour for extension
         
+        # Process manual polygon elements using vectorize_from_vertices
+        for manual_elem in manual_polygon_elements:
+            segment = manual_elem['segment']
+            vertices = manual_elem['vertices']
+            
+            print(f"  Vectorizing manual polygon: {segment['name']} ({len(vertices)} vertices)")
+            
+            # Use the new vectorize_from_vertices function
+            element_vectors = vectorization_handler.vectorize_from_vertices(
+                vertices=vertices,
+                category=segment['category'],
+                name=segment['name'],
+                width=width,
+                height=height,
+                epsilon=epsilon,
+                smoothing_factor=smoothing,
+                debug_svg_dir=str(svg_debug_dir)
+            )
+            
+            # Add reference to the SVG file path for unified export
+            safe_name = segment['name'].replace(' ', '_').replace('/', '_')
+            element_vectors['svg_file'] = str(svg_debug_dir / f"{segment['category']}_{safe_name}.svg")
+            
+            # Handle Profile category with rotation center (same logic as for SAM masks)
+            if segment['category'] == 'Profile' and session.get('rotation_center'):
+                center_x = session['rotation_center']['x']
+                print(f"  → Manual Profile with rotation center at x={center_x}")
+                
+                # Check if we have profile_data
+                if 'stats' in element_vectors and 'profile_data' in element_vectors.get('stats', {}):
+                    profile_data = element_vectors['stats']['profile_data']
+                    outer_contour = profile_data.get('outer_contour')
+                    
+                    if outer_contour is not None and len(outer_contour) > 0:
+                        y_top = int(np.min(outer_contour[:, 0]))
+                        y_bottom = int(np.max(outer_contour[:, 0]))
+                        
+                        # Store this profile's info for later diameter line decision
+                        profile_info = {
+                            'segment': segment,
+                            'safe_name': safe_name,
+                            'outer_contour': outer_contour,
+                            'y_top': y_top,
+                            'y_bottom': y_bottom,
+                            'center_x': center_x,
+                            'width': width,
+                            'height': height,
+                            'is_manual': True
+                        }
+                        all_profile_infos.append(profile_info)
+                        
+                        # Store profile outer contour for Running_Element extension
+                        profile_outer_contour = outer_contour
+                        
+                        # Track the topmost profile (smallest y_top)
+                        if topmost_profile_y is None or y_top < topmost_profile_y:
+                            topmost_profile_y = y_top
+                            topmost_profile_info = profile_info
+                        
+                        # 1. Create mirrored profile SVG
+                        mirrored_svg_path = svg_debug_dir / f"Profile_{safe_name}_Mirrored.svg"
+                        vectorization_handler.create_mirrored_profile_svg(
+                            profile_path=outer_contour,
+                            center_x=center_x,
+                            output_path=str(mirrored_svg_path),
+                            width=width,
+                            height=height,
+                            epsilon=epsilon,
+                            smoothing_factor=smoothing
+                        )
+                        
+                        # Add mirrored profile as separate vectorized element
+                        vectorized_elements.append({
+                            'name': f"{segment['name']} (Mirrored)",
+                            'category': 'Profile_Mirrored',
+                            'paths': vectorization_handler._extract_paths_from_svg(str(mirrored_svg_path)),
+                            'style': {'color': '#000000', 'stroke_width': 1.5, 'fill': 'none'},
+                            'svg_file': str(mirrored_svg_path),
+                            '_outer_contour': outer_contour,
+                            '_center_x': center_x
+                        })
+                        
+                        # 2. Create symmetry line SVG
+                        symmetry_svg_path = svg_debug_dir / f"Symmetry_Line_{safe_name}.svg"
+                        vectorization_handler.create_symmetry_line_svg(
+                            center_x=center_x,
+                            y_top=y_top,
+                            y_bottom=y_bottom,
+                            output_path=str(symmetry_svg_path),
+                            width=width,
+                            height=height
+                        )
+                        
+                        # Add symmetry line as separate vectorized element
+                        vectorized_elements.append({
+                            'name': 'Symmetry Line',
+                            'category': 'Symmetry_Line',
+                            'paths': vectorization_handler._extract_paths_from_svg(str(symmetry_svg_path)),
+                            'style': {'color': '#999999', 'stroke_width': 0.5, 'fill': 'none'},
+                            'svg_file': str(symmetry_svg_path)
+                        })
+                        
+                        print(f"  ✓ Created mirrored profile and symmetry line for manual mask")
+            
+            # Handle Running_Element with rotation center (same logic as automatic)
+            elif segment['category'] == 'Running_Element' and session.get('rotation_center'):
+                center_x = session['rotation_center']['x']
+                print(f"  → Manual Running_Element with rotation center at x={center_x}")
+                
+                if 'stats' in element_vectors and 'profile_data' in element_vectors.get('stats', {}):
+                    profile_data = element_vectors['stats']['profile_data']
+                    outer_contour = profile_data.get('outer_contour')
+                    
+                    if outer_contour is not None and len(outer_contour) > 0:
+                        # Store running element info for extension/merging
+                        running_element_info = {
+                            'outer_contour': outer_contour,
+                            'center_x': center_x
+                        }
+                        
+                        # Check if we have Profile outer contour to extend to
+                        if profile_outer_contour is not None:
+                            print(f"  → Profile found! Extending Running_Element endpoints to touch Profile...")
+                            
+                            # Create EXTENDED Running_Element (touches Profile on right side)
+                            main_svg_path = svg_debug_dir / f"Running_Element_{safe_name}.svg"
+                            vectorization_handler.extend_running_element_to_profile(
+                                running_element_path=outer_contour,
+                                profile_path=profile_outer_contour,
+                                output_path=str(main_svg_path),
+                                width=width,
+                                height=height,
+                                epsilon=epsilon,
+                                smoothing_factor=smoothing,
+                                layer_id='running_element',
+                                stroke_color='#000000',
+                                stroke_width=1.0
+                            )
+                        else:
+                            print(f"  → No Profile found, creating Running_Element with outer contour only...")
+                            
+                            # Create Running_Element SVG with ONLY outer contour (open path)
+                            main_svg_path = svg_debug_dir / f"Running_Element_{safe_name}.svg"
+                            vectorization_handler.create_outer_contour_svg(
+                                profile_path=outer_contour,
+                                output_path=str(main_svg_path),
+                                width=width,
+                                height=height,
+                                epsilon=epsilon,
+                                smoothing_factor=smoothing,
+                                layer_id='running_element',
+                                stroke_color='#000000',
+                                stroke_width=1.0
+                            )
+                        
+                        # Update the main element to use the outer contour SVG
+                        element_vectors['paths'] = vectorization_handler._extract_paths_from_svg(str(main_svg_path))
+                        element_vectors['svg_file'] = str(main_svg_path)
+                        
+                        # Create mirrored running element SVG
+                        mirrored_svg_path = svg_debug_dir / f"Running_Element_{safe_name}_Mirrored.svg"
+                        vectorization_handler.create_mirrored_profile_svg(
+                            profile_path=outer_contour,
+                            center_x=center_x,
+                            output_path=str(mirrored_svg_path),
+                            width=width,
+                            height=height,
+                            epsilon=epsilon,
+                            smoothing_factor=smoothing
+                        )
+                        
+                        vectorized_elements.append({
+                            'name': f"{segment['name']} (Mirrored)",
+                            'category': 'Running_Element_Mirrored',
+                            'paths': vectorization_handler._extract_paths_from_svg(str(mirrored_svg_path)),
+                            'style': {'color': '#000000', 'stroke_width': 1.0, 'fill': 'none'},
+                            'svg_file': str(mirrored_svg_path),
+                            '_outer_contour': outer_contour
+                        })
+                        
+                        print(f"  ✓ Created outer contour and mirrored Running_Element for manual mask")
+            
+            vectorized_elements.append(element_vectors)
+            categories_found.add(segment['category'])
+            print(f"  ✓ Added manual polygon: {len(element_vectors.get('paths', []))} paths\n")
+        
+        # Now process SAM/raster mask files
         for mask_info in mask_files:
             try:
                 segment = mask_info['segment']
@@ -1003,6 +1215,17 @@ def add_segment():
     category = data.get('category')  # 'Profile', 'Prospectus', 'Decoration', etc.
     name = data.get('name', f'Element {len(sessions_data[session_id]["segments"]) + 1}')
     should_vectorize = data.get('should_vectorize', True)  # Default to True for backward compatibility
+    is_manual = data.get('is_manual', False)  # Manual masks don't use dilation
+    
+    # Handle polygon/manual masks
+    contours = None
+    if isinstance(mask, dict) and mask.get('type') == 'polygon':
+        # This is a manual polygon mask
+        vertices = mask.get('vertices', [])
+        if vertices:
+            # Convert vertices to contours format [[x, y], [x, y], ...]
+            contours = [vertices]
+            print(f"Manual polygon mask with {len(vertices)} vertices")
     
     # Store segment
     segment = {
@@ -1011,6 +1234,8 @@ def add_segment():
         'category': category,
         'name': name,
         'should_vectorize': should_vectorize,
+        'is_manual': is_manual,  # Flag to skip dilation in vectorization
+        'contours': contours,  # Store contours for polygon masks
         'created_at': datetime.now().isoformat()
     }
     
@@ -1043,16 +1268,28 @@ def sync_segments():
     sessions_data[session_id]['segments'] = []
     
     for seg in segments:
+        # Preserve mask data - important for manual polygon masks
+        mask_data = seg.get('mask')
+        is_manual = seg.get('is_manual', False)
+        
+        # If mask has type 'polygon', it's a manual mask
+        if isinstance(mask_data, dict) and mask_data.get('type') == 'polygon':
+            is_manual = True
+        
         segment = {
             'id': seg.get('id', str(uuid.uuid4())),
             'name': seg.get('name', 'Unnamed'),
             'category': seg.get('category', 'Profile'),
-            'mask': None,  # Mask data not needed for export
+            'mask': mask_data,  # Preserve mask data (including polygon vertices)
             'contours': seg.get('contours'),
             'should_vectorize': seg.get('should_vectorize', True),
+            'is_manual': is_manual,  # Preserve manual mask flag
             'created_at': datetime.now().isoformat()
         }
         sessions_data[session_id]['segments'].append(segment)
+        
+        if is_manual:
+            print(f"    → Manual segment: {segment['name']} (mask type: {mask_data.get('type') if isinstance(mask_data, dict) else 'N/A'})")
     
     print(f"  ✓ Synced {len(sessions_data[session_id]['segments'])} segments to backend session")
     
@@ -2496,7 +2733,10 @@ def save_project_annotations(project_id, image_name):
                 "iscrowd": 0,
                 "attributes": {
                     "name": segment.get('name', ''),
-                    "should_vectorize": segment.get('should_vectorize', True)
+                    "should_vectorize": segment.get('should_vectorize', True),
+                    "is_manual": segment.get('is_manual', False),
+                    "mask_type": segment.get('mask', {}).get('type') if isinstance(segment.get('mask'), dict) else None,
+                    "mask_vertices": segment.get('mask', {}).get('vertices') if isinstance(segment.get('mask'), dict) and segment.get('mask', {}).get('type') == 'polygon' else None
                 }
             })
         
@@ -2554,12 +2794,28 @@ def get_project_annotations(project_id, image_name):
             category_name = category_map.get(ann['category_id'], 'Unknown')
             attributes = ann.get('attributes', {})
             
+            # Reconstruct mask data for manual polygon masks
+            is_manual = attributes.get('is_manual', False)
+            mask_type = attributes.get('mask_type')
+            mask_vertices = attributes.get('mask_vertices')
+            
+            mask_data = None
+            if mask_type == 'polygon' and mask_vertices:
+                mask_data = {
+                    'type': 'polygon',
+                    'vertices': mask_vertices,
+                    'isManual': True
+                }
+                is_manual = True  # Ensure is_manual is set for polygon masks
+            
             segments.append({
                 'id': str(ann['id']),
                 'category': category_name,
                 'name': attributes.get('name', f"{category_name} {ann['id']}"),
                 'contours': contours,
-                'should_vectorize': attributes.get('should_vectorize', True)
+                'mask': mask_data,  # Include reconstructed mask data
+                'should_vectorize': attributes.get('should_vectorize', True),
+                'is_manual': is_manual  # Include manual flag
             })
         
         return jsonify({

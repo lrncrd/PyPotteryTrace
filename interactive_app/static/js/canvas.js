@@ -224,6 +224,11 @@ class CanvasManager {
         if (window.segmentationManager && segmentationManager.previewContours) {
             this.drawContours(segmentationManager.previewContours, '#00ff00', 'rgba(0, 255, 0, 0.2)');
         }
+        
+        // Draw polygon preview if in polygon mode
+        if (window.segmentationManager && segmentationManager.polygonVertices && segmentationManager.polygonVertices.length > 0) {
+            segmentationManager.drawPolygonPreview();
+        }
     }
     
     drawContours(contours, strokeColor = '#00ff00', fillColor = 'rgba(0, 255, 0, 0.2)') {
@@ -421,6 +426,9 @@ class CanvasManager {
                     this.canvas.style.cursor = 'crosshair';
                     break;
                 case 'box':
+                    this.canvas.style.cursor = 'crosshair';
+                    break;
+                case 'polygon':
                     this.canvas.style.cursor = 'crosshair';
                     break;
                 case 'rotation':

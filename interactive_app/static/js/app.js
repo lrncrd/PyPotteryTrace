@@ -266,7 +266,19 @@ class PyPotteryTraceApp {
         
         // Show/hide point controls
         const pointControls = document.getElementById('point-controls');
+        const polygonControls = document.getElementById('polygon-controls');
+        
         pointControls.style.display = mode === 'point' ? 'block' : 'none';
+        if (polygonControls) {
+            polygonControls.style.display = mode === 'polygon' ? 'block' : 'none';
+        }
+        
+        // Clear previous mode data when switching modes
+        if (window.segmentationManager) {
+            if (mode !== 'polygon') {
+                segmentationManager.clearPolygon();
+            }
+        }
         
         // Update canvas cursor
         if (window.canvasManager) {
@@ -433,8 +445,22 @@ class PyPotteryTraceApp {
         const name = nameInput.value || nameInput.placeholder;
         const shouldVectorize = document.getElementById('vectorize-checkbox').checked;
         
+        // Check if this is a manual mask (polygon)
+        const isManualMask = segmentationManager.isManualMask;
+        
         // Store preview contours before clearing
         const contoursToSave = segmentationManager.previewContours;
+        
+        // For manual masks, use the contours directly as the mask data
+        let maskData = segmentationManager.currentMask;
+        if (isManualMask && segmentationManager.currentMask.type === 'polygon') {
+            // Convert polygon to contour format for backend
+            maskData = {
+                type: 'polygon',
+                vertices: segmentationManager.currentMask.vertices,
+                isManual: true
+            };
+        }
         
         // Disable the add button immediately to prevent double-clicking
         const addButton = document.getElementById('add-segment-btn');
@@ -448,10 +474,11 @@ class PyPotteryTraceApp {
                 },
                 body: JSON.stringify({
                     session_id: this.sessionId,
-                    mask: segmentationManager.currentMask,
+                    mask: maskData,
                     category: category,
                     name: name,
-                    should_vectorize: shouldVectorize
+                    should_vectorize: shouldVectorize,
+                    is_manual: isManualMask  // Flag for manual masks - no dilation
                 })
             });
             
@@ -463,9 +490,10 @@ class PyPotteryTraceApp {
                     id: data.segment_id,
                     name: name,
                     category: category,
-                    mask: segmentationManager.currentMask,  // Save mask data for persistence
+                    mask: maskData,  // Save mask data for persistence
                     contours: contoursToSave,  // Save contours for redrawing
-                    should_vectorize: shouldVectorize
+                    should_vectorize: shouldVectorize,
+                    is_manual: isManualMask  // Store manual mask flag
                 });
                 
                 // Save the stored contours to canvas as a permanent mask
@@ -486,7 +514,8 @@ class PyPotteryTraceApp {
                 nameInput.value = '';
                 this.updateElementName();
                 
-                this.showNotification('Segment added successfully!', 'success');
+                const manualText = isManualMask ? ' (manual)' : '';
+                this.showNotification(`Segment added successfully${manualText}!`, 'success');
             } else {
                 throw new Error(data.error || 'Failed to add segment');
             }
@@ -521,11 +550,15 @@ class PyPotteryTraceApp {
             const vectorizeIcon = shouldVectorize ? '🎨' : '🖼️';
             const vectorizeText = shouldVectorize ? 'SVG' : 'PNG';
             
+            // Check if manual mask
+            const isManual = segment.is_manual || false;
+            const manualBadge = isManual ? '<span style="background: #f59e0b; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 4px;">Manual</span>' : '';
+            
             const item = document.createElement('div');
             item.className = 'segment-item';
             item.innerHTML = `
                 <div class="segment-info">
-                    <div class="segment-name">${segment.name}</div>
+                    <div class="segment-name">${segment.name}${manualBadge}</div>
                     <div class="segment-category">${this.getCategoryIcon(segment.category)} ${segment.category}</div>
                     <div class="segment-vectorize" style="font-size: 0.8em; color: #666; margin-top: 2px;">
                         ${vectorizeIcon} ${vectorizeText}
@@ -924,6 +957,9 @@ class PyPotteryTraceApp {
             case 'b':
                 this.setMode('box');
                 break;
+            case 'm':
+                this.setMode('polygon');
+                break;
             case 'r':
                 this.setMode('rotation');
                 break;
@@ -1302,7 +1338,9 @@ class PyPotteryTraceApp {
                 name: seg.name,
                 category: seg.category,
                 contours: seg.contours,
-                should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : true
+                mask: seg.mask,  // Include mask data (contains polygon vertices for manual masks)
+                should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : true,
+                is_manual: seg.is_manual || false  // Preserve manual mask flag
             }));
             
             // Send to backend to update session

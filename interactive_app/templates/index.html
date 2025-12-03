@@ -245,30 +245,28 @@
         <div class="tab-content" id="model-tab">
             <div class="setup-container">
                 <div class="setup-header">
-                    <h2>📁 Setup - Select Folder and Model</h2>
-                    <p>Choose a folder with pottery images and configure the segmentation model</p>
+                    <h2>📁 Setup - Project Images and Model</h2>
+                    <p>View your project images and configure the segmentation model</p>
                 </div>
 
                 <div class="setup-panels">
-                    <!-- Panel 1: Folder Selection -->
-                    <div class="setup-panel">
-                        <h3>📂 Select Image Folder</h3>
-                        <div class="folder-selection">
-                            <input type="file" id="folder-input" webkitdirectory directory multiple
-                                style="display: none;">
-                            <button type="button" id="select-folder-btn" class="btn btn-primary btn-large">
-                                <span>�</span> Select Folder
-                            </button>
-                            <div id="folder-info" class="folder-info" style="display: none;">
-                                <p><strong>Folder:</strong> <span id="folder-name"></span></p>
-                                <p><strong>Images found:</strong> <span id="images-count">0</span></p>
-                                <div id="images-preview" class="images-preview"></div>
+                    <!-- Panel 1: Project Images Gallery -->
+                    <div class="setup-panel" style="flex: 2;">
+                        <h3>🖼️ Project Images</h3>
+                        <div id="folder-info" class="folder-info">
+                            <p id="no-project-message" style="color: #888; text-align: center; padding: 20px;">
+                                📂 No project loaded. Use the <strong>Project Manager</strong> button to create or open a project.
+                            </p>
+                            <div id="project-images-info" style="display: none;">
+                                <p><strong>Project:</strong> <span id="folder-name"></span></p>
+                                <p><strong>Images:</strong> <span id="images-count">0</span></p>
                             </div>
+                            <div id="images-preview" class="images-preview"></div>
                         </div>
                     </div>
 
                     <!-- Panel 2: Model Selection -->
-                    <div class="setup-panel">
+                    <div class="setup-panel" style="flex: 1;">
                         <h3>🤖 Select SAM2 Model</h3>
                         <div class="model-selection-compact">
                             <div class="model-option">
@@ -339,6 +337,11 @@
                                 <span>Box Mode</span>
                                 <span class="mode-desc">Draw bounding box</span>
                             </button>
+                            <button class="mode-btn" data-mode="polygon" id="polygon-mode-btn">
+                                <span class="mode-icon">⬡</span>
+                                <span>Manual Polygon</span>
+                                <span class="mode-desc">Draw mask manually</span>
+                            </button>
                             <button class="mode-btn" data-mode="rotation" id="rotation-mode-btn">
                                 <span class="mode-icon">⊕</span>
                                 <span>Rotation Center</span>
@@ -355,6 +358,42 @@
                                 <input type="radio" name="point-label" value="0">
                                 <span class="negative">➖ Negative</span>
                             </label>
+                        </div>
+
+                        <div class="polygon-controls" id="polygon-controls" style="display: none;">
+                            <p style="font-size: 0.85rem; color: #666; margin-bottom: 8px;">
+                                <span id="polygon-mode-instructions">
+                                    Click to add vertices. Double-click or press Enter to close polygon.
+                                </span><br>
+                                <span id="polygon-points-counter">Points: 0</span>
+                            </p>
+                            <div id="polygon-draw-controls">
+                                <button id="undo-polygon-point-btn" class="btn btn-secondary btn-small" disabled>
+                                    <span>↩️</span> Undo Point
+                                </button>
+                                <button id="close-polygon-btn" class="btn btn-secondary btn-small" disabled>
+                                    <span>✓</span> Close Polygon
+                                </button>
+                                <button id="clear-polygon-btn" class="btn btn-secondary btn-small" disabled>
+                                    <span>✗</span> Clear All
+                                </button>
+                            </div>
+                            <div id="polygon-edit-controls" style="display: none;">
+                                <p style="font-size: 0.8rem; color: #666; margin: 4px 0;">
+                                    <strong>Edit mode:</strong> Drag vertices to move. Click edge to add point. Right-click vertex to delete.
+                                </p>
+                                <div class="form-group" style="margin: 8px 0;">
+                                    <label for="simplify-slider" style="font-size: 0.85rem;">Simplification: <span id="simplify-value">15</span></label>
+                                    <input type="range" id="simplify-slider" min="1" max="30" step="1" value="15" style="width: 100%;">
+                                    <small style="color: #888;">Higher = fewer vertices (min 3)</small>
+                                </div>
+                                <button id="apply-simplify-btn" class="btn btn-secondary btn-small">
+                                    <span>📐</span> Apply Simplification
+                                </button>
+                                <button id="finish-edit-btn" class="btn btn-primary btn-small">
+                                    <span>✓</span> Done Editing
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -384,6 +423,10 @@
                                 Uncheck to export as PNG with transparent background
                             </small>
                         </div>
+
+                        <button id="edit-mask-btn" class="btn btn-secondary" disabled style="margin-bottom: 8px;">
+                            <span>✏️</span> Edit Mask
+                        </button>
 
                         <button id="add-segment-btn" class="btn btn-primary" disabled>
                             <span>✓</span> Add Segment
@@ -1027,9 +1070,8 @@
                 <div class="help-step">
                     <span class="help-step-number">1</span>
                     <div class="help-step-content">
-                        <h4>Select Image Folder</h4>
-                        <p>Choose a folder containing your pottery images. Supported formats: PNG, JPG, JPEG, TIFF, BMP.
-                        </p>
+                        <h4>Create or Open a Project</h4>
+                        <p>Use the Project Manager to create a new project or open an existing one. When creating a new project, you can upload your pottery images directly. Supported formats: PNG, JPG, JPEG, TIFF, BMP.</p>
                     </div>
                 </div>
                 <div class="help-step">
@@ -1058,6 +1100,8 @@
                             segment the object based on your clicks.</p>
                         <p><strong>Box Mode:</strong> Draw a bounding box around the entire object for automatic
                             segmentation.</p>
+                        <p><strong>Polygon Mode:</strong> Manually draw a polygon mask by clicking vertices. Double-click to close the polygon. Press Escape to cancel or remove the last point.</p>
+                        <p><strong>Edit Mask:</strong> After creating a mask with SAM (point/box mode), click "Edit Mask" to convert it to an editable polygon. You can then drag vertices, click edges to add new vertices, or right-click to delete vertices.</p>
                         <p><strong>Rotation Center:</strong> Set the symmetry axis for profile mirroring.</p>
                     </div>
                 </div>
@@ -1147,8 +1191,16 @@
                             <span>Box Mode</span>
                         </div>
                         <div class="shortcut-row">
+                            <kbd>M</kbd>
+                            <span>Manual Polygon Mode</span>
+                        </div>
+                        <div class="shortcut-row">
                             <kbd>R</kbd>
                             <span>Rotation Center Mode</span>
+                        </div>
+                        <div class="shortcut-row">
+                            <kbd>Esc</kbd>
+                            <span>Cancel Polygon / Undo Last Point</span>
                         </div>
                         <div class="shortcut-row">
                             <kbd>Ctrl</kbd> + <kbd>Z</kbd>

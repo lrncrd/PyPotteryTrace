@@ -61,10 +61,16 @@ class TabManager {
         }
     }
     
-    // Folder Selection
+    // Folder Selection (legacy - now handled by project manager)
     setupFolderSelection() {
         const selectButton = document.getElementById('select-folder-btn');
         const folderInput = document.getElementById('folder-input');
+        
+        // Skip if elements don't exist (folder selection removed from UI)
+        if (!selectButton || !folderInput) {
+            console.log('Folder selection elements not found - using project manager instead');
+            return;
+        }
         
         selectButton.addEventListener('click', () => {
             folderInput.click();
@@ -124,8 +130,12 @@ class TabManager {
             // Enable post-processing tab immediately (can work independently)
             this.enableTab('postprocess-tab');
             
-            // Update UI
-            document.getElementById('folder-info').style.display = 'block';
+            // Update UI - show project images info, hide "no project" message
+            const noProjectMsg = document.getElementById('no-project-message');
+            const projectImagesInfo = document.getElementById('project-images-info');
+            if (noProjectMsg) noProjectMsg.style.display = 'none';
+            if (projectImagesInfo) projectImagesInfo.style.display = 'block';
+            
             document.getElementById('folder-name').textContent = this.folderPath;
             document.getElementById('images-count').textContent = this.imageFiles.length;
             
@@ -225,21 +235,22 @@ class TabManager {
         const previewContainer = document.getElementById('images-preview');
         previewContainer.innerHTML = '';
         
-        // Show first 20 images as thumbnails
-        const previewCount = Math.min(20, this.imageFiles.length);
+        // Show first 30 images as thumbnails (increased from 20)
+        const previewCount = Math.min(30, this.imageFiles.length);
         
         for (let i = 0; i < previewCount; i++) {
             const file = this.imageFiles[i];
             const img = document.createElement('img');
             img.src = URL.createObjectURL(file);
             img.title = file.name;
+            img.alt = file.name;
             previewContainer.appendChild(img);
         }
         
-        if (this.imageFiles.length > 20) {
+        if (this.imageFiles.length > 30) {
             const moreText = document.createElement('div');
-            moreText.style.cssText = 'grid-column: span 2; text-align: center; color: #666; font-size: 0.9em;';
-            moreText.textContent = `... and ${this.imageFiles.length - 20} more`;
+            moreText.style.cssText = 'grid-column: 1 / -1; text-align: center; color: #666; font-size: 0.9em; padding: 10px;';
+            moreText.textContent = `... and ${this.imageFiles.length - 30} more images`;
             previewContainer.appendChild(moreText);
         }
     }

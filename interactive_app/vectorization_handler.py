@@ -167,7 +167,7 @@ class VectorizationHandler:
         
         return contour_list
     
-    def improve_mask(self, mask: np.ndarray, dilate_size: int = 5, close_size: int = 7) -> np.ndarray: #5
+    def improve_mask(self, mask: np.ndarray, dilate_size: int = 5, close_size: int = 7, is_manual: bool = False) -> np.ndarray: #5
         """
         Improve mask quality with morphological operations.
         
@@ -175,6 +175,7 @@ class VectorizationHandler:
             mask: Binary mask (0/1 or 0/255)
             dilate_size: Size of dilation kernel (makes mask bigger, fills gaps)
             close_size: Size of closing kernel (removes small holes)
+            is_manual: If True, skip dilation (for manually drawn masks)
             
         Returns:
             Improved binary mask (0/255)
@@ -191,6 +192,11 @@ class VectorizationHandler:
         else:
             # Make binary (0 or 255) with threshold
             _, binary_mask = cv2.threshold(mask_uint8, 127, 255, cv2.THRESH_BINARY)
+        
+        # For manual masks, skip morphological operations to preserve exact shape
+        if is_manual:
+            print("  → Manual mask: skipping dilation/morphological operations")
+            return binary_mask
         
         # Simple approach: closing + light dilation + smoothing
         
@@ -209,6 +215,29 @@ class VectorizationHandler:
         binary_mask = cv2.erode(binary_mask, kernel_smooth, iterations=1)
         
         return binary_mask
+    
+    def polygon_to_mask(self, vertices: List[List[float]], width: int, height: int) -> np.ndarray:
+        """
+        Convert polygon vertices to binary mask.
+        
+        Args:
+            vertices: List of [x, y] vertex coordinates
+            width: Image width
+            height: Image height
+            
+        Returns:
+            Binary mask (0/255)
+        """
+        # Create empty mask
+        mask = np.zeros((height, width), dtype=np.uint8)
+        
+        # Convert vertices to numpy array for cv2.fillPoly
+        pts = np.array(vertices, dtype=np.int32).reshape((-1, 1, 2))
+        
+        # Fill polygon
+        cv2.fillPoly(mask, [pts], 255)
+        
+        return mask
     
     def vectorize_from_png(
         self,
@@ -309,6 +338,124 @@ class VectorizationHandler:
             # Clean up temporary SVG file only if not in debug mode
             if delete_svg and os.path.exists(str(svg_output_path)):
                 os.unlink(str(svg_output_path))
+    
+    def vectorize_from_vertices(
+        self,
+        vertices: List[List[float]],
+        category: str,
+        name: str,
+        width: int,
+        height: int,
+        epsilon: float = 1.5,
+        smoothing_factor: float = 0.3,
+        debug_svg_dir: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Vectorize directly from polygon vertices (for manual masks).
+        
+        This creates an SVG path directly from the user-defined vertices,
+        without going through rasterization. The vertices ARE the final contour.
+        
+        For Profile category, it also returns profile_data with outer_contour
+        (only external side) so that mirroring logic can be applied correctly.
+        
+        Args:
+            vertices: List of [x, y] coordinates defining the polygon
+            category: Element category ('Profile', 'Decoration', etc.)
+            name: Element name
+            width: Image width
+            height: Image height
+            epsilon: RDP simplification (not used, vertices already simplified)
+            smoothing_factor: Bezier smoothing factor for smooth curves
+            debug_svg_dir: Directory to save SVG for debugging
+            
+        Returns:
+            Dictionary with vectorized paths and metadata
+        """
+        import numpy as np
+        from archaeological_vectorizer import extract_left_side_of_profile, smooth_path_to_bezier
+        
+        # Convert vertices to numpy array in [y, x] format (row, col) for smooth_path_to_bezier
+        # smooth_path_to_bezier expects format: [(y1,x1), (y2,x2), ...]
+        vertices_yx = np.array([[v[1], v[0]] for v in vertices], dtype=np.float32)
+        
+        # Create smooth Bezier path from vertices (same as automatic pipeline)
+        if smoothing_factor > 0 and len(vertices_yx) >= 3:
+            path_d = smooth_path_to_bezier(vertices_yx, smoothing_factor)
+            # Add Z to close the path
+            if path_d and not path_d.strip().endswith('Z'):
+                path_d += " Z"
+            print(f"  → Created smooth Bezier path with smoothing_factor={smoothing_factor}")
+        else:
+            # Fallback to simple lines if smoothing disabled or too few vertices
+            path_parts = []
+            for i, v in enumerate(vertices):
+                if i == 0:
+                    path_parts.append(f"M {v[0]:.2f} {v[1]:.2f}")
+                else:
+                    path_parts.append(f"L {v[0]:.2f} {v[1]:.2f}")
+            path_parts.append("Z")  # Close path
+            path_d = " ".join(path_parts)
+        
+        # Convert vertices to numpy array in [y, x] format for profile logic
+        full_profile = np.array([[v[1], v[0]] for v in vertices], dtype=np.int32)
+        
+        # Create SVG file if debug_svg_dir provided
+        svg_file = None
+        if debug_svg_dir:
+            safe_name = name.replace(' ', '_').replace('/', '_')
+            svg_file = str(Path(debug_svg_dir) / f"{category}_{safe_name}.svg")
+            
+            # Create simple SVG with just the path
+            dwg = svgwrite.Drawing(
+                svg_file,
+                size=(f'{width}px', f'{height}px'),
+                viewBox=f'0 0 {width} {height}',
+                profile='full'
+            )
+            style = self.CATEGORIES.get(category, self.CATEGORIES['Detail'])
+            dwg.add(dwg.path(
+                d=path_d,
+                stroke=style.get('color', '#000000'),
+                stroke_width=style.get('stroke_width', 1.0),
+                fill=style.get('fill', 'none')
+            ))
+            dwg.save()
+            print(f"  → Manual SVG saved to: {svg_file}")
+        
+        # Prepare result dictionary
+        result_dict = {
+            'name': name,
+            'category': category,
+            'paths': [path_d],  # Single path with all vertices
+            'style': self.CATEGORIES.get(category, self.CATEGORIES['Detail']),
+            'svg_file': svg_file,
+            'is_manual': True,
+            'stats': {
+                'total_paths': 1,
+                'vertex_count': len(vertices)
+            }
+        }
+        
+        # For Profile and Running_Element, extract ONLY external contour for mirroring
+        if category in ['Profile', 'Running_Element']:
+            # Extract only the left/external side for mirroring
+            # This is what the automatic pipeline does
+            try:
+                outer_contour = extract_left_side_of_profile(full_profile, vertical_confidence=30)
+                print(f"  → Extracted external contour: {len(full_profile)} → {len(outer_contour)} points")
+            except Exception as e:
+                print(f"  ⚠ Error extracting external contour: {e}, using full profile")
+                outer_contour = full_profile
+            
+            result_dict['stats']['profile_data'] = {
+                'full_closed_profile': full_profile,  # Complete polygon (for the main drawing)
+                'outer_contour': outer_contour,       # Only external side (for mirroring)
+                'is_manual': True
+            }
+            print(f"  → Added profile_data: full={len(full_profile)}, outer={len(outer_contour)} points")
+        
+        return result_dict
     
     def vectorize_segment(
         self,
@@ -1594,10 +1741,17 @@ class VectorizationHandler:
         element_group = dwg.g(**group_attrs)
         
         for i, path_data in enumerate(element['paths']):
-            element_group.add(dwg.path(
-                d=path_data,
-                id=f"{sanitize_svg_id(element['name'])}_path_{i}"
-            ))
+            # Handle both string paths and dict paths (with 'd' key)
+            if isinstance(path_data, dict):
+                d_attr = path_data.get('d', '')
+            else:
+                d_attr = path_data
+            
+            if d_attr:
+                element_group.add(dwg.path(
+                    d=d_attr,
+                    id=f"{sanitize_svg_id(element['name'])}_path_{i}"
+                ))
         
         layer_group.add(element_group)
         print(f"  ✓ Added vectorized from paths: {element['name']} ({len(element['paths'])} paths)")
