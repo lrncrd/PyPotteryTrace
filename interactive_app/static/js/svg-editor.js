@@ -637,6 +637,16 @@ class SVGEditor {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
+        // Middle mouse button (pan) - Works in ANY mode
+        if (e.button === 1) {
+            e.preventDefault();
+            this.isDragging = true;
+            this.lastMouseX = mouseX;
+            this.lastMouseY = mouseY;
+            this.canvas.style.cursor = 'grabbing';
+            return;
+        }
+
         if (this.currentMode === 'view') {
             // Check if clicking on an image first
             const clickedImage = this.findImageAt(mouseX, mouseY);
@@ -757,8 +767,9 @@ class SVGEditor {
             this.lastMouseY = mouseY;
 
             this.redraw();
-        } else if (this.isDragging && this.currentMode === 'view') {
-            // Panning view
+            this.redraw();
+        } else if (this.isDragging) {
+            // Panning view (Works in View mode OR via middle click in any mode)
             const dx = mouseX - this.lastMouseX;
             const dy = mouseY - this.lastMouseY;
 
@@ -1425,8 +1436,7 @@ class SVGEditor {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
         // Draw background
-        this.ctx.fillStyle = '#f5f5f5';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.drawBackground();
 
         // Save context
         this.ctx.save();
@@ -1659,6 +1669,29 @@ class SVGEditor {
         this.ctx.restore();
 
         console.log('Redraw complete');
+    }
+
+    drawBackground() {
+        this.ctx.save();
+
+        // Fill white background
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // Draw dot grid
+        this.ctx.fillStyle = '#e5e5e5'; // Light gray
+        const gridSize = 25;
+        const dotRadius = 1.5;
+
+        for (let x = gridSize / 2; x < this.canvas.width; x += gridSize) {
+            for (let y = gridSize / 2; y < this.canvas.height; y += gridSize) {
+                this.ctx.beginPath();
+                this.ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+        }
+
+        this.ctx.restore();
     }
 
     updateLayersList() {

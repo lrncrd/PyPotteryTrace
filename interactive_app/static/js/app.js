@@ -623,13 +623,7 @@ class PyPotteryTraceApp {
     }
 
     updateStats() {
-        document.getElementById('stat-segments').textContent = this.segments.length;
-
-        const profiles = this.segments.filter(s => s.category === 'Profile').length;
-        document.getElementById('stat-profiles').textContent = profiles;
-
-        const decorations = this.segments.filter(s => s.category === 'Decoration').length;
-        document.getElementById('stat-decorations').textContent = decorations;
+        // Stats panel removed
     }
 
     async setRotationCenter(x, y) {
