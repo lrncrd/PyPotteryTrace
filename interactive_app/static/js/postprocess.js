@@ -14,17 +14,17 @@ class PostProcessingManager {
         this.svgCache = new Map();  // Cache SVG content to avoid re-reading
         this.categories = new Set();
         this.selectedCategories = new Set();
-        
+
         this.initializeEventListeners();
         this.checkForCurrentProject();
     }
-    
+
     checkForCurrentProject() {
         // Check if a project is loaded
         setInterval(() => {
             const projectId = sessionStorage.getItem('current_project_id');
             const projectName = sessionStorage.getItem('current_project_name');
-            
+
             if (projectId && projectId !== this.currentProjectId) {
                 this.currentProjectId = projectId;
                 this.updateProjectInfo(projectId, projectName);
@@ -35,29 +35,33 @@ class PostProcessingManager {
             }
         }, 1000);
     }
-    
+
     updateProjectInfo(projectId, projectName) {
         const projectInfoDiv = document.getElementById('postprocess-project-info');
         const noProjectDiv = document.getElementById('postprocess-no-project');
         const loadBtn = document.getElementById('postprocess-load-folder-btn');
         const folderInfoDiv = document.getElementById('postprocess-folder-info');
-        
+
         if (projectId && projectName) {
             // Show project info
             projectInfoDiv.style.display = 'block';
             noProjectDiv.style.display = 'none';
-            loadBtn.style.display = 'block';
-            
+            // Hide the load button - we'll load when tab is activated
+            if (loadBtn) loadBtn.style.display = 'none';
+
             document.getElementById('postprocess-project-name').textContent = projectName;
             document.getElementById('postprocess-folder-path').textContent = `projects/${projectId}/vectorized`;
-            
+
             // Hide old folder info when switching projects
             folderInfoDiv.style.display = 'none';
+
+            // Mark that we need to reload files when tab is activated
+            this.needsReload = true;
         } else {
             // No project loaded
             projectInfoDiv.style.display = 'none';
             noProjectDiv.style.display = 'block';
-            loadBtn.style.display = 'none';
+            if (loadBtn) loadBtn.style.display = 'none';
             folderInfoDiv.style.display = 'none';
         }
     }
@@ -94,12 +98,12 @@ class PostProcessingManager {
         document.getElementById('postprocess-jpg-quality').addEventListener('input', (e) => {
             document.getElementById('postprocess-jpg-quality-value').textContent = e.target.value;
         });
-        
+
         // Epsilon slider
         document.getElementById('postprocess-epsilon').addEventListener('input', (e) => {
             document.getElementById('postprocess-epsilon-value').textContent = e.target.value;
         });
-        
+
         // Smoothing slider
         document.getElementById('postprocess-smoothing').addEventListener('input', (e) => {
             document.getElementById('postprocess-smoothing-value').textContent = e.target.value;
@@ -117,7 +121,7 @@ class PostProcessingManager {
             this.handleExport();
         });
     }
-    
+
     /**
      * Load vectorized files from current project
      */
@@ -126,57 +130,59 @@ class PostProcessingManager {
             alert('No project loaded!');
             return;
         }
-        
+
         try {
             // Show loading
             if (window.tabManager) {
                 window.tabManager.showLoadingOverlay('Loading Vectorized Files...', 'Please wait while we load your files');
             }
-            
+
             // Fetch vectorized files list from project
             const response = await fetch(`/api/projects/${this.currentProjectId}/images?folder=vectorized`);
             const data = await response.json();
-            
+
             console.log('Vectorized files response:', data);
-            
+
             if (!data.success) {
                 if (window.tabManager) window.tabManager.hideLoadingOverlay();
-                alert(`Error loading files: ${data.error || 'Unknown error'}`);
+                console.log('Error loading vectorized files:', data.error || 'Unknown error');
                 return;
             }
-            
+
             if (!data.images || data.images.length === 0) {
                 if (window.tabManager) window.tabManager.hideLoadingOverlay();
-                alert('No vectorized files found in project!\n\nPlease generate some SVG files in the Segmentation tab first.');
+                console.log('No vectorized files found in project yet');
+                // Show empty state in UI
+                this.updateFolderInfo();
                 return;
             }
-            
+
             console.log(`Loading ${data.images.length} vectorized files from project...`);
-            
+
             // Clear previous data
             this.files.svg = [];
             this.files.png = [];
             this.categories.clear();
             this.svgCache.clear();
-            
+
             // Fetch each file
             const files = [];
             for (const filename of data.images) {
                 try {
                     console.log(`Fetching file: ${filename}`);
                     const fileResponse = await fetch(`/api/projects/${this.currentProjectId}/images/${filename}?folder=vectorized`);
-                    
+
                     if (!fileResponse.ok) {
                         console.error(`Failed to fetch ${filename}: ${fileResponse.status}`);
                         continue;
                     }
-                    
+
                     const blob = await fileResponse.blob();
-                    
+
                     // Create File object
                     const file = new File([blob], filename, { type: blob.type });
                     files.push(file);
-                    
+
                     // Process file
                     const ext = filename.split('.').pop().toLowerCase();
                     if (ext === 'svg') {
@@ -184,7 +190,7 @@ class PostProcessingManager {
                         const content = await file.text();
                         this.files.svg.push(file);
                         this.svgCache.set(filename, content);
-                        
+
                         // Extract categories
                         const allCategories = this.extractAllCategoriesFromSVG(content);
                         allCategories.forEach(cat => this.categories.add(cat));
@@ -199,33 +205,32 @@ class PostProcessingManager {
                     console.error(`Failed to load file ${filename}:`, err);
                 }
             }
-            
+
             console.log(`✓ Loaded ${this.files.svg.length} SVG, ${this.files.png.length} PNG`);
             console.log(`✓ Found categories:`, Array.from(this.categories));
-            
+
             // Hide loading
             if (window.tabManager) window.tabManager.hideLoadingOverlay();
-            
+
             if (this.files.svg.length === 0 && this.files.png.length === 0) {
-                alert('No valid SVG or PNG files found!\n\nPlease check that files were properly exported.');
+                console.log('No valid SVG or PNG files found after loading');
                 return;
             }
-            
+
             // Update UI
             this.updateFolderInfo();
             this.populateCategoryFilters();
             this.updateExportButton();
-            
+
         } catch (error) {
             console.error('Error loading project vectorized files:', error);
             if (window.tabManager) window.tabManager.hideLoadingOverlay();
-            alert(`Error loading files: ${error.message}`);
         }
     }
 
     handleFolderSelection(event) {
         const files = Array.from(event.target.files);
-        
+
         if (files.length === 0) {
             return;
         }
@@ -233,10 +238,10 @@ class PostProcessingManager {
         // Get folder path from first file
         const firstFile = files[0];
         const folderPath = firstFile.webkitRelativePath.split('/')[0];
-        
+
         // Validate folder name (should end with _vectorized)
         if (!folderPath.endsWith('_vectorized')) {
-            const suggestion = this.workingFolder ? 
+            const suggestion = this.workingFolder ?
                 `\n\nSuggested folder: ${this.workingFolder}` : '';
             alert(`⚠️ Please select a folder ending with "_vectorized"${suggestion}`);
             return;
@@ -251,7 +256,7 @@ class PostProcessingManager {
         // Process files - read SVG content to extract categories from layers
         const processPromises = Array.from(files).map(file => {
             const ext = file.name.split('.').pop().toLowerCase();
-            
+
             if (ext === 'svg') {
                 // Read SVG content to extract ALL categories from layer IDs
                 return file.text().then(content => {
@@ -278,7 +283,7 @@ class PostProcessingManager {
         Promise.all(processPromises).then(() => {
             console.log(`✓ Loaded ${this.files.svg.length} SVG, ${this.files.png.length} PNG`);
             console.log(`✓ Found categories:`, Array.from(this.categories));
-            
+
             // Update UI
             this.updateFolderInfo();
             this.populateCategoryFilters();
@@ -327,22 +332,22 @@ class PostProcessingManager {
         try {
             const parser = new DOMParser();
             const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
-            
+
             // Find all <g> elements with id starting with "layer_"
             const groups = svgDoc.querySelectorAll('g[id^="layer_"]');
-            
+
             console.log(`  Filtering layers: found ${groups.length} layer groups`);
-            
+
             for (const g of groups) {
                 const layerId = g.getAttribute('id');
                 if (!layerId) continue;
-                
+
                 // Extract category after "layer_" prefix
                 const categoryRaw = layerId.replace('layer_', '');
-                
+
                 // Map to standard category name (same logic as extractAllCategoriesFromSVG)
                 let category = null;
-                
+
                 if (categoryRaw.includes('Profile_Mirrored') || categoryRaw.includes('Mirrored')) {
                     category = 'Profile_Mirrored';
                 } else if (categoryRaw.includes('Symmetry')) {
@@ -367,7 +372,7 @@ class PostProcessingManager {
                     const firstPart = categoryRaw.split('_')[0];
                     category = firstPart || 'Other';
                 }
-                
+
                 // Remove layer if category is NOT selected
                 if (!selectedCategories.has(category)) {
                     console.log(`  ✂️ Removing layer: ${layerId} (category: ${category})`);
@@ -376,19 +381,19 @@ class PostProcessingManager {
                     console.log(`  ✓ Keeping layer: ${layerId} (category: ${category})`);
                 }
             }
-            
+
             // Serialize back to string
             const serializer = new XMLSerializer();
             const modifiedSvg = serializer.serializeToString(svgDoc);
-            
+
             return modifiedSvg;
-            
+
         } catch (e) {
             console.error('Error filtering SVG layers:', e);
             return svgContent; // Return original if error
         }
     }
-    
+
     applyStrokeWidthsAndColorsToSVG(svgContent, strokeWidths) {
         /**
          * Apply custom stroke widths and ensure black colors to SVG layers
@@ -397,20 +402,20 @@ class PostProcessingManager {
         try {
             const parser = new DOMParser();
             const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
-            
+
             // Find all <g> elements with id starting with "layer_"
             const groups = svgDoc.querySelectorAll('g[id^="layer_"]');
-            
+
             console.log(`  Applying stroke widths to ${groups.length} layer groups`);
-            
+
             for (const g of groups) {
                 const layerId = g.getAttribute('id');
                 if (!layerId) continue;
-                
+
                 // Extract category
                 const categoryRaw = layerId.replace('layer_', '');
                 let category = null;
-                
+
                 if (categoryRaw.includes('Profile_Mirrored') || categoryRaw.includes('Mirrored')) {
                     category = 'Profile_Mirrored';
                 } else if (categoryRaw.includes('Symmetry')) {
@@ -432,13 +437,13 @@ class PostProcessingManager {
                 } else if (categoryRaw.includes('Prospectus')) {
                     category = 'Prospectus';
                 }
-                
+
                 if (category && strokeWidths[category] !== undefined) {
                     const strokeWidth = strokeWidths[category];
-                    
+
                     // Apply to group
                     g.setAttribute('stroke-width', strokeWidth);
-                    
+
                     // Apply black color to main elements (not construction lines)
                     if (category !== 'Symmetry_Line' && category !== 'Diameter') {
                         g.setAttribute('stroke', '#000000');
@@ -450,7 +455,7 @@ class PostProcessingManager {
                             g.setAttribute('stroke', '#666666');
                         }
                     }
-                    
+
                     // Also apply to all path elements inside
                     const paths = g.querySelectorAll('path, polyline, line, circle, rect');
                     paths.forEach(path => {
@@ -459,56 +464,56 @@ class PostProcessingManager {
                             path.setAttribute('stroke', '#000000');
                         }
                     });
-                    
+
                     console.log(`  ✓ Applied width ${strokeWidth} to layer: ${layerId} (${category})`);
                 }
             }
-            
+
             // Serialize back to string
             const serializer = new XMLSerializer();
             const modifiedSvg = serializer.serializeToString(svgDoc);
-            
+
             return modifiedSvg;
-            
+
         } catch (e) {
             console.error('Error applying stroke widths:', e);
             return svgContent; // Return original if error
         }
     }
-    
+
     applyVectorizationParametersToSVG(svgContent, epsilon, smoothing) {
         /**
          * Re-process SVG paths with new epsilon (simplification) and smoothing
          * Only applies to main elements (Profile, Application, Handle, Decoration, Running_Element, Detail, Prospectus)
          * Returns modified SVG content
          */
-        
+
         // If both parameters are 0, skip processing
         if (epsilon === 0 && smoothing === 0) {
             console.log(`  ⏭️ Skipping vectorization (both parameters are 0)`);
             return svgContent;
         }
-        
+
         try {
             const parser = new DOMParser();
             const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
-            
+
             // Main element categories that should be re-vectorized
             const mainCategories = ['Profile', 'Profile_Mirrored', 'Prospectus', 'Application', 'Handle', 'Decoration', 'Running_Element', 'Running_Element_Mirrored', 'Detail'];
-            
+
             // Find all <g> elements with id starting with "layer_"
             const groups = svgDoc.querySelectorAll('g[id^="layer_"]');
-            
+
             console.log(`  Applying vectorization parameters (ε=${epsilon}, s=${smoothing}) to main elements`);
-            
+
             for (const g of groups) {
                 const layerId = g.getAttribute('id');
                 if (!layerId) continue;
-                
+
                 // Extract category
                 const categoryRaw = layerId.replace('layer_', '');
                 let category = null;
-                
+
                 if (categoryRaw.includes('Profile_Mirrored') || categoryRaw.includes('Mirrored')) {
                     category = 'Profile_Mirrored';
                 } else if (categoryRaw.includes('Symmetry')) {
@@ -530,54 +535,54 @@ class PostProcessingManager {
                 } else if (categoryRaw.includes('Prospectus')) {
                     category = 'Prospectus';
                 }
-                
+
                 // Only process main elements
                 if (category && mainCategories.includes(category)) {
                     // Process all path elements inside this group
                     const paths = g.querySelectorAll('path');
-                    
+
                     paths.forEach(path => {
                         const dAttr = path.getAttribute('d');
                         if (!dAttr) return;
-                        
+
                         try {
                             // Parse path data
                             const points = this.parsePathData(dAttr);
                             if (points.length < 2) return;
-                            
+
                             // Apply simplification (Douglas-Peucker algorithm)
                             let simplifiedPoints = this.douglasPeucker(points, epsilon);
-                            
+
                             // Apply smoothing if needed
                             if (smoothing > 0) {
                                 simplifiedPoints = this.smoothPath(simplifiedPoints, smoothing);
                             }
-                            
+
                             // Reconstruct path data
                             const newD = this.pointsToPathData(simplifiedPoints);
                             path.setAttribute('d', newD);
-                            
+
                         } catch (err) {
                             console.warn(`  ⚠️ Could not process path in ${layerId}:`, err);
                         }
                     });
-                    
+
                     console.log(`  ✓ Re-vectorized ${paths.length} paths in layer: ${layerId} (${category})`);
                 }
             }
-            
+
             // Serialize back to string
             const serializer = new XMLSerializer();
             const modifiedSvg = serializer.serializeToString(svgDoc);
-            
+
             return modifiedSvg;
-            
+
         } catch (e) {
             console.error('Error applying vectorization parameters:', e);
             return svgContent; // Return original if error
         }
     }
-    
+
     parsePathData(d) {
         /**
          * Parse SVG path data string into array of {x, y} points
@@ -585,13 +590,13 @@ class PostProcessingManager {
          */
         const points = [];
         const commands = d.match(/[MLCZmlcz][^MLCZmlcz]*/g) || [];
-        
+
         let currentX = 0, currentY = 0;
-        
+
         for (const cmd of commands) {
             const type = cmd[0];
             const coords = cmd.slice(1).trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
-            
+
             if (type === 'M' || type === 'm') {
                 for (let i = 0; i < coords.length; i += 2) {
                     if (type === 'M') {
@@ -628,20 +633,20 @@ class PostProcessingManager {
                 }
             }
         }
-        
+
         return points;
     }
-    
+
     douglasPeucker(points, epsilon) {
         /**
          * Douglas-Peucker line simplification algorithm
          */
         if (points.length < 3) return points;
-        
+
         let maxDist = 0;
         let maxIndex = 0;
         const end = points.length - 1;
-        
+
         for (let i = 1; i < end; i++) {
             const dist = this.perpendicularDistance(points[i], points[0], points[end]);
             if (dist > maxDist) {
@@ -649,7 +654,7 @@ class PostProcessingManager {
                 maxIndex = i;
             }
         }
-        
+
         if (maxDist > epsilon) {
             const left = this.douglasPeucker(points.slice(0, maxIndex + 1), epsilon);
             const right = this.douglasPeucker(points.slice(maxIndex), epsilon);
@@ -658,7 +663,7 @@ class PostProcessingManager {
             return [points[0], points[end]];
         }
     }
-    
+
     perpendicularDistance(point, lineStart, lineEnd) {
         /**
          * Calculate perpendicular distance from point to line
@@ -666,62 +671,62 @@ class PostProcessingManager {
         const dx = lineEnd.x - lineStart.x;
         const dy = lineEnd.y - lineStart.y;
         const norm = Math.sqrt(dx * dx + dy * dy);
-        
+
         if (norm === 0) {
             return Math.sqrt(
                 (point.x - lineStart.x) ** 2 + (point.y - lineStart.y) ** 2
             );
         }
-        
+
         return Math.abs(
             dy * point.x - dx * point.y + lineEnd.x * lineStart.y - lineEnd.y * lineStart.x
         ) / norm;
     }
-    
+
     smoothPath(points, factor) {
         /**
          * Apply simple moving average smoothing to path points
          */
         if (points.length < 3 || factor === 0) return points;
-        
+
         const smoothed = [];
         const window = Math.max(1, Math.floor(factor * 5)); // Window size based on factor
-        
+
         for (let i = 0; i < points.length; i++) {
             if (i === 0 || i === points.length - 1) {
                 // Keep first and last points unchanged
                 smoothed.push(points[i]);
             } else {
                 let sumX = 0, sumY = 0, count = 0;
-                
+
                 for (let j = Math.max(0, i - window); j <= Math.min(points.length - 1, i + window); j++) {
                     sumX += points[j].x;
                     sumY += points[j].y;
                     count++;
                 }
-                
+
                 smoothed.push({
                     x: sumX / count,
                     y: sumY / count
                 });
             }
         }
-        
+
         return smoothed;
     }
-    
+
     pointsToPathData(points) {
         /**
          * Convert array of points back to SVG path data string
          */
         if (points.length === 0) return '';
-        
+
         let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
-        
+
         for (let i = 1; i < points.length; i++) {
             d += ` L ${points[i].x.toFixed(2)} ${points[i].y.toFixed(2)}`;
         }
-        
+
         return d;
     }
 
@@ -731,25 +736,25 @@ class PostProcessingManager {
          * Returns array of unique categories found in the SVG
          */
         const categoriesFound = new Set();
-        
+
         try {
             const parser = new DOMParser();
             const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
-            
+
             // Find all <g> elements with id starting with "layer_"
             const groups = svgDoc.querySelectorAll('g[id^="layer_"]');
-            
+
             console.log(`  Parsing SVG: found ${groups.length} layer groups`);
-            
+
             for (const g of groups) {
                 const layerId = g.getAttribute('id');
                 if (!layerId) continue;
-                
+
                 // Extract category after "layer_" prefix
                 const categoryRaw = layerId.replace('layer_', '');
-                
+
                 console.log(`  Found layer: ${layerId} → Raw: ${categoryRaw}`);
-                
+
                 // Handle special cases with priority
                 let category = null;
                 if (categoryRaw.includes('Profile_Mirrored') || categoryRaw.includes('Mirrored')) {
@@ -775,7 +780,7 @@ class PostProcessingManager {
                     const firstPart = categoryRaw.split('_')[0];
                     category = firstPart || 'Other';
                 }
-                
+
                 if (category && category !== 'Other') {
                     categoriesFound.add(category);
                     console.log(`  → Mapped to category: ${category}`);
@@ -784,7 +789,7 @@ class PostProcessingManager {
         } catch (e) {
             console.error('Error parsing SVG for categories:', e);
         }
-        
+
         const categoriesArray = Array.from(categoriesFound);
         if (categoriesArray.length === 0) {
             categoriesArray.push('Other');
@@ -842,7 +847,7 @@ class PostProcessingManager {
 
     updateSelectedCategories() {
         this.selectedCategories.clear();
-        
+
         const checkboxes = document.querySelectorAll('#postprocess-category-filters input[type="checkbox"]:checked');
         checkboxes.forEach(cb => {
             this.selectedCategories.add(cb.value);
@@ -855,19 +860,19 @@ class PostProcessingManager {
         const pngChecked = document.getElementById('postprocess-format-png').checked;
         const jpgChecked = document.getElementById('postprocess-format-jpg').checked;
         const rasterSettings = document.getElementById('postprocess-raster-settings');
-        
+
         rasterSettings.style.display = (pngChecked || jpgChecked) ? 'block' : 'none';
     }
 
     updateExportButton() {
         const exportBtn = document.getElementById('postprocess-export-btn');
-        
+
         const hasFiles = this.files.svg.length > 0 || this.files.png.length > 0;
         const hasFormats = document.getElementById('postprocess-format-svg').checked ||
-                          document.getElementById('postprocess-format-png').checked ||
-                          document.getElementById('postprocess-format-jpg').checked;
+            document.getElementById('postprocess-format-png').checked ||
+            document.getElementById('postprocess-format-jpg').checked;
         const hasCategories = this.selectedCategories.size > 0;
-        
+
         exportBtn.disabled = !(hasFiles && hasFormats && hasCategories);
     }
 
@@ -920,7 +925,7 @@ class PostProcessingManager {
                     categories: Array.from(this.selectedCategories)  // Move here for backend
                 }
             };
-            
+
             console.log('Export settings:', settings);
             console.log('Selected categories:', settings.archive.categories);
             console.log('Total SVG files:', this.files.svg.length);
@@ -934,42 +939,42 @@ class PostProcessingManager {
                         console.warn(`⚠️ No cached content for ${file.name}, skipping`);
                         return null;
                     }
-                    
+
                     // Get ALL categories in this SVG
                     const allCategories = this.extractAllCategoriesFromSVG(svgText);
-                    
+
                     console.log(`Processing SVG: ${file.name} → Categories: [${allCategories.join(', ')}]`);
-                    
+
                     // Remove unselected layers from SVG
                     let processedSvgText = this.removeUnselectedLayersFromSVG(svgText, this.selectedCategories);
-                    
+
                     // Apply custom stroke widths and ensure black colors
                     processedSvgText = this.applyStrokeWidthsAndColorsToSVG(processedSvgText, settings.strokeWidths);
-                    
+
                     // Apply vectorization parameters (simplification and smoothing) - only for main elements
                     processedSvgText = this.applyVectorizationParametersToSVG(
-                        processedSvgText, 
+                        processedSvgText,
                         settings.vectorization.epsilon,
                         settings.vectorization.smoothing
                     );
-                    
+
                     // Check if ANY category remains selected
                     const hasSelectedCategory = allCategories.some(cat => this.selectedCategories.has(cat));
-                    
+
                     if (!hasSelectedCategory) {
                         console.log(`  ⚠️ Skipping ${file.name} - no selected categories`);
                         return null;
                     }
-                    
+
                     // Use the first SELECTED category for organization
                     const primaryCategory = allCategories.find(cat => this.selectedCategories.has(cat)) || allCategories[0];
-                    
+
                     return { file, svgText: processedSvgText, category: primaryCategory };
                 })
                 .filter(item => item !== null);
 
             console.log(`Filtered: ${filteredSvgData.length} SVG files from ${this.files.svg.length} total`);
-            
+
             if (filteredSvgData.length === 0) {
                 throw new Error('No files match the selected categories');
             }
@@ -978,14 +983,14 @@ class PostProcessingManager {
             const svgFilesArray = [];
             const pngFilesArray = [];
             const jpgFilesArray = [];
-            
+
             // Process SVG files
             for (let i = 0; i < filteredSvgData.length; i++) {
                 const { file, svgText, category } = filteredSvgData[i];
-                
+
                 progressBar.style.width = `${((i + 1) / filteredSvgData.length) * 50}%`;
                 progressText.textContent = `Processing ${i + 1}/${filteredSvgData.length}: ${file.name}`;
-                
+
                 // Add SVG if format selected
                 if (settings.formats.svg) {
                     svgFilesArray.push({
@@ -994,7 +999,7 @@ class PostProcessingManager {
                         category: category
                     });
                 }
-                
+
                 try {
                     // Convert to PNG if needed
                     if (settings.formats.png) {
@@ -1009,7 +1014,7 @@ class PostProcessingManager {
                             console.log(`✓ Converted to PNG: ${file.name}`);
                         }
                     }
-                    
+
                     // Convert to JPG if needed
                     if (settings.formats.jpg) {
                         const jpgBlob = await this.convertSvgToJpg(svgText, settings.raster);
@@ -1035,7 +1040,7 @@ class PostProcessingManager {
                 jpg_files: jpgFilesArray,
                 settings: settings
             };
-            
+
             console.log('Sending payload:', {
                 svg: payload.svg_files.length,
                 png: payload.png_files.length,
@@ -1074,7 +1079,7 @@ class PostProcessingManager {
 
         } catch (error) {
             console.error('Export error:', error);
-            
+
             progressDiv.style.display = 'none';
             resultDiv.style.display = 'block';
             resultDiv.innerHTML = `
@@ -1110,7 +1115,7 @@ class PostProcessingManager {
         html += `</div>`;
         resultDiv.innerHTML = html;
     }
-    
+
     /**
      * Convert SVG to PNG using Canvas API
      */
@@ -1121,54 +1126,54 @@ class PostProcessingManager {
                 const img = new Image();
                 const blob = new Blob([svgText], { type: 'image/svg+xml' });
                 const url = URL.createObjectURL(blob);
-                
+
                 img.onload = () => {
                     try {
                         // Calculate dimensions based on DPI
                         const scale = rasterSettings.dpi / 96; // 96 is default browser DPI
                         const width = img.width * scale;
                         const height = img.height * scale;
-                        
+
                         // Create canvas
                         const canvas = document.createElement('canvas');
                         canvas.width = width;
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
-                        
+
                         // Set background if not transparent
                         if (!rasterSettings.transparent) {
                             ctx.fillStyle = rasterSettings.bgColor;
                             ctx.fillRect(0, 0, width, height);
                         }
-                        
+
                         // Draw SVG
                         ctx.drawImage(img, 0, 0, width, height);
-                        
+
                         // Convert to PNG blob
                         canvas.toBlob(blob => {
                             URL.revokeObjectURL(url);
                             resolve(blob);
                         }, 'image/png');
-                        
+
                     } catch (error) {
                         URL.revokeObjectURL(url);
                         reject(error);
                     }
                 };
-                
+
                 img.onerror = (error) => {
                     URL.revokeObjectURL(url);
                     reject(error);
                 };
-                
+
                 img.src = url;
-                
+
             } catch (error) {
                 reject(error);
             }
         });
     }
-    
+
     /**
      * Convert SVG to JPG using Canvas API
      */
@@ -1179,47 +1184,47 @@ class PostProcessingManager {
                 const img = new Image();
                 const blob = new Blob([svgText], { type: 'image/svg+xml' });
                 const url = URL.createObjectURL(blob);
-                
+
                 img.onload = () => {
                     try {
                         // Calculate dimensions based on DPI
                         const scale = rasterSettings.dpi / 96;
                         const width = img.width * scale;
                         const height = img.height * scale;
-                        
+
                         // Create canvas
                         const canvas = document.createElement('canvas');
                         canvas.width = width;
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
-                        
+
                         // JPG always needs background (no transparency)
                         ctx.fillStyle = rasterSettings.bgColor;
                         ctx.fillRect(0, 0, width, height);
-                        
+
                         // Draw SVG
                         ctx.drawImage(img, 0, 0, width, height);
-                        
+
                         // Convert to JPG blob
                         const quality = rasterSettings.jpgQuality / 100;
                         canvas.toBlob(blob => {
                             URL.revokeObjectURL(url);
                             resolve(blob);
                         }, 'image/jpeg', quality);
-                        
+
                     } catch (error) {
                         URL.revokeObjectURL(url);
                         reject(error);
                     }
                 };
-                
+
                 img.onerror = (error) => {
                     URL.revokeObjectURL(url);
                     reject(error);
                 };
-                
+
                 img.src = url;
-                
+
             } catch (error) {
                 reject(error);
             }

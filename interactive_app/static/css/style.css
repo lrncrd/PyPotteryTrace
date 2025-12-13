@@ -757,102 +757,6 @@ kbd {
 }
 
 /* ========================================
-   INFO MODAL STYLES (PyPotteryLens Style)
-   ======================================== */
-
-.info-modal-content {
-    max-width: 500px;
-    width: 90%;
-    padding: 0;
-    background: white;
-    color: var(--text-primary);
-    border-radius: 16px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    z-index: 10001;
-    min-height: 400px;
-}
-
-.info-modal-content .close {
-    color: var(--text-secondary);
-    opacity: 0.8;
-    z-index: 10;
-    right: 1.5rem;
-    top: 1.5rem;
-}
-
-.info-modal-content .close:hover {
-    opacity: 1;
-    color: var(--text-primary);
-}
-
-.info-header {
-    text-align: center;
-    padding: 2.5rem 2rem 2rem;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-}
-
-.info-logo {
-    width: 100px;
-    height: auto;
-    margin-bottom: 1rem;
-    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
-}
-
-.info-title {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin: 0;
-    color: white;
-}
-
-.info-metadata {
-    padding: 1.5rem 2rem;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.info-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.info-row:last-child {
-    border-bottom: none;
-}
-
-.info-label {
-    font-weight: 600;
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-}
-
-.info-value {
-    color: var(--text-primary);
-    font-weight: 500;
-    font-size: 0.95rem;
-}
-
-.info-section {
-    padding: 1.5rem 2rem;
-}
-
-.info-section-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-}
-
-.info-section .info-row {
-    padding: 0.5rem 0;
-}
-
-/* ========================================
    HELP MODAL STYLES (Tabbed Design)
    ======================================== */
 
@@ -1446,7 +1350,6 @@ kbd {
     max-width: 900px;
     margin: 0 auto;
     padding: 1.5rem;
-    min-height: 100%;
 }
 
 .setup-header {

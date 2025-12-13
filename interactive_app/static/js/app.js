@@ -12,39 +12,39 @@ class PyPotteryTraceApp {
         this.currentMode = 'point';
         this.epsilon = 1.5;
         this.smoothing = 0.3;
-        
+
         // New: Image folder navigation
         this.imageFiles = [];
         this.currentImageIndex = 0;
         this.saveTrainingData = false;
-        
+
         // Project context for persistence
         this.currentProjectId = null;
         this.currentImageName = null;
         this.saveTimeout = null;  // For debouncing auto-save
-        
+
         console.log('Calling init()');
         this.init();
         console.log('Constructor complete');
     }
-    
+
     init() {
         this.setupEventListeners();
         this.setupHelpModal();
         this.updateUI();
-        
+
         // Listen for image selection from grid
         document.addEventListener('imageSelected', async (e) => {
             const { projectId, filename, index } = e.detail;
             await this.loadProjectImage(projectId, filename, index);
         });
-        
+
         // Listen for session loaded event from ImageGrid
         document.addEventListener('sessionLoaded', (e) => {
             this.loadSession(e.detail);
         });
     }
-    
+
     setupEventListeners() {
         // Mode selection
         document.querySelectorAll('.mode-btn').forEach(btn => {
@@ -52,22 +52,22 @@ class PyPotteryTraceApp {
                 this.setMode(btn.dataset.mode);
             });
         });
-        
+
         // Category and name
         document.getElementById('category-select').addEventListener('change', () => {
             this.updateElementName();
         });
-        
+
         // Add segment button
         document.getElementById('add-segment-btn').addEventListener('click', () => {
             this.addCurrentSegment();
         });
-        
+
         // Clear preview button
         document.getElementById('clear-preview-btn').addEventListener('click', () => {
             this.clearPreview();
         });
-        
+
         // Clear rotation center button
         document.getElementById('clear-rotation-btn').addEventListener('click', () => {
             if (window.canvasManager) {
@@ -75,28 +75,28 @@ class PyPotteryTraceApp {
                 document.getElementById('rotation-center-info').style.display = 'none';
             }
         });
-        
+
         // Settings sliders
         document.getElementById('epsilon-slider').addEventListener('input', (e) => {
             this.epsilon = parseFloat(e.target.value);
             document.getElementById('epsilon-value').textContent = this.epsilon.toFixed(1);
         });
-        
+
         document.getElementById('smoothing-slider').addEventListener('input', (e) => {
             this.smoothing = parseFloat(e.target.value);
             document.getElementById('smoothing-value').textContent = this.smoothing.toFixed(1);
         });
-        
+
         // Export button
         document.getElementById('export-btn').addEventListener('click', () => {
             this.exportSegments();
         });
-        
+
         // Debug export button (PNG masks)
         document.getElementById('debug-export-btn').addEventListener('click', () => {
             this.exportMasksDebug();
         });
-        
+
         // Update ML export notice visibility when Training Data checkbox changes
         const saveTrainingCheckbox = document.getElementById('save-training-data');
         if (saveTrainingCheckbox) {
@@ -104,32 +104,32 @@ class PyPotteryTraceApp {
                 this.updateMLExportNotice();
             });
         }
-        
+
         // Zoom controls
         document.getElementById('zoom-in-btn').addEventListener('click', () => {
             if (window.canvasManager) window.canvasManager.zoom(1.2);
         });
-        
+
         document.getElementById('zoom-out-btn').addEventListener('click', () => {
             if (window.canvasManager) window.canvasManager.zoom(0.8);
         });
-        
+
         document.getElementById('reset-view-btn').addEventListener('click', () => {
             if (window.canvasManager) window.canvasManager.resetView();
         });
-        
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             this.handleKeyboardShortcut(e);
         });
     }
-    
+
     setupHelpModal() {
         // Help Modal
         const helpModal = document.getElementById('help-modal');
         const helpBtn = document.getElementById('help-btn');
         const helpClose = helpModal?.querySelector('.close');
-        
+
         if (helpBtn && helpModal && helpClose) {
             helpBtn.onclick = (e) => {
                 e.preventDefault();
@@ -137,7 +137,7 @@ class PyPotteryTraceApp {
                 helpModal.style.display = 'flex';
                 console.log('Help modal opened');
             };
-            
+
             helpClose.onclick = (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -146,19 +146,19 @@ class PyPotteryTraceApp {
         } else {
             console.error('Help modal elements not found:', { helpBtn, helpModal, helpClose });
         }
-        
+
         // Help Modal Tabs
         const helpTabBtns = document.querySelectorAll('.help-tab-btn');
         const helpTabContents = document.querySelectorAll('.help-tab-content');
-        
+
         helpTabBtns.forEach(btn => {
             btn.addEventListener('click', () => {
                 const targetTab = btn.dataset.helpTab;
-                
+
                 // Update active tab button
                 helpTabBtns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                
+
                 // Update active tab content
                 helpTabContents.forEach(content => {
                     if (content.dataset.helpContent === targetTab) {
@@ -169,78 +169,42 @@ class PyPotteryTraceApp {
                 });
             });
         });
-        
-        // Info Modal
-        const infoModal = document.getElementById('info-modal');
-        const infoBtn = document.getElementById('info-btn');
-        const infoClose = infoModal?.querySelector('.info-close');
-        
-        if (infoBtn && infoModal && infoClose) {
-            infoBtn.onclick = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                console.log('BEFORE - Info modal display:', infoModal.style.display);
-                
-                // Forza display flex con z-index altissimo
-                infoModal.style.cssText = 'display: flex !important; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 99999; justify-content: center; align-items: center;';
-                
-                console.log('AFTER - Info modal display:', window.getComputedStyle(infoModal).display);
-                console.log('AFTER - Info modal rect:', infoModal.getBoundingClientRect());
-                
-                this.loadSystemInfo();
-            };
-            
-            infoClose.onclick = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                infoModal.style.display = 'none';
-            };
-        } else {
-            console.error('Info modal elements not found:', { infoBtn, infoModal, infoClose });
-        }
-        
+
         // Close modals when clicking outside
         window.onclick = (event) => {
             if (event.target == helpModal) {
                 helpModal.style.display = 'none';
             }
-            if (event.target == infoModal) {
-                infoModal.style.display = 'none';
-            }
         };
-        
+
         // Close on Escape key
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 if (helpModal.style.display === 'flex') {
                     helpModal.style.display = 'none';
                 }
-                if (infoModal.style.display === 'flex') {
-                    infoModal.style.display = 'none';
-                }
             }
         });
     }
-    
+
     async loadSystemInfo() {
         // Get CPU info (from navigator)
         const cpuCores = navigator.hardwareConcurrency || 'Unknown';
         document.getElementById('info-cpu').textContent = `${cpuCores} cores (Available)`;
-        
+
         // Try to get GPU info from backend
         try {
             const response = await fetch('/api/system_info');
             if (response.ok) {
                 const data = await response.json();
-                
+
                 if (data.gpu_available) {
-                    document.getElementById('info-gpu').textContent = 
+                    document.getElementById('info-gpu').textContent =
                         `Available (${data.gpu_count} device${data.gpu_count > 1 ? 's' : ''})\n${data.gpu_name || ''}`;
                 } else {
                     document.getElementById('info-gpu').textContent = 'Not Available';
                 }
-                
+
                 if (data.mps_available) {
                     document.getElementById('info-mps').textContent = 'Available';
                 } else {
@@ -254,110 +218,110 @@ class PyPotteryTraceApp {
             document.getElementById('info-mps').textContent = 'Not Available';
         }
     }
-    
+
     setMode(mode) {
         console.log('Setting mode to:', mode);
         this.currentMode = mode;
-        
+
         // Update UI
         document.querySelectorAll('.mode-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mode === mode);
         });
-        
+
         // Show/hide point controls
         const pointControls = document.getElementById('point-controls');
         const polygonControls = document.getElementById('polygon-controls');
-        
+
         pointControls.style.display = mode === 'point' ? 'block' : 'none';
         if (polygonControls) {
             polygonControls.style.display = mode === 'polygon' ? 'block' : 'none';
         }
-        
+
         // Clear previous mode data when switching modes
         if (window.segmentationManager) {
             if (mode !== 'polygon') {
                 segmentationManager.clearPolygon();
             }
         }
-        
+
         // Update canvas cursor
         if (window.canvasManager) {
             window.canvasManager.setMode(mode);
         }
-        
+
         console.log('Mode set successfully. Current mode:', this.currentMode);
     }
-    
+
     async loadImageAtIndex(index) {
         console.log('=== loadImageAtIndex called ===');
         console.log('Index:', index);
         console.log('Total images:', this.imageFiles.length);
-        
+
         if (index < 0 || index >= this.imageFiles.length) {
             console.error('Invalid image index:', index);
             return;
         }
-        
+
         this.currentImageIndex = index;
         const file = this.imageFiles[index];
         console.log('Loading file:', file.name);
-        
+
         const formData = new FormData();
         formData.append('file', file);
-        
+
         // Add output folder path if available
         if (window.tabManager && window.tabManager.outputFolderPath) {
             formData.append('output_folder_path', window.tabManager.outputFolderPath);
         }
-        
+
         try {
             const response = await fetch('/api/upload', {
                 method: 'POST',
                 body: formData
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 this.sessionId = data.session_id;
                 this.currentImage = data.image_url;
                 this.currentImageFilename = data.filename;  // Store filename for SVG export
-                
+
                 // Clear segments for new image
                 this.segments = [];
                 this.rotationCenter = null;
-                
+
                 // IMPORTANT: Clear canvas completely (masks, SVG overlay, rotation center)
                 if (window.canvasManager) {
                     console.log('Clearing canvas for new image...');
                     window.canvasManager.clearAll();
                 }
-                
+
                 // Clear segmentation preview
                 if (window.segmentationManager) {
                     window.segmentationManager.clearCurrentSegment();
                 }
-                
+
                 // Update UI
                 document.getElementById('filename').textContent = data.filename;
                 document.getElementById('current-image-number').textContent = index + 1;
                 document.getElementById('total-images').textContent = this.imageFiles.length;
                 document.getElementById('canvas-message').style.display = 'none';
-                
+
                 // Load image in canvas
                 console.log('Loading image in canvas:', this.currentImage);
                 console.log('canvasManager available:', window.canvasManager ? 'YES' : 'NO');
-                
+
                 if (window.canvasManager) {
                     window.canvasManager.loadImage(this.currentImage);
                 } else {
                     console.error('canvasManager not available!');
                 }
-                
+
                 // Update UI
                 this.updateSegmentsList();
                 this.updateStats();
-                
+
                 this.showNotification(`Loaded image ${index + 1} of ${this.imageFiles.length}`, 'success');
             } else {
                 throw new Error(data.error || 'Upload failed');
@@ -367,47 +331,47 @@ class PyPotteryTraceApp {
             this.showNotification('Failed to upload image: ' + error.message, 'error');
         }
     }
-    
+
     navigateImage(direction) {
         const newIndex = this.currentImageIndex + direction;
-        
+
         if (newIndex >= 0 && newIndex < this.imageFiles.length) {
             this.loadImageAtIndex(newIndex);
         }
     }
-    
+
     async handleImageUpload(file) {
         if (!file) return;
-        
+
         const formData = new FormData();
         formData.append('file', file);
-        
+
         try {
             const response = await fetch('/api/upload', {
                 method: 'POST',
                 body: formData
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 this.sessionId = data.session_id;
                 this.currentImage = data.image_url;
-                
+
                 // Update UI
                 document.getElementById('filename').textContent = data.filename;
                 document.getElementById('canvas-message').style.display = 'none';
-                
+
                 // Load image in canvas
                 if (window.canvasManager) {
                     window.canvasManager.loadImage(this.currentImage);
                 }
-                
+
                 // Switch to segmentation tab to show the image
                 if (window.tabManager) {
                     tabManager.switchTab('segmentation-tab');
                 }
-                
+
                 this.showNotification('Image uploaded successfully!', 'success');
             } else {
                 throw new Error(data.error || 'Upload failed');
@@ -417,40 +381,40 @@ class PyPotteryTraceApp {
             this.showNotification('Failed to upload image: ' + error.message, 'error');
         }
     }
-    
+
     updateElementName() {
         const category = document.getElementById('category-select').value;
         const nameInput = document.getElementById('element-name');
         const count = this.segments.filter(s => s.category === category).length + 1;
         nameInput.placeholder = `${category} ${count}`;
-        
+
         // Set default vectorization based on category
         const vectorizeCheckbox = document.getElementById('vectorize-checkbox');
         vectorizeCheckbox.checked = this.getDefaultVectorization(category);
     }
-    
+
     async addCurrentSegment() {
         if (!segmentationManager.currentMask) {
             this.showNotification('No segment to add', 'warning');
             return;
         }
-        
+
         if (!segmentationManager.previewContours) {
             this.showNotification('No preview contours available', 'warning');
             return;
         }
-        
+
         const category = document.getElementById('category-select').value;
         const nameInput = document.getElementById('element-name');
         const name = nameInput.value || nameInput.placeholder;
         const shouldVectorize = document.getElementById('vectorize-checkbox').checked;
-        
+
         // Check if this is a manual mask (polygon)
         const isManualMask = segmentationManager.isManualMask;
-        
+
         // Store preview contours before clearing
         const contoursToSave = segmentationManager.previewContours;
-        
+
         // For manual masks, use the contours directly as the mask data
         let maskData = segmentationManager.currentMask;
         if (isManualMask && segmentationManager.currentMask.type === 'polygon') {
@@ -461,11 +425,11 @@ class PyPotteryTraceApp {
                 isManual: true
             };
         }
-        
+
         // Disable the add button immediately to prevent double-clicking
         const addButton = document.getElementById('add-segment-btn');
         addButton.disabled = true;
-        
+
         try {
             const response = await fetch('/api/add_segment', {
                 method: 'POST',
@@ -481,9 +445,9 @@ class PyPotteryTraceApp {
                     is_manual: isManualMask  // Flag for manual masks - no dilation
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 // Add to local list
                 this.segments.push({
@@ -495,25 +459,25 @@ class PyPotteryTraceApp {
                     should_vectorize: shouldVectorize,
                     is_manual: isManualMask  // Store manual mask flag
                 });
-                
+
                 // Save the stored contours to canvas as a permanent mask
                 if (window.canvasManager) {
                     window.canvasManager.addSavedMask(contoursToSave, category, name, data.segment_id);
-                    
+
                     // Clear SVG overlay since we now have updated masks
                     window.canvasManager.clearSVG();
                 }
-                
+
                 // Save annotations to project if we have a project ID
                 await this.saveAnnotationsToProject();
-                
+
                 // Update UI
                 this.updateSegmentsList();
                 this.updateStats();
                 this.clearPreview();
                 nameInput.value = '';
                 this.updateElementName();
-                
+
                 const manualText = isManualMask ? ' (manual)' : '';
                 this.showNotification(`Segment added successfully${manualText}!`, 'success');
             } else {
@@ -526,34 +490,34 @@ class PyPotteryTraceApp {
             addButton.disabled = false;
         }
     }
-    
+
     clearPreview() {
         segmentationManager.clearCurrentSegment();
         document.getElementById('add-segment-btn').disabled = true;
         document.getElementById('clear-preview-btn').disabled = true;
     }
-    
+
     updateSegmentsList() {
         const list = document.getElementById('segments-list');
-        
+
         if (this.segments.length === 0) {
             list.innerHTML = '<p class="empty-message">No segments yet</p>';
             document.getElementById('export-btn').disabled = true;
             return;
         }
-        
+
         list.innerHTML = '';
-        
+
         this.segments.forEach((segment, index) => {
             // Use stored value or default based on category
             const shouldVectorize = segment.should_vectorize !== undefined ? segment.should_vectorize : this.getDefaultVectorization(segment.category);
             const vectorizeIcon = shouldVectorize ? '🎨' : '🖼️';
             const vectorizeText = shouldVectorize ? 'SVG' : 'PNG';
-            
+
             // Check if manual mask
             const isManual = segment.is_manual || false;
             const manualBadge = isManual ? '<span style="background: #f59e0b; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 4px;">Manual</span>' : '';
-            
+
             const item = document.createElement('div');
             item.className = 'segment-item';
             item.innerHTML = `
@@ -572,14 +536,14 @@ class PyPotteryTraceApp {
             `;
             list.appendChild(item);
         });
-        
+
         document.getElementById('export-btn').disabled = false;
         document.getElementById('debug-export-btn').disabled = false;
-        
+
         // Update ML notice based on training data setting
         this.updateMLExportNotice();
     }
-    
+
     getCategoryIcon(category) {
         const icons = {
             'Profile': '🏺',
@@ -592,24 +556,24 @@ class PyPotteryTraceApp {
         };
         return icons[category] || '📄';
     }
-    
+
     getDefaultVectorization(category) {
         // Profile, Application, and Running_Element are vectorized by default
         return category === 'Profile' || category === 'Application' || category === 'Running_Element';
     }
-    
+
     async deleteSegment(segmentId) {
         console.log('=== DELETE SEGMENT DEBUG (Frontend) ===');
         console.log('Deleting segment ID:', segmentId);
-        console.log('All segments in frontend:', this.segments.map(s => ({id: s.id, name: s.name})));
+        console.log('All segments in frontend:', this.segments.map(s => ({ id: s.id, name: s.name })));
         if (window.canvasManager) {
-            console.log('Saved masks in canvas:', window.canvasManager.savedMasks.map(m => ({id: m.segmentId, name: m.name})));
+            console.log('Saved masks in canvas:', window.canvasManager.savedMasks.map(m => ({ id: m.segmentId, name: m.name })));
         }
-        
+
         if (!confirm('Are you sure you want to delete this segment?')) {
             return;
         }
-        
+
         try {
             const response = await fetch('/api/delete_segment', {
                 method: 'POST',
@@ -621,33 +585,33 @@ class PyPotteryTraceApp {
                     segment_id: segmentId
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 console.log('Backend deleted successfully, total segments now:', data.total_segments);
-                
+
                 // Remove from local list
                 const beforeLength = this.segments.length;
                 this.segments = this.segments.filter(s => s.id !== segmentId);
                 console.log(`Frontend segments: ${beforeLength} -> ${this.segments.length}`);
-                
+
                 // Remove the specific mask from canvas
                 console.log('Calling removeSavedMask for:', segmentId);
                 if (window.canvasManager) {
                     window.canvasManager.removeSavedMask(segmentId);
-                    
+
                     // Clear SVG overlay since it's no longer accurate
                     window.canvasManager.clearSVG();
                 }
-                
+
                 // Update UI
                 this.updateSegmentsList();
                 this.updateStats();
-                
+
                 // Save to project
                 await this.saveAnnotationsToProject();
-                
+
                 this.showNotification('Segment deleted', 'success');
             } else {
                 throw new Error(data.error || 'Failed to delete segment');
@@ -657,17 +621,17 @@ class PyPotteryTraceApp {
             this.showNotification('Failed to delete segment: ' + error.message, 'error');
         }
     }
-    
+
     updateStats() {
         document.getElementById('stat-segments').textContent = this.segments.length;
-        
+
         const profiles = this.segments.filter(s => s.category === 'Profile').length;
         document.getElementById('stat-profiles').textContent = profiles;
-        
+
         const decorations = this.segments.filter(s => s.category === 'Decoration').length;
         document.getElementById('stat-decorations').textContent = decorations;
     }
-    
+
     async setRotationCenter(x, y) {
         try {
             const response = await fetch('/api/set_rotation_center', {
@@ -681,24 +645,24 @@ class PyPotteryTraceApp {
                     y: y
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
-                this.rotationCenter = {x, y};
-                
+                this.rotationCenter = { x, y };
+
                 // Update UI
                 document.getElementById('rotation-center-info').style.display = 'block';
                 document.getElementById('rotation-coords').textContent = `(${Math.round(x)}, ${Math.round(y)})`;
-                
+
                 // Draw marker on canvas
                 if (window.canvasManager) {
                     window.canvasManager.drawRotationCenter(x, y);
                 }
-                
+
                 // Save to project
                 await this.saveAnnotationsToProject();
-                
+
                 this.showNotification('Rotation center set', 'success');
             } else {
                 throw new Error(data.error || 'Failed to set rotation center');
@@ -708,43 +672,43 @@ class PyPotteryTraceApp {
             this.showNotification('Failed to set rotation center: ' + error.message, 'error');
         }
     }
-    
+
     updateMLExportNotice() {
         const saveTrainingCheckbox = document.getElementById('save-training-data');
         const mlNotice = document.getElementById('ml-export-notice');
-        
+
         if (saveTrainingCheckbox && mlNotice) {
             mlNotice.style.display = saveTrainingCheckbox.checked ? 'block' : 'none';
         }
     }
-    
+
     async exportSegments() {
         if (this.segments.length === 0) {
             this.showNotification('No segments to export', 'warning');
             return;
         }
-        
+
         const exportStatus = document.getElementById('export-status');
         const progressFill = document.getElementById('progress-fill');
         const statusText = document.getElementById('status-text');
-        
+
         exportStatus.style.display = 'block';
         progressFill.style.width = '0%';
         statusText.textContent = 'Processing segments...';
-        
+
         try {
             progressFill.style.width = '30%';
-            
+
             // Background will be added later in SVG Editor if needed
             // Don't include background in initial export
-            
+
             console.log('Calling /api/generate_svg_preview with:', {
                 session_id: this.sessionId,
                 epsilon: this.epsilon,
                 smoothing_factor: this.smoothing,
                 include_background: false
             });
-            
+
             // Call the export endpoint
             const response = await fetch('/api/generate_svg_preview', {
                 method: 'POST',
@@ -758,43 +722,43 @@ class PyPotteryTraceApp {
                     include_background: false
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (!data.success) {
                 throw new Error(data.error || 'Export failed');
             }
-            
+
             progressFill.style.width = '80%';
             statusText.textContent = 'Loading SVG in editor...';
-            
+
             // Load the unified SVG into the SVG Editor (NO DOWNLOAD HERE!)
             if (data.output_files && data.output_files.length > 0) {
                 // Find the unified SVG (it's usually the first one or has "vectorized" in name)
-                const unifiedSVG = data.output_files.find(f => 
+                const unifiedSVG = data.output_files.find(f =>
                     f.type === 'svg' && (f.name.includes('vectorized') || f.description.includes('Unified'))
                 );
-                
+
                 if (unifiedSVG && window.svgEditor) {
                     console.log('Loading SVG into editor:', unifiedSVG.url);
-                    
+
                     // Enable SVG Editor tab
                     document.getElementById('svg-editor-tab-btn').disabled = false;
-                    
+
                     // Set session ID, image name, and project ID in SVG Editor (for saving)
                     window.svgEditor.sessionId = this.sessionId;
                     window.svgEditor.currentImageName = this.currentImageFilename;
                     window.svgEditor.currentProjectId = this.currentProjectId;
-                    
+
                     // Load SVG in editor
                     await window.svgEditor.loadSVG(unifiedSVG.url);
-                    
+
                     // Store the ZIP URL for later download from SVG Editor
                     window.svgEditor.zipDownloadUrl = data.zip_url;
-                    
+
                     progressFill.style.width = '100%';
                     statusText.textContent = 'SVG loaded! Switching to editor...';
-                    
+
                     // Switch to SVG Editor tab after a short delay
                     setTimeout(() => {
                         if (window.tabManager) {
@@ -802,7 +766,7 @@ class PyPotteryTraceApp {
                         }
                         exportStatus.style.display = 'none';
                     }, 1000);
-                    
+
                     this.showNotification('SVG loaded! You can now edit it in the "SVG Editor" tab.', 'success');
                 } else {
                     throw new Error('SVG file not found in export results');
@@ -810,35 +774,35 @@ class PyPotteryTraceApp {
             } else {
                 throw new Error('No output files generated');
             }
-            
+
         } catch (error) {
             console.error('Export error:', error);
             statusText.textContent = 'Error: ' + error.message;
             this.showNotification('Failed to export: ' + error.message, 'error');
-            
+
             setTimeout(() => {
                 exportStatus.style.display = 'none';
             }, 3000);
         }
     }
-    
+
     async exportMasksDebug() {
         if (this.segments.length === 0) {
             this.showNotification('No segments to export', 'warning');
             return;
         }
-        
+
         const exportStatus = document.getElementById('export-status');
         const progressFill = document.getElementById('progress-fill');
         const statusText = document.getElementById('status-text');
-        
+
         exportStatus.style.display = 'block';
         progressFill.style.width = '0%';
         statusText.textContent = 'Exporting masks as PNG...';
-        
+
         try {
             progressFill.style.width = '30%';
-            
+
             // Call the debug export endpoint
             const response = await fetch('/api/export_masks_debug', {
                 method: 'POST',
@@ -849,57 +813,57 @@ class PyPotteryTraceApp {
                     session_id: this.sessionId
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (!data.success) {
                 throw new Error(data.error || 'Export failed');
             }
-            
+
             progressFill.style.width = '80%';
             statusText.textContent = `Exported ${data.total_masks} masks. Downloading...`;
-            
+
             // Trigger download
             window.location.href = data.download_url;
-            
+
             progressFill.style.width = '100%';
             statusText.textContent = 'Download started!';
-            
+
             setTimeout(() => {
                 exportStatus.style.display = 'none';
             }, 2000);
-            
+
             this.showNotification(`Exported ${data.total_masks} masks as PNG`, 'success');
-            
+
         } catch (error) {
             console.error('Export error:', error);
             statusText.textContent = 'Error: ' + error.message;
             this.showNotification('Failed to export masks: ' + error.message, 'error');
         }
     }
-    
+
     async exportMLMasks() {
         if (this.segments.length === 0) {
             this.showNotification('No segments to export', 'warning');
             return;
         }
-        
+
         // Ask user to choose format
-        const format = confirm('Choose format:\n\nOK = COCO format (standard ML)\nCancel = Simple format (custom)') 
-            ? 'coco' 
+        const format = confirm('Choose format:\n\nOK = COCO format (standard ML)\nCancel = Simple format (custom)')
+            ? 'coco'
             : 'simple';
-        
+
         const exportStatus = document.getElementById('export-status');
         const progressFill = document.getElementById('progress-fill');
         const statusText = document.getElementById('status-text');
-        
+
         exportStatus.style.display = 'block';
         progressFill.style.width = '0%';
         statusText.textContent = `Exporting masks in ${format.toUpperCase()} format...`;
-        
+
         try {
             progressFill.style.width = '30%';
-            
+
             // Call the ML export endpoint
             const response = await fetch('/api/export_ml_dataset', {
                 method: 'POST',
@@ -911,46 +875,46 @@ class PyPotteryTraceApp {
                     format: format
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (!data.success) {
                 throw new Error(data.error || 'Export failed');
             }
-            
+
             progressFill.style.width = '80%';
             statusText.textContent = `Exported ${data.total_masks} masks. Downloading...`;
-            
+
             // Trigger download
             window.location.href = data.download_url;
-            
+
             progressFill.style.width = '100%';
             statusText.textContent = 'Download started!';
-            
+
             setTimeout(() => {
                 exportStatus.style.display = 'none';
             }, 2000);
-            
+
             this.showNotification(`Exported ${data.total_masks} masks in ${format.toUpperCase()} format`, 'success');
-            
+
         } catch (error) {
             console.error('ML export error:', error);
             statusText.textContent = 'Error: ' + error.message;
             this.showNotification('Failed to export ML masks: ' + error.message, 'error');
-            
+
             setTimeout(() => {
                 exportStatus.style.display = 'none';
             }, 3000);
         }
     }
-    
+
     handleKeyboardShortcut(e) {
         // Check if user is typing in an input
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
             return;
         }
-        
-        switch(e.key.toLowerCase()) {
+
+        switch (e.key.toLowerCase()) {
             case 'p':
                 this.setMode('point');
                 break;
@@ -979,28 +943,28 @@ class PyPotteryTraceApp {
                 break;
         }
     }
-    
+
     /**
      * Load an image from project (called when clicking thumbnail)
      */
     async loadProjectImage(projectId, filename, index) {
         try {
             console.log('Loading project image:', filename);
-            
+
             // Store project info for later use
             this.currentProjectId = projectId;
             this.currentImageName = filename;
-            
+
             // CLEAR EVERYTHING FROM PREVIOUS IMAGE
             this.segments = [];
             this.rotationCenter = null;
-            
+
             // Clear canvas masks
             if (window.canvasManager) {
                 window.canvasManager.savedMasks = [];
                 window.canvasManager.clearRotationCenter();
             }
-            
+
             // Clear segmentation preview
             if (window.segmentationManager) {
                 window.segmentationManager.currentMask = null;
@@ -1008,45 +972,45 @@ class PyPotteryTraceApp {
                 window.segmentationManager.points = [];
                 window.segmentationManager.labels = [];
             }
-            
+
             // Update UI immediately to show empty state
             this.updateSegmentsList();
             this.updateStats();
             document.getElementById('rotation-center-info').style.display = 'none';
-            
+
             // Create a session for this image
             const imageUrl = `/api/projects/${projectId}/images/${encodeURIComponent(filename)}?folder=uploads`;
-            
+
             // Create a fake File object to upload
             const response = await fetch(imageUrl);
             const blob = await response.blob();
             const file = new File([blob], filename, { type: blob.type });
-            
+
             // Upload image to create session
             const formData = new FormData();
             formData.append('file', file);
-            
+
             const uploadResponse = await fetch('/api/upload', {
                 method: 'POST',
                 body: formData
             });
-            
+
             const uploadData = await uploadResponse.json();
-            
+
             if (uploadData.success) {
                 this.sessionId = uploadData.session_id;
                 this.currentImage = uploadData.image_url;
                 this.currentImageFilename = filename;  // Store filename for SVG export
-                
+
                 // Update UI
                 document.getElementById('filename').textContent = filename;
                 document.getElementById('current-image-number').textContent = index + 1;
-                
+
                 console.log('Session created:', this.sessionId);
-                
+
                 // Load saved annotations from project if they exist
                 await this.loadAnnotationsFromProject(projectId, filename);
-                
+
                 this.showNotification('Image loaded successfully', 'success');
             }
         } catch (error) {
@@ -1054,7 +1018,7 @@ class PyPotteryTraceApp {
             this.showNotification('Failed to load image: ' + error.message, 'error');
         }
     }
-    
+
     /**
      * Save annotations to project (with debounce)
      */
@@ -1063,19 +1027,19 @@ class PyPotteryTraceApp {
             console.log('No project context, skipping save');
             return;
         }
-        
+
         // Clear previous timeout
         if (this.saveTimeout) {
             clearTimeout(this.saveTimeout);
         }
-        
+
         // Debounce: save after 500ms of inactivity
         this.saveTimeout = setTimeout(async () => {
             try {
                 console.log('💾 Auto-saving annotations...');
                 console.log('  Segments:', this.segments.length);
                 console.log('  Rotation center:', this.rotationCenter);
-                
+
                 const response = await fetch(
                     `/api/projects/${this.currentProjectId}/annotations/${encodeURIComponent(this.currentImageName)}`,
                     {
@@ -1089,12 +1053,12 @@ class PyPotteryTraceApp {
                         })
                     }
                 );
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
                     console.log('✓ Annotations saved to project');
-                    
+
                     // Show subtle indicator (optional)
                     const indicator = document.createElement('div');
                     indicator.style.cssText = `
@@ -1112,7 +1076,7 @@ class PyPotteryTraceApp {
                     `;
                     indicator.textContent = '💾 Saved';
                     document.body.appendChild(indicator);
-                    
+
                     setTimeout(() => indicator.style.opacity = '1', 10);
                     setTimeout(() => {
                         indicator.style.opacity = '0';
@@ -1126,7 +1090,7 @@ class PyPotteryTraceApp {
             }
         }, 500);  // 500ms debounce
     }
-    
+
     /**
      * Load annotations from project
      */
@@ -1135,34 +1099,34 @@ class PyPotteryTraceApp {
             const response = await fetch(
                 `/api/projects/${projectId}/annotations/${encodeURIComponent(imageName)}`
             );
-            
+
             const data = await response.json();
-            
+
             if (data.success && data.has_annotations) {
                 console.log('📂 Loading saved annotations:', data);
                 console.log('  Segments loaded:', data.segments.length);
                 console.log('  Rotation center:', data.rotation_center);
-                
+
                 // Load segments
                 this.segments = data.segments || [];
                 this.rotationCenter = data.rotation_center;
-                
+
                 console.log('✓ Segments assigned to this.segments:', this.segments.length);
                 this.segments.forEach((seg, idx) => {
                     console.log(`  [${idx}] ${seg.name} (${seg.category}) - has contours: ${!!seg.contours}, id: ${seg.id}`);
                 });
-                
+
                 // Sync segments with backend session
                 if (this.segments.length > 0 && this.sessionId) {
                     console.log('🔄 Syncing loaded segments with backend session...');
                     await this.syncSegmentsWithBackend();
                 }
-                
+
                 // Redraw all masks on canvas
                 if (window.canvasManager && this.segments.length > 0) {
                     // Clear previous masks
                     window.canvasManager.savedMasks = [];
-                    
+
                     // Add all loaded masks
                     this.segments.forEach(seg => {
                         if (seg.contours) {
@@ -1174,16 +1138,16 @@ class PyPotteryTraceApp {
                             );
                         }
                     });
-                    
+
                     window.canvasManager.redraw();
                 }
-                
+
                 // Load rotation center
                 if (this.rotationCenter) {
                     document.getElementById('rotation-center-info').style.display = 'block';
-                    document.getElementById('rotation-coords').textContent = 
+                    document.getElementById('rotation-coords').textContent =
                         `(${Math.round(this.rotationCenter.x)}, ${Math.round(this.rotationCenter.y)})`;
-                    
+
                     // Sync rotation center with backend session
                     if (this.sessionId) {
                         await fetch('/api/set_rotation_center', {
@@ -1196,16 +1160,16 @@ class PyPotteryTraceApp {
                             })
                         });
                     }
-                    
+
                     if (window.canvasManager) {
                         window.canvasManager.drawRotationCenter(this.rotationCenter.x, this.rotationCenter.y);
                         window.canvasManager.redraw();
                     }
                 }
-                
+
                 // Update UI
                 this.updateUI();
-                
+
                 this.showNotification(`Loaded ${this.segments.length} saved segments`, 'info');
             } else {
                 console.log('No saved annotations for this image');
@@ -1214,16 +1178,16 @@ class PyPotteryTraceApp {
             console.error('Error loading annotations from project:', error);
         }
     }
-    
+
     /**
      * Load a saved session (segments and rotation center)
      */
     loadSession(sessionData) {
         console.log('Loading session:', sessionData);
-        
+
         // Clear current segments
         this.segments = [];
-        
+
         // Load segments from session
         if (sessionData.segments && Array.isArray(sessionData.segments)) {
             this.segments = sessionData.segments.map(seg => ({
@@ -1234,46 +1198,46 @@ class PyPotteryTraceApp {
                 contours: seg.contours || null,
                 should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : true
             }));
-            
+
             console.log(`Loaded ${this.segments.length} segments from session`);
-            
+
             // Redraw all masks on canvas
             if (window.canvasManager && this.segments.length > 0) {
                 // Clear previous masks
                 window.canvasManager.savedMasks = [];
-                
+
                 // Add all loaded masks
                 this.segments.forEach(seg => {
                     if (seg.contours) {
                         window.canvasManager.addMask(seg.contours, this.getCategoryColor(seg.category));
                     }
                 });
-                
+
                 window.canvasManager.redraw();
             }
         }
-        
+
         // Load rotation center
         if (sessionData.rotation_center) {
             this.rotationCenter = sessionData.rotation_center;
-            
+
             // Update UI
             document.getElementById('rotation-center-info').style.display = 'block';
-            document.getElementById('rotation-coords').textContent = 
+            document.getElementById('rotation-coords').textContent =
                 `(${Math.round(this.rotationCenter.x)}, ${Math.round(this.rotationCenter.y)})`;
-            
+
             // Draw on canvas
             if (window.canvasManager) {
                 window.canvasManager.setRotationCenter(this.rotationCenter.x, this.rotationCenter.y);
             }
         }
-        
+
         // Update UI
         this.updateUI();
-        
+
         this.showNotification(`Loaded ${this.segments.length} segments from previous session`, 'success');
     }
-    
+
     /**
      * Get color for category
      */
@@ -1289,7 +1253,7 @@ class PyPotteryTraceApp {
         };
         return colors[category] || 'rgba(156, 163, 175, 0.5)'; // Gray fallback
     }
-    
+
     showNotification(message, type = 'info') {
         // Simple notification system (can be enhanced with a library)
         const colors = {
@@ -1298,7 +1262,7 @@ class PyPotteryTraceApp {
             warning: '#f59e0b',
             info: '#2563eb'
         };
-        
+
         const notification = document.createElement('div');
         notification.style.cssText = `
             position: fixed;
@@ -1313,15 +1277,15 @@ class PyPotteryTraceApp {
             animation: slideIn 0.3s ease;
         `;
         notification.textContent = message;
-        
+
         document.body.appendChild(notification);
-        
+
         setTimeout(() => {
             notification.style.animation = 'slideOut 0.3s ease';
             setTimeout(() => notification.remove(), 300);
         }, 3000);
     }
-    
+
     /**
      * Sync loaded segments with backend session
      * This is needed when loading annotations from project file
@@ -1330,7 +1294,7 @@ class PyPotteryTraceApp {
         if (!this.sessionId || this.segments.length === 0) {
             return;
         }
-        
+
         try {
             // Convert segments to format expected by backend
             const segmentsData = this.segments.map(seg => ({
@@ -1342,7 +1306,7 @@ class PyPotteryTraceApp {
                 should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : true,
                 is_manual: seg.is_manual || false  // Preserve manual mask flag
             }));
-            
+
             // Send to backend to update session
             const response = await fetch('/api/sync_segments', {
                 method: 'POST',
@@ -1354,9 +1318,9 @@ class PyPotteryTraceApp {
                     segments: segmentsData
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 console.log('✓ Segments synced with backend:', data.total_segments, 'segments');
             } else {
@@ -1366,7 +1330,7 @@ class PyPotteryTraceApp {
             console.error('Error syncing segments with backend:', error);
         }
     }
-    
+
     updateUI() {
         this.updateSegmentsList();
         this.updateStats();
@@ -1405,53 +1369,53 @@ document.head.appendChild(style);
 
 
 // Initialize the application when DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
-   console.log('DOM Content Loaded - Starting initialization');
- 
+document.addEventListener('DOMContentLoaded', function () {
+    console.log('DOM Content Loaded - Starting initialization');
+
     // Show splash screen with progress
     const splashScreen = document.getElementById('splash-screen');
     const splashMessage = document.getElementById('splash-message');
     const splashProgressBar = document.getElementById('splash-progress-bar');
     const splashProgressText = document.getElementById('splash-progress-text');
-    
+
     let progress = 0;
-    
+
     function updateSplash(message, percent) {
         splashMessage.textContent = message;
         splashProgressBar.style.width = percent + '%';
         splashProgressText.textContent = percent + '%';
         progress = percent;
     }
-    
+
     try {
         updateSplash('Initializing canvas...', 20);
-        
+
         // Initialize canvas manager
         console.log('Initializing canvas manager...');
         window.canvasManager = new CanvasManager('main-canvas');
         console.log('Canvas manager initialized:', window.canvasManager);
-        
+
         updateSplash('Loading tab manager...', 40);
 
         // Initialize tab manager
         console.log('Initializing tab manager...');
         window.tabManager = new TabManager();
         console.log('Tab manager initialized:', window.tabManager);
-        
+
         updateSplash('Setting up application...', 60);
 
         // Initialize ONE main app instance and assign it to window.app
         console.log('Initializing main app...');
         window.app = new PyPotteryTraceApp();
         console.log('Main app initialized:', window.app);
-        
+
         updateSplash('Loading segmentation engine...', 80);
 
         // Initialize segmentation manager
         console.log('Initializing segmentation manager...');
         window.segmentationManager = new SegmentationManager();
         console.log('Segmentation manager initialized:', window.segmentationManager);
-        
+
         updateSplash('Preparing SVG editor...', 90);
 
         // Initialize SVG editor
@@ -1460,9 +1424,9 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log('SVG editor initialized:', window.svgEditor);
 
         updateSplash('Ready!', 100);
-        
+
         console.log('All initialization complete!');
-        
+
         // Hide splash screen after a short delay
         setTimeout(() => {
             splashScreen.classList.add('fade-out');
@@ -1470,15 +1434,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 splashScreen.style.display = 'none';
             }, 500);
         }, 800);
-        
-  } catch (error) {
-     console.error('Error during initialization:', error);
-     updateSplash('Error: ' + error.message, progress);
-     setTimeout(() => {
-         splashScreen.classList.add('fade-out');
-         setTimeout(() => {
-             splashScreen.style.display = 'none';
-         }, 500);
-     }, 2000);
- }
+
+    } catch (error) {
+        console.error('Error during initialization:', error);
+        updateSplash('Error: ' + error.message, progress);
+        setTimeout(() => {
+            splashScreen.classList.add('fade-out');
+            setTimeout(() => {
+                splashScreen.style.display = 'none';
+            }, 500);
+        }, 2000);
+    }
 });

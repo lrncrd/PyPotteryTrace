@@ -93,6 +93,127 @@ def load_model():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/check_model', methods=['POST'])
+def check_model():
+    """Check if a SAM2 model exists locally."""
+    data = request.json
+    model_size = data.get('model_size', 'small')
+    
+    if model_size not in ['tiny', 'small', 'base', 'large']:
+        return jsonify({'error': 'Invalid model size'}), 400
+    
+    try:
+        model_info = SAM2Handler.get_model_info(model_size)
+        return jsonify({
+            'success': True,
+            **model_info
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/download_model', methods=['GET'])
+def download_model():
+    """Download SAM2 model with progress updates using Server-Sent Events."""
+    from flask import Response
+    import time
+    import threading
+    
+    model_size = request.args.get('model_size', 'small')
+    
+    if model_size not in ['tiny', 'small', 'base', 'large']:
+        return jsonify({'error': 'Invalid model size'}), 400
+    
+    # Shared state for progress tracking
+    progress_state = {
+        'downloaded_bytes': 0,
+        'total_bytes': 0,
+        'status': 'starting',
+        'error': None,
+        'path': None
+    }
+    
+    def do_download():
+        """Background download function."""
+        try:
+            url = SAM2Handler.MODEL_CHECKPOINTS[model_size]
+            models_dir = Path('models')
+            models_dir.mkdir(exist_ok=True)
+            
+            filename = url.split('/')[-1]
+            checkpoint_path = models_dir / filename
+            
+            if checkpoint_path.exists():
+                file_size = checkpoint_path.stat().st_size
+                progress_state['downloaded_bytes'] = file_size
+                progress_state['total_bytes'] = file_size
+                progress_state['status'] = 'complete'
+                progress_state['path'] = str(checkpoint_path)
+                return
+            
+            import urllib.request
+            
+            def report_hook(block_num, block_size, total_size):
+                progress_state['downloaded_bytes'] = block_num * block_size
+                progress_state['total_bytes'] = total_size if total_size > 0 else SAM2Handler.MODEL_SIZES[model_size] * 1024 * 1024
+                progress_state['status'] = 'downloading'
+            
+            progress_state['status'] = 'downloading'
+            progress_state['total_bytes'] = SAM2Handler.MODEL_SIZES[model_size] * 1024 * 1024
+            
+            urllib.request.urlretrieve(url, checkpoint_path, reporthook=report_hook)
+            
+            progress_state['status'] = 'complete'
+            progress_state['path'] = str(checkpoint_path)
+            
+        except Exception as e:
+            progress_state['status'] = 'error'
+            progress_state['error'] = str(e)
+            print(f"Download error: {e}")
+    
+    # Start download in background thread
+    download_thread = threading.Thread(target=do_download, daemon=True)
+    download_thread.start()
+    
+    def generate_progress():
+        """Generator that polls progress state and yields SSE updates."""
+        last_progress = -1
+        
+        while True:
+            downloaded = progress_state['downloaded_bytes']
+            total = progress_state['total_bytes']
+            status = progress_state['status']
+            
+            if total > 0:
+                progress = int((downloaded / total) * 100)
+            else:
+                progress = 0
+            
+            # Only send update if progress changed or status changed
+            if progress != last_progress or status in ['complete', 'error']:
+                progress_data = {
+                    'progress': min(progress, 100),
+                    'downloaded_mb': round(downloaded / (1024 * 1024), 1),
+                    'total_mb': round(total / (1024 * 1024), 1),
+                    'status': status
+                }
+                
+                if status == 'error':
+                    progress_data['error'] = progress_state['error']
+                if status == 'complete':
+                    progress_data['path'] = progress_state['path']
+                
+                yield f"data: {json.dumps(progress_data)}\n\n"
+                last_progress = progress
+            
+            if status in ['complete', 'error']:
+                break
+            
+            time.sleep(0.3)  # Poll every 300ms
+    
+    return Response(generate_progress(), mimetype='text/event-stream')
+
+
 @app.route('/api/generate_svg_preview', methods=['POST'])
 def generate_svg_preview():
     """Generate SVG preview without downloading."""

@@ -6,7 +6,7 @@
 const ProjectManager = {
     currentProject: null,
     selectedIcon: 'icon1',  // Default icon (stored as path reference)
-    
+
     /**
      * Initialize project manager
      */
@@ -14,7 +14,7 @@ const ProjectManager = {
         this.setupEventListeners();
         this.loadProjectsList();
     },
-    
+
     /**
      * Setup event listeners for project UI
      */
@@ -24,13 +24,13 @@ const ProjectManager = {
         if (newBtn) {
             newBtn.addEventListener('click', () => this.showCreateModal());
         }
-        
+
         // Create project button (in modal)
         const createBtn = document.getElementById('create-project-btn');
         if (createBtn) {
             createBtn.addEventListener('click', () => this.createProject());
         }
-        
+
         // Close modal buttons
         const closeBtn = document.getElementById('close-create-modal');
         const cancelBtn = document.getElementById('cancel-create-btn');
@@ -40,7 +40,7 @@ const ProjectManager = {
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => this.hideCreateModal());
         }
-        
+
         // Modal overlay click
         const modal = document.getElementById('create-project-modal');
         if (modal) {
@@ -50,13 +50,13 @@ const ProjectManager = {
                 }
             });
         }
-        
+
         // Refresh projects button
         const refreshBtn = document.getElementById('refresh-projects-btn');
         if (refreshBtn) {
             refreshBtn.addEventListener('click', () => this.loadProjectsList());
         }
-        
+
         // Icon selector
         const iconSelector = document.getElementById('icon-selector');
         if (iconSelector) {
@@ -74,7 +74,7 @@ const ProjectManager = {
             });
         }
     },
-    
+
     /**
      * Show create project modal
      */
@@ -84,7 +84,7 @@ const ProjectManager = {
             modal.style.display = 'flex';
         }
     },
-    
+
     /**
      * Hide create project modal
      */
@@ -97,19 +97,19 @@ const ProjectManager = {
         document.getElementById('new-project-name').value = '';
         document.getElementById('new-project-description').value = '';
     },
-    
+
     /**
      * Create a new project
      */
     async createProject() {
         const name = document.getElementById('new-project-name').value.trim();
         const description = document.getElementById('new-project-description').value.trim();
-        
+
         if (!name) {
             this.showNotification('Please enter a project name', 'error');
             return;
         }
-        
+
         try {
             const response = await fetch('/api/projects', {
                 method: 'POST',
@@ -122,25 +122,25 @@ const ProjectManager = {
                     icon: this.selectedIcon
                 })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 // Hide modal
                 this.hideCreateModal();
-                
+
                 // Set current project
                 this.currentProject = data.project;
-                
+
                 // Update UI
                 this.updateProjectUI();
-                
+
                 // Immediately open folder selector to upload images (no confirmation dialog)
                 this.showUploadImagesDialog(data.project.project_id);
-                
+
                 // Reload projects list
                 await this.loadProjectsList();
-                
+
                 // Show success message
                 this.showNotification('Project created! Now upload your images.', 'success');
             } else {
@@ -151,7 +151,7 @@ const ProjectManager = {
             this.showNotification('Failed to create project', 'error');
         }
     },
-    
+
     /**
      * Show upload images dialog after project creation
      */
@@ -159,7 +159,7 @@ const ProjectManager = {
         // Open the folder selector directly so the user can pick images without an extra confirmation dialog
         this.uploadImagesToProject(projectId);
     },
-    
+
     /**
      * Upload images to project
      */
@@ -169,41 +169,41 @@ const ProjectManager = {
         input.type = 'file';
         input.accept = 'image/*';
         input.multiple = true;
-        
+
         input.onchange = async (e) => {
             const files = Array.from(e.target.files);
-            
+
             // Filter only images
             const imageExtensions = ['jpg', 'jpeg', 'png', 'tiff', 'bmp', 'gif'];
             const imageFiles = files.filter(file => {
                 const ext = file.name.split('.').pop().toLowerCase();
                 return imageExtensions.includes(ext);
             });
-            
+
             if (imageFiles.length === 0) {
                 this.showNotification('No image files selected', 'error');
                 return;
             }
-            
+
             this.showNotification(`Uploading ${imageFiles.length} images...`, 'info');
-            
+
             // Upload images to project
             const formData = new FormData();
             imageFiles.forEach(file => {
                 formData.append('files', file);
             });
-            
+
             try {
                 const response = await fetch(`/api/projects/${projectId}/upload`, {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 const data = await response.json();
-                
+
                 if (data.success) {
                     this.showNotification(`${data.count} images uploaded successfully!`, 'success');
-                    
+
                     // Load the project
                     await this.loadProject(projectId);
                 } else {
@@ -214,10 +214,10 @@ const ProjectManager = {
                 this.showNotification('Failed to upload images', 'error');
             }
         };
-        
+
         input.click();
     },
-    
+
     /**
      * Show load project dialog
      */
@@ -225,14 +225,14 @@ const ProjectManager = {
         try {
             const response = await fetch('/api/projects');
             const data = await response.json();
-            
+
             if (!data.success) {
                 alert(`Error: ${data.error}`);
                 return;
             }
-            
+
             const projects = data.projects;
-            
+
             const modal = document.createElement('div');
             modal.className = 'modal';
             modal.innerHTML = `
@@ -257,21 +257,21 @@ const ProjectManager = {
                     </div>
                 </div>
             `;
-            
+
             document.body.appendChild(modal);
         } catch (error) {
             console.error('Error loading projects:', error);
             alert('Failed to load projects list');
         }
     },
-    
+
     /**
      * Render a project card
      */
     renderProjectCard(project) {
         const createdDate = new Date(project.created_at).toLocaleDateString();
         const modifiedDate = new Date(project.last_modified).toLocaleDateString();
-        
+
         return `
             <div class="project-card">
                 <div class="project-info">
@@ -280,7 +280,7 @@ const ProjectManager = {
                     ${project.description ? `<p class="project-description">${project.description}</p>` : ''}
                     <div class="project-meta">
                         <span>Created: ${createdDate}</span>
-                        <span>Modified: ${modifiedDate}</span>
+                        <span style="margin-left: 15px;">Modified: ${modifiedDate}</span>
                     </div>
                 </div>
                 <div class="project-actions">
@@ -300,7 +300,7 @@ const ProjectManager = {
             </div>
         `;
     },
-    
+
     /**
      * Load a project
      */
@@ -308,45 +308,45 @@ const ProjectManager = {
         try {
             const response = await fetch(`/api/projects/${projectId}`);
             const data = await response.json();
-            
+
             if (!data.success) {
                 this.showNotification(`Error: ${data.error}`, 'error');
                 return;
             }
-            
+
             this.currentProject = data.project;
-            
+
             // Update UI
             this.updateProjectUI();
-            
+
             // Hide modal if open
             this.hideCreateModal();
-            
+
             // Load project images into Setup tab using TabManager
             if (window.tabManager) {
                 const loaded = await window.tabManager.loadProjectImages(projectId, data.project.project_name);
-                
+
                 if (loaded) {
                     console.log('Project images loaded into Setup tab');
                 } else {
                     console.log('No images found in project or failed to load');
                 }
             }
-            
+
             // Load project images into segmentation tab grid
             await this.loadProjectImages(projectId);
-            
+
             // Enable segmentation tab
             const segmentationTab = document.getElementById('segmentation-tab-btn');
             if (segmentationTab) {
                 segmentationTab.disabled = false;
             }
-            
+
             // Switch to Setup tab to show loaded images
             if (window.tabManager && window.tabManager.switchTab) {
                 window.tabManager.switchTab('model-tab');
             }
-            
+
             // Show notification
             this.showNotification(`Project "${data.project.project_name}" loaded successfully!`, 'success');
         } catch (error) {
@@ -354,37 +354,37 @@ const ProjectManager = {
             this.showNotification('Failed to load project', 'error');
         }
     },
-    
+
     /**
      * Update project UI elements
      */
     updateProjectUI() {
         if (!this.currentProject) return;
-        
+
         // Show project info bar
         const infoBar = document.getElementById('project-info-bar');
         if (infoBar) {
             infoBar.style.display = 'flex';
         }
-        
+
         // Update project name and icon
         const projectNameEl = document.getElementById('current-project-name');
         if (projectNameEl) {
             projectNameEl.textContent = this.currentProject.project_name;
         }
-        
+
         const projectIconEl = document.getElementById('project-icon');
         if (projectIconEl) {
             // Get icon path (icon1 -> imgs/icons/1.png)
             const iconPath = this.getIconPath(this.currentProject.icon || 'icon1');
             projectIconEl.innerHTML = `<img src="${iconPath}" alt="Project Icon" style="width: 100%; height: 100%; object-fit: contain;">`;
         }
-        
+
         // Store in session
         sessionStorage.setItem('current_project_id', this.currentProject.project_id);
         sessionStorage.setItem('current_project_name', this.currentProject.project_name);
     },
-    
+
     /**
      * Convert icon identifier to path
      */
@@ -394,7 +394,7 @@ const ProjectManager = {
         const iconNumber = iconId.replace('icon', '');
         return `/static/imgs/icons/${iconNumber}.png`;
     },
-    
+
     /**
      * Load project images into segmentation tab
      */
@@ -402,14 +402,14 @@ const ProjectManager = {
         try {
             const response = await fetch(`/api/projects/${projectId}/images?folder=uploads`);
             const data = await response.json();
-            
+
             if (data.success) {
                 console.log(`Loaded ${data.total} images from project`);
-                
+
                 // Load images into ImageGrid
                 if (window.ImageGrid) {
                     await window.ImageGrid.loadProjectImages(projectId);
-                    
+
                     // Auto-load first image with annotations
                     if (data.images && data.images.length > 0 && window.app) {
                         const firstImage = typeof data.images[0] === 'string' ? data.images[0] : data.images[0].filename;
@@ -422,7 +422,7 @@ const ProjectManager = {
             console.error('Error loading project images:', error);
         }
     },
-    
+
     /**
      * Close current project
      */
@@ -430,22 +430,22 @@ const ProjectManager = {
         if (confirm('Close current project?')) {
             this.currentProject = null;
             sessionStorage.removeItem('current_project_id');
-            
+
             // Update UI
             const projectNameEl = document.getElementById('current-project-name');
             if (projectNameEl) {
                 projectNameEl.textContent = 'No project loaded';
             }
-            
+
             const projectControls = document.getElementById('project-controls');
             if (projectControls) {
                 projectControls.style.display = 'none';
             }
-            
+
             this.showNotification('Project closed', 'info');
         }
     },
-    
+
     /**
      * Show project details
      */
@@ -453,15 +453,15 @@ const ProjectManager = {
         try {
             const response = await fetch(`/api/projects/${projectId}`);
             const data = await response.json();
-            
+
             if (!data.success) {
                 alert(`Error: ${data.error}`);
                 return;
             }
-            
+
             const project = data.project;
             const stats = data.stats;
-            
+
             const modal = document.createElement('div');
             modal.className = 'modal';
             modal.innerHTML = `
@@ -508,14 +508,14 @@ const ProjectManager = {
                     </div>
                 </div>
             `;
-            
+
             document.body.appendChild(modal);
         } catch (error) {
             console.error('Error loading project details:', error);
             alert('Failed to load project details');
         }
     },
-    
+
     /**
      * Delete a project
      */
@@ -523,20 +523,23 @@ const ProjectManager = {
         if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
             return;
         }
-        
+
         try {
             const response = await fetch(`/api/projects/${projectId}`, {
                 method: 'DELETE'
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 // Close modal if open
                 const modal = document.querySelector('.modal');
                 if (modal) modal.remove();
-                
-                // Reload projects list if dialog is open
+
+                // Reload projects list to update the UI
+                await this.loadProjectsList();
+
+                // Show notification
                 this.showNotification('Project deleted successfully', 'success');
             } else {
                 alert(`Error: ${data.error}`);
@@ -546,7 +549,7 @@ const ProjectManager = {
             alert('Failed to delete project');
         }
     },
-    
+
     /**
      * Show project settings
      */
@@ -555,9 +558,9 @@ const ProjectManager = {
             alert('No project loaded');
             return;
         }
-        
+
         const settings = this.currentProject.settings;
-        
+
         const modal = document.createElement('div');
         modal.className = 'modal';
         modal.innerHTML = `
@@ -611,16 +614,16 @@ const ProjectManager = {
                 </div>
             </div>
         `;
-        
+
         document.body.appendChild(modal);
     },
-    
+
     /**
      * Save project settings
      */
     async saveProjectSettings() {
         if (!this.currentProject) return;
-        
+
         const settings = {
             sam2_model_size: document.getElementById('setting-model-size').value,
             epsilon: parseFloat(document.getElementById('setting-epsilon').value),
@@ -628,7 +631,7 @@ const ProjectManager = {
             include_background: document.getElementById('setting-background').checked,
             save_training_data: document.getElementById('setting-training-data').checked
         };
-        
+
         try {
             const response = await fetch(`/api/projects/${this.currentProject.project_id}/settings`, {
                 method: 'PUT',
@@ -637,16 +640,16 @@ const ProjectManager = {
                 },
                 body: JSON.stringify({ settings })
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 // Update local settings
                 this.currentProject.settings = settings;
-                
+
                 // Close modal
                 document.querySelector('.modal').remove();
-                
+
                 this.showNotification('Settings saved successfully', 'success');
             } else {
                 alert(`Error: ${data.error}`);
@@ -656,7 +659,7 @@ const ProjectManager = {
             alert('Failed to save settings');
         }
     },
-    
+
     /**
      * Load projects list (for initialization)
      */
@@ -664,7 +667,7 @@ const ProjectManager = {
         try {
             const response = await fetch('/api/projects');
             const data = await response.json();
-            
+
             if (data.success) {
                 console.log(`Loaded ${data.total} projects`);
                 this.displayProjects(data.projects);
@@ -673,15 +676,15 @@ const ProjectManager = {
             console.error('Error loading projects:', error);
         }
     },
-    
+
     /**
      * Display projects in grid
      */
     displayProjects(projects) {
         const container = document.getElementById('projects-list');
-        
+
         if (!container) return;
-        
+
         if (projects.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
@@ -695,10 +698,10 @@ const ProjectManager = {
             `;
             return;
         }
-        
+
         container.innerHTML = projects.map(project => this.renderProjectCard(project)).join('');
     },
-    
+
     /**
      * Render a project card (PyPotteryLens style)
      */
@@ -708,7 +711,7 @@ const ProjectManager = {
         const icon = project.icon || 'icon1';
         const iconPath = this.getIconPath(icon);
         const stats = project.workflow_status || {};
-        
+
         return `
             <div class="project-card" onclick="ProjectManager.loadProject('${project.project_id}')">
                 <div class="project-card-header">
@@ -736,7 +739,7 @@ const ProjectManager = {
                 
                 <div class="project-card-meta">
                     <span>Created: ${createdDate}</span>
-                    <span>Modified: ${modifiedDate}</span>
+                    <span style="margin-left: 15px;">Modified: ${modifiedDate}</span>
                 </div>
                 
                 <div class="project-card-actions" onclick="event.stopPropagation()">
@@ -747,7 +750,7 @@ const ProjectManager = {
             </div>
         `;
     },
-    
+
     /**
      * Show import project dialog
      */
@@ -780,42 +783,42 @@ const ProjectManager = {
                 </div>
             </div>
         `;
-        
+
         document.body.appendChild(modal);
     },
-    
+
     /**
      * Import a project from ZIP
      */
     async importProject() {
         const fileInput = document.getElementById('import-file');
         const file = fileInput.files[0];
-        
+
         if (!file) {
             alert('Please select a file to import');
             return;
         }
-        
+
         const formData = new FormData();
         formData.append('file', file);
-        
+
         try {
             this.showNotification('Importing project...', 'info');
-            
+
             const response = await fetch('/api/projects/import', {
                 method: 'POST',
                 body: formData
             });
-            
+
             const data = await response.json();
-            
+
             if (data.success) {
                 // Close modal
                 document.querySelector('.modal').remove();
-                
+
                 // Load the imported project
                 await this.loadProject(data.project_id);
-                
+
                 this.showNotification('Project imported successfully!', 'success');
             } else {
                 alert(`Error: ${data.error}`);
@@ -825,7 +828,7 @@ const ProjectManager = {
             alert('Failed to import project');
         }
     },
-    
+
     /**
      * Show notification
      */
@@ -833,13 +836,13 @@ const ProjectManager = {
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
         notification.textContent = message;
-        
+
         document.body.appendChild(notification);
-        
+
         setTimeout(() => {
             notification.classList.add('show');
         }, 10);
-        
+
         setTimeout(() => {
             notification.classList.remove('show');
             setTimeout(() => notification.remove(), 300);

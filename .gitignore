@@ -221,3 +221,6 @@ test_vectorized/*
 
 projects/*
 projects
+
+comparison/*
+comparison

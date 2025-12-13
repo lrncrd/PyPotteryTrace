@@ -44,6 +44,92 @@ class SAM2Handler:
         'large': 'https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt'
     }
     
+    # Approximate model sizes in MB
+    MODEL_SIZES = {
+        'tiny': 40,
+        'small': 180,
+        'base': 230,
+        'large': 900
+    }
+    
+    @staticmethod
+    def get_model_info(model_size: str) -> Dict:
+        """
+        Get information about a model without loading it.
+        
+        Args:
+            model_size: Model size ('tiny', 'small', 'base', 'large')
+            
+        Returns:
+            Dictionary with model info (exists, path, url, size_mb)
+        """
+        if model_size not in SAM2Handler.MODEL_CHECKPOINTS:
+            raise ValueError(f"Invalid model size: {model_size}")
+        
+        url = SAM2Handler.MODEL_CHECKPOINTS[model_size]
+        filename = url.split('/')[-1]
+        models_dir = Path('models')
+        checkpoint_path = models_dir / filename
+        
+        return {
+            'model_size': model_size,
+            'exists': checkpoint_path.exists(),
+            'path': str(checkpoint_path),
+            'url': url,
+            'size_mb': SAM2Handler.MODEL_SIZES[model_size],
+            'filename': filename
+        }
+    
+    @staticmethod
+    def download_with_progress(model_size: str, progress_callback=None) -> str:
+        """
+        Download model checkpoint with progress tracking.
+        
+        Args:
+            model_size: Model size to download
+            progress_callback: Function to call with progress updates
+                              Signature: callback(downloaded_bytes, total_bytes, status)
+            
+        Returns:
+            Path to downloaded checkpoint
+        """
+        if model_size not in SAM2Handler.MODEL_CHECKPOINTS:
+            raise ValueError(f"Invalid model size: {model_size}")
+        
+        url = SAM2Handler.MODEL_CHECKPOINTS[model_size]
+        models_dir = Path('models')
+        models_dir.mkdir(exist_ok=True)
+        
+        filename = url.split('/')[-1]
+        checkpoint_path = models_dir / filename
+        
+        if checkpoint_path.exists():
+            if progress_callback:
+                # File already exists, report 100% immediately
+                file_size = checkpoint_path.stat().st_size
+                progress_callback(file_size, file_size, 'complete')
+            return str(checkpoint_path)
+        
+        # Download with progress
+        import urllib.request
+        
+        def report_hook(block_num, block_size, total_size):
+            if progress_callback:
+                downloaded = block_num * block_size
+                if total_size > 0:
+                    progress_callback(downloaded, total_size, 'downloading')
+        
+        if progress_callback:
+            progress_callback(0, SAM2Handler.MODEL_SIZES[model_size] * 1024 * 1024, 'starting')
+        
+        urllib.request.urlretrieve(url, checkpoint_path, reporthook=report_hook)
+        
+        if progress_callback:
+            file_size = checkpoint_path.stat().st_size
+            progress_callback(file_size, file_size, 'complete')
+        
+        return str(checkpoint_path)
+    
     def __init__(self, model_size: str = 'small', device: str = 'auto'):
         """
         Initialize SAM2 handler.
