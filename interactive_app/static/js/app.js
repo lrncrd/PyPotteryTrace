@@ -69,10 +69,35 @@ class PyPotteryTraceApp {
         });
 
         // Clear rotation center button
-        document.getElementById('clear-rotation-btn').addEventListener('click', () => {
+        document.getElementById('clear-rotation-btn').addEventListener('click', async () => {
             if (window.canvasManager) {
                 window.canvasManager.clearRotationCenter();
                 document.getElementById('rotation-center-info').style.display = 'none';
+
+                // Clear app state
+                this.rotationCenter = null;
+
+                // Call backend to clear session rotation center
+                if (this.sessionId) {
+                    try {
+                        await fetch('/api/clear_rotation_center', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                session_id: this.sessionId
+                            })
+                        });
+                    } catch (error) {
+                        console.error('Error clearing rotation center on backend:', error);
+                    }
+                }
+
+                // Save to project to persist the change
+                await this.saveAnnotationsToProject();
+
+                this.showNotification('Rotation center cleared', 'success');
             }
         });
 

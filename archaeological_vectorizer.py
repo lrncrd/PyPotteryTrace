@@ -145,12 +145,12 @@ def extract_left_side_of_profile(profile_path: np.ndarray, vertical_confidence: 
         return profile_path
     
     # 3. Trova il punto più a SINISTRA (x minimo) sulla retta SUPERIORE
-    #    e il punto più a DESTRA (x massimo) sulla retta INFERIORE (per fondi piatti)
+    #    e il punto più a DESTRA (x massimo) sulla retta INFERIORE (per includere la base piatta)
     top_left_point = top_line_points[np.argmin(top_line_points[:, 1])]
-    bottom_right_point = bottom_line_points[np.argmax(bottom_line_points[:, 1])]  # CAMBIATO: argmax invece di argmin!
+    bottom_right_point = bottom_line_points[np.argmax(bottom_line_points[:, 1])]
     
     print(f"Intersezione superiore (più a sinistra): y={top_left_point[0]:.1f}, x={top_left_point[1]:.1f}")
-    print(f"Intersezione inferiore (più a DESTRA - interno): y={bottom_right_point[0]:.1f}, x={bottom_right_point[1]:.1f}")
+    print(f"Intersezione inferiore (più a destra, per base piatta): y={bottom_right_point[0]:.1f}, x={bottom_right_point[1]:.1f}")
     print(f"Punti nell'area del fondo (entro {tolerance_bottom}px da y={y_bottom:.1f}): {len(bottom_line_points)}")
     
     # 4. Trova gli indici di questi punti nel percorso originale
@@ -174,20 +174,41 @@ def extract_left_side_of_profile(profile_path: np.ndarray, vertical_confidence: 
         bottom_idx = np.argmin(distances)
         print(f"  Punto inferiore approssimato all'indice {bottom_idx}")
     
-    # 5. Estrai la porzione di curva tra i due punti
-    # Assicurati che top_idx < bottom_idx (ordine dall'alto verso il basso)
-    if top_idx > bottom_idx:
-        top_idx, bottom_idx = bottom_idx, top_idx
-        print("  Invertiti gli indici per mantenere l'ordine dall'alto verso il basso")
+    # 5. NUOVO: Estrai ENTRAMBI i percorsi possibili e scegli quello più a SINISTRA
+    # Un poligono chiuso ha due percorsi tra due punti (uno in senso orario, uno antiorario)
+    n = len(profile_path)
     
-    # Estrai la sottosezione del percorso (SENZA chiudere - è solo un lato!)
-    left_side_profile = profile_path[top_idx:bottom_idx+1]
+    if top_idx <= bottom_idx:
+        # Percorso 1: da top_idx a bottom_idx (diretto)
+        path1 = profile_path[top_idx:bottom_idx+1]
+        # Percorso 2: da top_idx a bottom_idx passando per l'altra parte del poligono
+        path2 = np.vstack([profile_path[top_idx::-1], profile_path[-1:bottom_idx:-1]]) if top_idx > 0 else profile_path[::-1][n-1-bottom_idx:]
+    else:
+        # Percorso 1: da top_idx a bottom_idx (passando per la fine dell'array)
+        path1 = np.vstack([profile_path[top_idx:], profile_path[:bottom_idx+1]])
+        # Percorso 2: da top_idx a bottom_idx (diretto all'indietro)
+        path2 = profile_path[bottom_idx:top_idx+1][::-1]
+    
+    # Calcola la coordinata X media di ciascun percorso
+    # Il percorso ESTERNO (sinistro) avrà X media MINORE
+    avg_x_path1 = np.mean(path1[:, 1]) if len(path1) > 0 else float('inf')
+    avg_x_path2 = np.mean(path2[:, 1]) if len(path2) > 0 else float('inf')
+    
+    print(f"  Percorso 1: {len(path1)} punti, X media = {avg_x_path1:.1f}")
+    print(f"  Percorso 2: {len(path2)} punti, X media = {avg_x_path2:.1f}")
+    
+    # Scegli il percorso con X media minore (più a sinistra = esterno)
+    if avg_x_path1 <= avg_x_path2:
+        left_side_profile = path1
+        print(f"  → Scelto Percorso 1 (più a sinistra)")
+    else:
+        left_side_profile = path2
+        print(f"  → Scelto Percorso 2 (più a sinistra)")
     
     print(f"Lato sinistro estratto: {len(left_side_profile)} punti su {len(profile_path)} totali")
-    print(f"  (dall'indice {top_idx} all'indice {bottom_idx})")
-    print(f"  NOTA: Contorno esterno NON chiuso (è solo un lato del profilo)")
+    print(f"  NOTA: Contorno esterno include la base piatta")
     
-    # 6. NUOVO: Rimuovi fratture (segmenti corti che rientrano verso il centro)
+    # 6. Rimuovi fratture (segmenti corti che rientrano verso il centro)
     # Ma mantieni il fondo piatto anche se rientra
     #left_side_profile = remove_fractures_from_profile(left_side_profile, y_bottom, tolerance_bottom)
     
