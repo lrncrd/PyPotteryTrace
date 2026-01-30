@@ -216,11 +216,13 @@ interactive_app/models/*
 test/*
 test_vectorized/*
 .vscode/*
+test
 
 .vscode/*
 
 projects/*
 projects
 
-comparison/*
-comparison
+
+
+files_data

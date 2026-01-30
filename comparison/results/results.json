@@ -1,0 +1,85 @@
+{
+  "generated": "2025-12-11T11:09:09.654892",
+  "results": [
+    {
+      "filename": "0352.svg",
+      "hausdorff_distance": 0.026630505768511413,
+      "frechet_distance": 0.1520733135371347,
+      "mean_point_distance": 0.1665294243872794,
+      "endpoint_error_start": 0.15207331353713413,
+      "endpoint_error_end": 0.1520733135371347,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    },
+    {
+      "filename": "3205.svg",
+      "hausdorff_distance": 0.019661528410821066,
+      "frechet_distance": 0.9054427735978868,
+      "mean_point_distance": 0.6852832635000096,
+      "endpoint_error_start": 0.8833310399970865,
+      "endpoint_error_end": 0.8833310399970873,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    },
+    {
+      "filename": "3213.svg",
+      "hausdorff_distance": 0.02111852577901157,
+      "frechet_distance": 0.995553489290771,
+      "mean_point_distance": 0.6249207286673005,
+      "endpoint_error_start": 0.995553489290771,
+      "endpoint_error_end": 0.9920618035492932,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    },
+    {
+      "filename": "ceramic_001.svg",
+      "hausdorff_distance": 0.012325912610414365,
+      "frechet_distance": 1.3873898953661077,
+      "mean_point_distance": 0.746211585770471,
+      "endpoint_error_start": 1.3873898953661075,
+      "endpoint_error_end": 1.3873898953661077,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    },
+    {
+      "filename": "ceramic_046.svg",
+      "hausdorff_distance": 0.008553732597101205,
+      "frechet_distance": 0.15747853249685081,
+      "mean_point_distance": 0.15119012645190524,
+      "endpoint_error_start": 0.15747853249685081,
+      "endpoint_error_end": 0.15617871582304615,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    },
+    {
+      "filename": "ceramic_066.svg",
+      "hausdorff_distance": 0.025449632793732323,
+      "frechet_distance": 0.21562335210758568,
+      "mean_point_distance": 0.20225720275728473,
+      "endpoint_error_start": 0.21562335210758568,
+      "endpoint_error_end": 0.21561279531349106,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    },
+    {
+      "filename": "ceramic_071.svg",
+      "hausdorff_distance": 0.02112275131804366,
+      "frechet_distance": 1.2057235616980866,
+      "mean_point_distance": 0.7152307854105707,
+      "endpoint_error_start": 1.2057235616980855,
+      "endpoint_error_end": 1.2057235616980866,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    },
+    {
+      "filename": "Montale_109.svg",
+      "hausdorff_distance": 0.013864850427477846,
+      "frechet_distance": 0.0577583920102837,
+      "mean_point_distance": 0.05491250104002772,
+      "endpoint_error_start": 0.056711901612767096,
+      "endpoint_error_end": 0.0577583920102837,
+      "manual_points_count": 200,
+      "trace_points_count": 200
+    }
+  ]
+}
