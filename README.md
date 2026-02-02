@@ -1,6 +1,8 @@
+# PyPotteryTrace
+
 <div align="center">
 
-# PyPotteryTrace
+
 
 <img src="interactive_app/static/LogoTrace.png" width="250"/>
 
@@ -464,101 +466,6 @@ Machine learning compatible format:
 
 ---
 
-## 🔧 Advanced Usage
-
-### API Endpoints (Flask Backend)
-
-The Flask application exposes several REST endpoints:
-
-#### `POST /upload`
-Upload image and create new session.
-
-**Request:**
-```javascript
-FormData: {
-  image: File (JPG, PNG, TIFF, BMP)
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "session_id": "abc123...",
-  "image_path": "/uploads/abc123/original.jpg",
-  "dimensions": {"width": 2000, "height": 1500}
-}
-```
-
-#### `POST /segment`
-Generate segmentation mask using SAM2.
-
-**Request:**
-```json
-{
-  "session_id": "abc123...",
-  "prompts": [
-    {"type": "point", "x": 500, "y": 300, "label": 1},  // positive
-    {"type": "point", "x": 520, "y": 310, "label": 0}   // negative
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "mask": "data:image/png;base64,iVBORw0KGg...",
-  "mask_path": "/uploads/abc123/temp_mask.png"
-}
-```
-
-#### `POST /vectorize`
-Vectorize single element or all elements.
-
-**Request:**
-```json
-{
-  "session_id": "abc123...",
-  "element_id": "elem_001",  // optional, omit for batch
-  "category": "Profile",
-  "rotation_center": {"x": 500, "y": 750},
-  "params": {
-    "epsilon": 2.0,
-    "smoothing_factor": 0.3
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "svg_path": "/uploads/abc123/project_vectorized.svg",
-  "elements_processed": 5
-}
-```
-
-#### `POST /save_project`
-Save complete project state.
-
-**Request:**
-```json
-{
-  "session_id": "abc123...",
-  "project_name": "MyPottery"
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "project_path": "/projects/MyPottery_20251111_123456",
-  "project_id": "MyPottery_20251111_123456"
-}
-```
-
 ### Programmatic Usage (Python)
 
 You can use the vectorization engine programmatically:
@@ -609,43 +516,6 @@ Then update `interactive_app/templates/index.html` category dropdown.
 
 ---
 
-## 🧭 Roadmap
-
-### ✅ Completed Features (v0.1)
-- [x] Flask web application with responsive UI
-- [x] SAM2 integration for AI-powered segmentation
-- [x] Archaeological category system (7 categories)
-- [x] Automatic profile mirroring with construction lines
-- [x] Running_Element category with asymmetric connection logic
-- [x] Project management (save/load sessions)
-- [x] Organized SVG export with layer structure
-- [x] COCO format export for ML workflows
-- [x] Distance-based profile merging algorithm
-- [x] Endpoint extension for visual element connection
-
-### 🚧 In Progress
-- [ ] Enhanced Bézier smoothing for curved decorations
-- [ ] Batch processing multiple images in one session
-- [ ] Undo/redo functionality for segmentation prompts
-
-### 📋 Planned Features
-- [ ] Box prompts for SAM2 (in addition to point prompts)
-- [ ] Custom category creation via UI
-- [ ] SVG layer visibility toggle in preview
-- [ ] Export to DXF format (CAD compatibility)
-- [ ] Decoration pattern recognition algorithms
-- [ ] Multi-profile support (multiple vessels in one image)
-- [ ] Collaborative editing (multi-user sessions)
-- [ ] Docker containerization for easy deployment
-- [ ] Electron desktop app (offline usage)
-
-### 🔬 Research Directions
-- [ ] Automatic rotation center detection (AI-based)
-- [ ] Style transfer for consistent line weights
-- [ ] 3D profile generation from 2D drawings
-- [ ] Integration with archaeological databases
-
----
 
 ## 🤝 Contributing
 
@@ -677,57 +547,6 @@ PyPotteryTrace is open for contributions! Here's how:
 
 ---
 
-## 📨 Contact & Support
-
-### Reporting Issues
-Open an [Issue](https://github.com/lrncrd/PyPotteryTrace/issues) and include:
-- **Input image** characteristics (dimensions, format, DPI)
-- **Steps to reproduce** the problem
-- **Expected vs. actual** behavior
-- **Screenshots/error messages** if applicable
-- **Environment**: OS, Python version, browser
-
-### Feature Requests
-We welcome feature suggestions! Please:
-- Check existing issues to avoid duplicates
-- Describe the use case and expected benefit
-- Include mockups or examples if possible
-
-### Questions & Discussion
-- **Issues tab**: General questions, usage help
-- **Discussions**: Ideas, archaeological workflows, best practices
-
-### Acknowledgments
-- **SAM2**: Meta AI Research ([segment-anything-2](https://github.com/facebookresearch/segment-anything-2))
-- **RDP Algorithm**: Ramer-Douglas-Peucker simplification
-- **OpenCV**: Computer vision library
-- **Flask**: Lightweight web framework
-
----
-
----
-
-## 📄 License
-
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
-
-```
-Copyright 2025 Lorenzo Cardarelli
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
-
----
 
 <div align="center">
 
