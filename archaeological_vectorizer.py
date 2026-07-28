@@ -23,11 +23,28 @@ from skimage.morphology import skeletonize, closing, disk
 from skimage import img_as_ubyte
 from skimage.measure import label
 import svgwrite
-from rdp import rdp
-import matplotlib.pyplot as plt
 import math
 from typing import List, Tuple, Dict, Any, Optional
 from path_tracer import extract_main_paths, visualize_paths
+
+# NumPy >= 2.0 dropped support for 2D vectors in np.cross(), but the `rdp`
+# package relies on it internally (via pldist) to simplify 2D point paths.
+# Restore the old behavior (2D cross returns the scalar z-component) so
+# rdp keeps working without pinning numpy to an older major version.
+if not getattr(np.cross, '_rdp_2d_compat', False):
+    _np_cross_original = np.cross
+
+    def _cross_2d_compat(a, b, *args, **kwargs):
+        a_arr = np.asarray(a)
+        b_arr = np.asarray(b)
+        if not args and not kwargs and a_arr.shape[-1] == 2 and b_arr.shape[-1] == 2:
+            return a_arr[..., 0] * b_arr[..., 1] - a_arr[..., 1] * b_arr[..., 0]
+        return _np_cross_original(a, b, *args, **kwargs)
+
+    _cross_2d_compat._rdp_2d_compat = True
+    np.cross = _cross_2d_compat
+
+from rdp import rdp
 
 
 def close_profile_curve(path: np.ndarray) -> np.ndarray:

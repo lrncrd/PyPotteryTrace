@@ -414,7 +414,7 @@ const ProjectManager = {
                     if (data.images && data.images.length > 0 && window.app) {
                         const firstImage = typeof data.images[0] === 'string' ? data.images[0] : data.images[0].filename;
                         console.log('Auto-loading first image:', firstImage);
-                        await window.app.loadProjectImage(firstImage);
+                        await window.app.loadProjectImage(projectId, firstImage, 0);
                     }
                 }
             }

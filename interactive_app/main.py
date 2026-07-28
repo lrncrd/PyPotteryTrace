@@ -1015,7 +1015,15 @@ def generate_svg_preview():
         print(f"PNG elements: {len(png_elements)}")
         print(f"Output path: {unified_svg_path}")
         print(f"{'='*60}")
-        
+
+        # Widen the canvas to the right if a mirrored profile (or diameter line)
+        # extends past the original image width, instead of letting it get clipped.
+        canvas_width = width
+        max_path_x = vectorization_handler.get_max_path_x(vectorized_elements)
+        if max_path_x > canvas_width:
+            canvas_width = int(max_path_x) + 1 + 20  # round up + small right margin
+            print(f"  ⚠ Mirrored content extends to x={max_path_x:.1f}, widening canvas {width}px → {canvas_width}px")
+
         try:
             vectorization_handler.export_unified_svg(
                 vectorized_elements=vectorized_elements,
@@ -1024,7 +1032,9 @@ def generate_svg_preview():
                 width=width,
                 height=height,
                 include_background=include_background,
-                background_image=session['image_path'] if include_background else None
+                background_image=session['image_path'] if include_background else None,
+                canvas_width=canvas_width,
+                canvas_height=height
             )
             
             # Verify the file was created

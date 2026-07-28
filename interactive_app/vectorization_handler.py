@@ -1546,6 +1546,58 @@ class VectorizationHandler:
         dwg.save()
         print(f"SVG exported to {output_path}")
     
+    def get_max_path_x(self, vectorized_elements: List[Dict[str, Any]]) -> float:
+        """
+        Scan the 'd' path data of all vectorized elements (e.g. mirrored profile,
+        diameter line) and return the largest X coordinate found.
+
+        Used to grow the SVG canvas to the right when a mirrored profile
+        extends past the original image width instead of getting clipped.
+
+        Mirrors the same source-of-truth export_unified_svg() uses: when an
+        element has a readable 'svg_file', that intermediate file is what
+        actually ends up in the final SVG. element['paths'] is used only as
+        a fallback, and its coordinates are comma-free (_fix_path_spacing
+        replaces every ',' with a space), so the regex below matches an
+        "x,y" or "x y" pair rather than requiring a trailing comma.
+        """
+        pattern = re.compile(r'(-?\d+\.?\d*)[,\s](-?\d+\.?\d*)')
+        max_x = 0.0
+
+        def scan(path_data):
+            nonlocal max_x
+            for match in pattern.finditer(path_data or ''):
+                try:
+                    x = float(match.group(1))
+                    if x > max_x:
+                        max_x = x
+                except ValueError:
+                    continue
+
+        ns = {'svg': 'http://www.w3.org/2000/svg'}
+        for element in vectorized_elements:
+            svg_file = element.get('svg_file')
+            paths_from_file = None
+
+            if svg_file and os.path.exists(svg_file):
+                try:
+                    svg_root = ET.parse(svg_file).getroot()
+                    paths_found = svg_root.findall('.//svg:path', ns) or svg_root.findall('.//path')
+                    paths_from_file = [p.get('d', '') for p in paths_found]
+                except Exception:
+                    paths_from_file = None
+
+            if paths_from_file is not None:
+                for path_data in paths_from_file:
+                    scan(path_data)
+            else:
+                for path_data in element.get('paths', []):
+                    if isinstance(path_data, dict):
+                        path_data = path_data.get('d', '')
+                    scan(path_data)
+
+        return max_x
+
     def export_unified_svg(
         self,
         vectorized_elements: List[Dict[str, Any]],
@@ -1554,46 +1606,58 @@ class VectorizationHandler:
         width: int,
         height: int,
         include_background: bool = False,
-        background_image: Optional[str] = None
+        background_image: Optional[str] = None,
+        canvas_width: Optional[int] = None,
+        canvas_height: Optional[int] = None
     ):
         """
         Export a unified SVG with layers containing both vectorized and raster elements.
         Each category becomes a layer that can be toggled in Illustrator.
-        
+
         Args:
             vectorized_elements: List of vectorized elements (with paths)
             raster_elements: List of raster elements (with PNG file paths)
             output_path: Path to save SVG
-            width: SVG width in pixels
-            height: SVG height in pixels
+            width: Original image width in pixels (used to size/place the
+                background image and raster masks, which must not be stretched)
+            height: Original image height in pixels
             include_background: Whether to include background image
             background_image: Path to background image
+            canvas_width: Width of the SVG canvas/viewBox. Defaults to `width`.
+                Pass a larger value (e.g. to fit a mirrored profile) to widen
+                the canvas to the right without resizing the background.
+            canvas_height: Height of the SVG canvas/viewBox. Defaults to `height`.
         """
         import base64
-        
+
+        if canvas_width is None or canvas_width < width:
+            canvas_width = width
+        if canvas_height is None or canvas_height < height:
+            canvas_height = height
+
         # Check if we have any elements to export
         if not vectorized_elements and not raster_elements:
             print("Warning: No elements to export to unified SVG")
             # Create empty SVG anyway
             dwg = svgwrite.Drawing(
-                output_path, 
-                size=(f'{width}px', f'{height}px'),
-                viewBox=f'0 0 {width} {height}',
+                output_path,
+                size=(f'{canvas_width}px', f'{canvas_height}px'),
+                viewBox=f'0 0 {canvas_width} {canvas_height}',
                 profile='full'
             )
             dwg.save()
             return
-        
+
         # Create SVG with BOTH size and viewBox for proper scaling
         dwg = svgwrite.Drawing(
-            output_path, 
-            size=(f'{width}px', f'{height}px'),
-            viewBox=f'0 0 {width} {height}',
+            output_path,
+            size=(f'{canvas_width}px', f'{canvas_height}px'),
+            viewBox=f'0 0 {canvas_width} {canvas_height}',
             profile='full'
         )
-        
+
         print(f"\n{'='*60}")
-        print(f"Creating UNIFIED SVG: {width}x{height}px")
+        print(f"Creating UNIFIED SVG: canvas {canvas_width}x{canvas_height}px (background {width}x{height}px)")
         print(f"Vectorized elements received: {len(vectorized_elements)}")
         for i, elem in enumerate(vectorized_elements):
             print(f"  [{i}] Category: {elem.get('category', 'N/A')}, Name: {elem.get('name', 'N/A')}")
