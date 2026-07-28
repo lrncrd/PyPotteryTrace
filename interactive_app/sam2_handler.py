@@ -9,6 +9,7 @@ Supports:
 - Mask refinement
 """
 
+import os
 import numpy as np
 import torch
 import cv2
@@ -23,6 +24,13 @@ try:
 except ImportError:
     SAM2_AVAILABLE = False
     print("Warning: SAM2 not installed. Please install: pip install git+https://github.com/facebookresearch/segment-anything-2.git")
+
+# Checkpoint storage: shared across the suite when launched by the PyPottery Suite
+# launcher (PYPOTTERY_MODEL_CACHE set, so a checkpoint already downloaded by another
+# app isn't fetched again, and updating this app doesn't wipe it). Standalone (no
+# launcher), self-contained under this app's own "models" folder as before.
+_suite_model_cache = os.environ.get('PYPOTTERY_MODEL_CACHE')
+MODELS_DIR = Path(_suite_model_cache) / "sam2" if _suite_model_cache else Path('models')
 
 
 class SAM2Handler:
@@ -68,7 +76,7 @@ class SAM2Handler:
         
         url = SAM2Handler.MODEL_CHECKPOINTS[model_size]
         filename = url.split('/')[-1]
-        models_dir = Path('models')
+        models_dir = MODELS_DIR
         checkpoint_path = models_dir / filename
         
         return {
@@ -97,8 +105,8 @@ class SAM2Handler:
             raise ValueError(f"Invalid model size: {model_size}")
         
         url = SAM2Handler.MODEL_CHECKPOINTS[model_size]
-        models_dir = Path('models')
-        models_dir.mkdir(exist_ok=True)
+        models_dir = MODELS_DIR
+        models_dir.mkdir(parents=True, exist_ok=True)
         
         filename = url.split('/')[-1]
         checkpoint_path = models_dir / filename
@@ -185,8 +193,8 @@ class SAM2Handler:
         Returns:
             Path to checkpoint file
         """
-        models_dir = Path('models')
-        models_dir.mkdir(exist_ok=True)
+        models_dir = MODELS_DIR
+        models_dir.mkdir(parents=True, exist_ok=True)
         
         filename = url.split('/')[-1]
         checkpoint_path = models_dir / filename

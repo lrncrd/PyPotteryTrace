@@ -28,7 +28,7 @@ import zipfile
 import traceback
 
 # Import SAM2 and processing modules
-from sam2_handler import SAM2Handler
+from sam2_handler import SAM2Handler, MODELS_DIR
 from vectorization_handler import VectorizationHandler
 from ml_export_handler import MLExportHandler
 from project_manager import ProjectManager
@@ -137,8 +137,8 @@ def download_model():
         """Background download function."""
         try:
             url = SAM2Handler.MODEL_CHECKPOINTS[model_size]
-            models_dir = Path('models')
-            models_dir.mkdir(exist_ok=True)
+            models_dir = MODELS_DIR
+            models_dir.mkdir(parents=True, exist_ok=True)
             
             filename = url.split('/')[-1]
             checkpoint_path = models_dir / filename
