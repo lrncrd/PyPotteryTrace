@@ -50,6 +50,20 @@ ml_export_handler = MLExportHandler()
 project_root = Path(__file__).parent.parent / 'projects'
 project_manager = ProjectManager(projects_root=str(project_root))
 
+
+def _read_version(default: str) -> str:
+    """Read the release version from VERSION (bumped automatically by the
+    auto-release GitHub Action on every release), falling back to `default`
+    for local/dev runs where that file doesn't exist yet."""
+    version_file = Path(__file__).resolve().parent.parent / "VERSION"
+    try:
+        return version_file.read_text(encoding="utf-8").strip() or default
+    except OSError:
+        return default
+
+
+VERSION = _read_version("0.1.0")
+
 # Store session data (in production, use Redis or database)
 sessions_data = {}
 
@@ -63,7 +77,7 @@ def allowed_file(filename):
 @app.route('/')
 def index():
     """Main application page."""
-    return render_template('index.html')
+    return render_template('index.html', version=VERSION)
 
 
 @app.route('/api/load_model', methods=['POST'])

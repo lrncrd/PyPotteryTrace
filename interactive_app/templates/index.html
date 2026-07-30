@@ -145,7 +145,7 @@
             width: 90%;
             position: relative;
             transform: scale(0.95);
-            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
         }
 
         .info-modal-overlay.active .info-modal-content {
@@ -393,7 +393,7 @@
             <button class="info-modal-close" id="info-modal-close">&times;</button>
             <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="info-logo">
             <h2 class="info-title">PyPotteryTrace</h2>
-            <span class="info-version">v0.2.0</span>
+            <span class="info-version">v{{ version }}</span>
             <p class="info-author">Created by <strong>Lorenzo Cardarelli</strong></p>
 
             <a href="https://github.com/lrncrd/PyPotteryTrace" target="_blank" class="info-github-link">
@@ -440,7 +440,7 @@
                 <div>
                     <h1 style="margin: 0;">PyPotteryTrace</h1>
                     <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-                        <span class="version-badge">v0.2.0</span>
+                        <span class="version-badge">v{{ version }}</span>
                         <p style="margin: 0; font-size: 0.85rem; opacity: 0.9; font-weight: 400;">
                             AI-powered application for semantic segmentation and vectorization of archaeological pottery
                         </p>
