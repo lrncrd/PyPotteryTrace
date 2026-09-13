@@ -10,9 +10,26 @@ const ProjectManager = {
     /**
      * Initialize project manager
      */
-    init() {
+    async init() {
         this.setupEventListeners();
-        this.loadProjectsList();
+        await this.loadProjectsList();
+
+        // Check if there is an active project in sessionStorage
+        const savedProjectId = sessionStorage.getItem('current_project_id');
+        if (savedProjectId) {
+            console.log('Restoring saved project from session:', savedProjectId);
+            await this.loadProject(savedProjectId);
+        } else {
+            // Ensure project-dependent tabs are disabled when no project is active
+            const segmentationTab = document.getElementById('segmentation-tab-btn');
+            if (segmentationTab) segmentationTab.disabled = true;
+
+            const svgEditorTab = document.getElementById('svg-editor-tab-btn');
+            if (svgEditorTab) svgEditorTab.disabled = true;
+
+            const postprocessTab = document.getElementById('postprocess-tab-btn');
+            if (postprocessTab) postprocessTab.disabled = true;
+        }
     },
 
     /**
@@ -55,6 +72,15 @@ const ProjectManager = {
         const refreshBtn = document.getElementById('refresh-projects-btn');
         if (refreshBtn) {
             refreshBtn.addEventListener('click', () => this.loadProjectsList());
+        }
+
+        // Header project badge click -> navigate to projects tab
+        const projectBadge = document.getElementById('project-info-bar');
+        if (projectBadge) {
+            projectBadge.addEventListener('click', () => {
+                const tabBtn = document.querySelector('.tab-button[data-tab="projects-tab"]');
+                if (tabBtn) tabBtn.click();
+            });
         }
 
         // Icon selector
@@ -336,10 +362,14 @@ const ProjectManager = {
             // Load project images into segmentation tab grid
             await this.loadProjectImages(projectId);
 
-            // Enable segmentation tab
+            // Enable segmentation and post-processing tabs
             const segmentationTab = document.getElementById('segmentation-tab-btn');
             if (segmentationTab) {
                 segmentationTab.disabled = false;
+            }
+            const postprocessTab = document.getElementById('postprocess-tab-btn');
+            if (postprocessTab) {
+                postprocessTab.disabled = false;
             }
 
             // Switch to Setup tab to show loaded images
@@ -361,10 +391,11 @@ const ProjectManager = {
     updateProjectUI() {
         if (!this.currentProject) return;
 
-        // Show project info bar
+        // Show project info bar as active header badge
         const infoBar = document.getElementById('project-info-bar');
         if (infoBar) {
-            infoBar.style.display = 'flex';
+            infoBar.classList.add('has-project');
+            infoBar.style.display = 'inline-flex';
         }
 
         // Update project name and icon
@@ -377,7 +408,7 @@ const ProjectManager = {
         if (projectIconEl) {
             // Get icon path (icon1 -> imgs/icons/1.png)
             const iconPath = this.getIconPath(this.currentProject.icon || 'icon1');
-            projectIconEl.innerHTML = `<img src="${iconPath}" alt="Project Icon" style="width: 100%; height: 100%; object-fit: contain;">`;
+            projectIconEl.innerHTML = `<img src="${iconPath}" alt="Project Icon" style="width: 20px; height: 20px; max-width: 20px; max-height: 20px; object-fit: contain; display: block;">`;
         }
 
         // Store in session
@@ -426,24 +457,59 @@ const ProjectManager = {
     /**
      * Close current project
      */
-    closeCurrentProject() {
-        if (confirm('Close current project?')) {
-            this.currentProject = null;
-            sessionStorage.removeItem('current_project_id');
+    async closeCurrentProject() {
+        const confirmFn = window.showConfirmDialog || showConfirmDialog;
+        const confirmed = await confirmFn({
+            title: 'Close Project',
+            subtitle: 'Are you sure you want to close the currently active project?',
+            confirmText: 'Close Project',
+            cancelText: 'Cancel',
+            confirmClass: 'btn-secondary',
+            icon: 'bi-folder-x',
+            iconColor: 'var(--text-dim)',
+            iconBg: 'var(--bg-surface)'
+        });
 
-            // Update UI
-            const projectNameEl = document.getElementById('current-project-name');
-            if (projectNameEl) {
-                projectNameEl.textContent = 'No project loaded';
-            }
-
-            const projectControls = document.getElementById('project-controls');
-            if (projectControls) {
-                projectControls.style.display = 'none';
-            }
-
-            this.showNotification('Project closed', 'info');
+        if (!confirmed) {
+            return;
         }
+
+        this.currentProject = null;
+        sessionStorage.removeItem('current_project_id');
+        sessionStorage.removeItem('current_project_name');
+
+        // Update UI
+        const infoBar = document.getElementById('project-info-bar');
+        if (infoBar) {
+            infoBar.classList.remove('has-project');
+        }
+
+        const projectNameEl = document.getElementById('current-project-name');
+        if (projectNameEl) {
+            projectNameEl.textContent = 'No project selected';
+        }
+
+        const projectIconEl = document.getElementById('project-icon');
+        if (projectIconEl) {
+            projectIconEl.innerHTML = '<i class="bi bi-folder2-open"></i>';
+        }
+
+        // Disable project-dependent tabs
+        const segmentationTab = document.getElementById('segmentation-tab-btn');
+        if (segmentationTab) segmentationTab.disabled = true;
+
+        const svgEditorTab = document.getElementById('svg-editor-tab-btn');
+        if (svgEditorTab) svgEditorTab.disabled = true;
+
+        const postprocessTab = document.getElementById('postprocess-tab-btn');
+        if (postprocessTab) postprocessTab.disabled = true;
+
+        // Switch back to projects tab
+        if (window.tabManager && window.tabManager.switchTab) {
+            window.tabManager.switchTab('projects-tab');
+        }
+
+        this.showNotification('Project closed', 'info');
     },
 
     /**
@@ -520,7 +586,36 @@ const ProjectManager = {
      * Delete a project
      */
     async deleteProject(projectId) {
-        if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+        let projName = '';
+        if (this.currentProject && this.currentProject.project_id === projectId) {
+            projName = this.currentProject.project_name;
+        } else {
+            const card = document.querySelector(`.project-card[onclick*="${projectId}"] h3`);
+            if (card) projName = card.textContent.trim();
+        }
+
+        const subtitle = projName
+            ? `Are you sure you want to delete project <strong>"${projName}"</strong>?`
+            : 'Are you sure you want to delete this project?';
+
+        const confirmFn = window.showConfirmDialog || showConfirmDialog;
+        const confirmed = await confirmFn({
+            title: 'Delete Project',
+            subtitle: subtitle,
+            detailsLabel: 'This action will permanently delete:',
+            details: [
+                'All project drawings and uploaded images',
+                'All segmentation masks and point prompts',
+                'All generated SVG vectors and exported files'
+            ],
+            note: 'This action is IRREVERSIBLE and cannot be undone!',
+            confirmText: 'Delete Project',
+            cancelText: 'Cancel',
+            confirmClass: 'btn-danger',
+            icon: 'bi-trash3-fill'
+        });
+
+        if (!confirmed) {
             return;
         }
 
@@ -532,6 +627,35 @@ const ProjectManager = {
             const data = await response.json();
 
             if (data.success) {
+                // If deleted project was currently active, reset header pill
+                if (this.currentProject && this.currentProject.project_id === projectId) {
+                    this.currentProject = null;
+                    sessionStorage.removeItem('current_project_id');
+                    sessionStorage.removeItem('current_project_name');
+
+                    const infoBar = document.getElementById('project-info-bar');
+                    if (infoBar) infoBar.classList.remove('has-project');
+
+                    const projectNameEl = document.getElementById('current-project-name');
+                    if (projectNameEl) projectNameEl.textContent = 'No project selected';
+
+                    const projectIconEl = document.getElementById('project-icon');
+                    if (projectIconEl) projectIconEl.innerHTML = '<i class="bi bi-folder2-open"></i>';
+
+                    const segmentationTab = document.getElementById('segmentation-tab-btn');
+                    if (segmentationTab) segmentationTab.disabled = true;
+
+                    const svgEditorTab = document.getElementById('svg-editor-tab-btn');
+                    if (svgEditorTab) svgEditorTab.disabled = true;
+
+                    const postprocessTab = document.getElementById('postprocess-tab-btn');
+                    if (postprocessTab) postprocessTab.disabled = true;
+
+                    if (window.tabManager && window.tabManager.switchTab) {
+                        window.tabManager.switchTab('projects-tab');
+                    }
+                }
+
                 // Close modal if open
                 const modal = document.querySelector('.modal');
                 if (modal) modal.remove();
@@ -542,11 +666,11 @@ const ProjectManager = {
                 // Show notification
                 this.showNotification('Project deleted successfully', 'success');
             } else {
-                alert(`Error: ${data.error}`);
+                this.showNotification(`Error: ${data.error}`, 'error');
             }
         } catch (error) {
             console.error('Error deleting project:', error);
-            alert('Failed to delete project');
+            this.showNotification('Failed to delete project', 'error');
         }
     },
 
@@ -688,11 +812,11 @@ const ProjectManager = {
         if (projects.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-state-icon">📁</div>
+                    <div class="empty-state-icon"><i class="bi bi-folder2-open"></i></div>
                     <h3>No Projects Yet</h3>
                     <p>Create your first project to start analyzing pottery images</p>
                     <button class="btn btn-primary" onclick="ProjectManager.showCreateModal()">
-                        ➕ Create Your First Project
+                        <i class="bi bi-plus-lg"></i> Create Your First Project
                     </button>
                 </div>
             `;
@@ -744,7 +868,7 @@ const ProjectManager = {
                 
                 <div class="project-card-actions" onclick="event.stopPropagation()">
                     <button class="btn btn-sm btn-danger" onclick="ProjectManager.deleteProject('${project.project_id}')">
-                        🗑️ Delete
+                        <i class="bi bi-trash"></i> Delete
                     </button>
                 </div>
             </div>
@@ -854,3 +978,6 @@ const ProjectManager = {
 document.addEventListener('DOMContentLoaded', () => {
     ProjectManager.init();
 });
+
+// Explicitly expose ProjectManager globally
+window.ProjectManager = ProjectManager;

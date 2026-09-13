@@ -145,6 +145,14 @@ const ImageGrid = {
     async selectImage(index) {
         if (index < 0 || index >= this.images.length) return;
         
+        // GUARD: Block switching images if mask is in edit mode
+        if (window.segmentationManager && window.segmentationManager.isEditingPolygon) {
+            if (window.app) {
+                window.app.showNotification('Please finish or cancel mask editing before selecting another image', 'warning');
+            }
+            return;
+        }
+
         this.currentIndex = index;
         const image = this.images[index];
         
@@ -232,6 +240,11 @@ const ImageGrid = {
         
         // Update project metadata
         await this.updateProjectMetadata();
+
+        // Update Setup tab preview checkmark if present
+        if (window.tabManager && typeof window.tabManager.markImageAsVectorized === 'function') {
+            window.tabManager.markImageAsVectorized(image.filename);
+        }
     },
     
     /**

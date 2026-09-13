@@ -73,7 +73,7 @@ class SVGDisplay {
     showMessage(message) {
         this.container.innerHTML = `
             <div class="loading-message">
-                <span class="message-icon">🎨</span>
+                <span class="message-icon"><i class="bi bi-file-earmark-code" style="font-size: 2.5rem; color: var(--primary);"></i></span>
                 <p>${message}</p>
             </div>
         `;

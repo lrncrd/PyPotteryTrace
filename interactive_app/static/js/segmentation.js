@@ -42,20 +42,21 @@ class SegmentationManager {
     }
     
     setupPolygonEditControls() {
-        // Simplification slider
+        // Simplification slider - live real-time interaction
         const simplifySlider = document.getElementById('simplify-slider');
         const simplifyValue = document.getElementById('simplify-value');
         if (simplifySlider && simplifyValue) {
             simplifySlider.addEventListener('input', (e) => {
                 simplifyValue.textContent = e.target.value;
+                this.applySimplification(true);  // true = live mode, no toast spam
             });
         }
         
-        // Apply simplification button
-        const applySimplifyBtn = document.getElementById('apply-simplify-btn');
-        if (applySimplifyBtn) {
-            applySimplifyBtn.addEventListener('click', () => {
-                this.applySimplification();
+        // Cancel editing button
+        const cancelEditBtn = document.getElementById('cancel-edit-btn');
+        if (cancelEditBtn) {
+            cancelEditBtn.addEventListener('click', () => {
+                this.cancelEditing();
             });
         }
         
@@ -68,7 +69,7 @@ class SegmentationManager {
         }
     }
     
-    applySimplification() {
+    applySimplification(isLive = false) {
         const slider = document.getElementById('simplify-slider');
         const epsilon = slider ? parseFloat(slider.value) : 15.0;
         
@@ -76,7 +77,7 @@ class SegmentationManager {
         const sourceContour = this.originalContour || this.polygonVertices;
         
         if (!sourceContour || sourceContour.length < 4) {
-            if (window.app) {
+            if (!isLive && window.app) {
                 window.app.showNotification('Not enough vertices to simplify (need at least 4)', 'warning');
             }
             return;
@@ -98,7 +99,7 @@ class SegmentationManager {
         
         // Ensure we have at least 3 vertices
         if (simplified.length < 3) {
-            if (window.app) {
+            if (!isLive && window.app) {
                 window.app.showNotification('Simplification too aggressive - would result in less than 3 vertices', 'warning');
             }
             return;
@@ -108,7 +109,7 @@ class SegmentationManager {
         this.previewContours = [this.polygonVertices.slice()];  // Update preview contours too
         this.updatePolygonControls();
         
-        if (window.app) {
+        if (!isLive && window.app) {
             window.app.showNotification(`Simplified: ${originalCount} → ${this.polygonVertices.length} vertices (ε=${epsilon})`, 'info');
         }
         
@@ -139,8 +140,10 @@ class SegmentationManager {
             }
         }
         
-        // SAVE the original contour for re-simplification later
+        // SAVE the original contour and mask for cancel/revert
         this.originalContour = largestContour.map(p => [p[0], p[1]]);
+        this.backupPreviewContours = this.previewContours ? this.previewContours.map(c => c.map(p => [p[0], p[1]])) : null;
+        this.backupCurrentMask = this.currentMask;
         
         // Get simplification value from slider (or use default)
         // Use HIGH epsilon by default = very few vertices (better to add than remove)
@@ -266,6 +269,40 @@ class SegmentationManager {
         return Math.sqrt((point[0] - nearestX) ** 2 + (point[1] - nearestY) ** 2);
     }
     
+    setEditModeLock(locked) {
+        // 1. Add Segment, Edit Mask, Clear Preview buttons in sidebar
+        const addSegBtn = document.getElementById('add-segment-btn');
+        if (addSegBtn) addSegBtn.disabled = locked ? true : (!this.previewContours);
+        
+        const editMaskBtn = document.getElementById('edit-mask-btn');
+        if (editMaskBtn) editMaskBtn.disabled = locked ? true : (!this.previewContours);
+        
+        const clearPreviewBtn = document.getElementById('clear-preview-btn');
+        if (clearPreviewBtn) clearPreviewBtn.disabled = locked ? true : (!this.previewContours);
+
+        // 2. Mode buttons in sidebar (Point, Box, Rotation Center)
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            if (btn.dataset.mode !== 'polygon') {
+                btn.disabled = locked;
+                btn.classList.toggle('disabled-by-edit', locked);
+            }
+        });
+
+        // 3. Tab buttons at top
+        document.querySelectorAll('.tab-button').forEach(btn => {
+            if (btn.dataset.tab !== 'segmentation-tab') {
+                btn.style.opacity = locked ? '0.5' : '';
+            }
+        });
+
+        // 4. Bottom image navigation grid
+        const imageGridContainer = document.getElementById('image-navigation-grid');
+        if (imageGridContainer) {
+            imageGridContainer.style.opacity = locked ? '0.45' : '';
+            imageGridContainer.style.pointerEvents = locked ? 'none' : '';
+        }
+    }
+
     enterEditMode() {
         this.isEditingPolygon = true;
         
@@ -293,8 +330,51 @@ class SegmentationManager {
         if (window.app) {
             window.app.setMode('polygon');
         }
+
+        // Apply editing locks so user is not stuck in a limbo
+        this.setEditModeLock(true);
     }
     
+    cancelEditing() {
+        if (!this.isEditingPolygon) return;
+        
+        console.log('Canceling polygon editing, reverting to original mask/contours');
+        this.isEditingPolygon = false;
+        
+        // Restore backup preview contours and mask
+        if (this.backupPreviewContours) {
+            this.previewContours = this.backupPreviewContours.map(c => c.slice());
+        }
+        if (this.backupCurrentMask) {
+            this.currentMask = this.backupCurrentMask;
+        }
+        if (this.originalContour) {
+            this.polygonVertices = this.originalContour.map(p => [p[0], p[1]]);
+        }
+        
+        // Hide edit controls, show draw controls
+        const drawControls = document.getElementById('polygon-draw-controls');
+        const editControls = document.getElementById('polygon-edit-controls');
+        const instructions = document.getElementById('polygon-mode-instructions');
+        
+        if (drawControls) drawControls.style.display = 'block';
+        if (editControls) editControls.style.display = 'none';
+        if (instructions) {
+            instructions.textContent = 'Click to add vertices. Double-click or press Enter to close polygon.';
+        }
+        
+        // Release editing lock
+        this.setEditModeLock(false);
+        
+        if (window.app) {
+            window.app.showNotification('Mask editing canceled. Reverted to previous shape.', 'info');
+        }
+        
+        if (window.canvasManager) {
+            window.canvasManager.redraw();
+        }
+    }
+
     finishEditing() {
         this.isEditingPolygon = false;
         
@@ -313,12 +393,19 @@ class SegmentationManager {
             instructions.textContent = 'Click to add vertices. Double-click or press Enter to close polygon.';
         }
         
+        // Release editing lock
+        this.setEditModeLock(false);
+        
         // Enable add segment button
-        document.getElementById('add-segment-btn').disabled = false;
-        document.getElementById('edit-mask-btn').disabled = false;
+        const addSegBtn = document.getElementById('add-segment-btn');
+        if (addSegBtn) addSegBtn.disabled = false;
+        const editMaskBtn = document.getElementById('edit-mask-btn');
+        if (editMaskBtn) editMaskBtn.disabled = false;
+        const clearPreviewBtn = document.getElementById('clear-preview-btn');
+        if (clearPreviewBtn) clearPreviewBtn.disabled = false;
         
         if (window.app) {
-            window.app.showNotification('Polygon editing complete!', 'success');
+            window.app.showNotification('Polygon editing complete! Click "Add Segment" to confirm.', 'success');
         }
         
         if (window.canvasManager) {
@@ -448,8 +535,19 @@ class SegmentationManager {
             });
         }
         
-        // Keyboard shortcut to close polygon
+        // Keyboard shortcut to close polygon or finish/cancel edit
         document.addEventListener('keydown', (e) => {
+            if (this.isEditingPolygon) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.finishEditing();
+                    return;
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    this.cancelEditing();
+                    return;
+                }
+            }
             if (window.app && window.app.currentMode === 'polygon') {
                 if (e.key === 'Enter' && this.polygonVertices.length >= 3) {
                     this.closePolygon();
@@ -550,6 +648,23 @@ class SegmentationManager {
                 this.boxEnd = coords;
                 this.drawBoxPreview();
             }
+
+            // Polygon live drawing preview with closing edge
+            if (window.app && window.app.currentMode === 'polygon' && !this.isEditingPolygon && !this.isPolygonClosed && this.polygonVertices.length > 0) {
+                this.currentMousePos = coords;
+                window.canvasManager.redraw();
+            }
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            if (this.currentMousePos) {
+                this.currentMousePos = null;
+                const canvasEl = document.getElementById('main-canvas');
+                if (canvasEl) canvasEl.style.cursor = '';
+                if (window.canvasManager) {
+                    window.canvasManager.redraw();
+                }
+            }
         });
         
         canvas.addEventListener('mouseup', (e) => {
@@ -622,6 +737,14 @@ class SegmentationManager {
             if (this.isEditingPolygon) return;  // Don't close in edit mode
             if (this.polygonVertices.length >= 3) {
                 e.preventDefault();
+                // If double click added a duplicate vertex at the same location, remove it
+                if (this.polygonVertices.length >= 4) {
+                    const last = this.polygonVertices[this.polygonVertices.length - 1];
+                    const prev = this.polygonVertices[this.polygonVertices.length - 2];
+                    if (Math.hypot(last[0] - prev[0], last[1] - prev[1]) < 8) {
+                        this.polygonVertices.pop();
+                    }
+                }
                 this.closePolygon();
             }
         });
@@ -631,6 +754,18 @@ class SegmentationManager {
         if (this.isPolygonClosed) {
             // Reset if polygon was already closed
             this.clearPolygon();
+        }
+
+        // Check if clicking near the start vertex to close the polygon
+        if (this.polygonVertices.length >= 3 && window.canvasManager) {
+            const [startX, startY] = this.polygonVertices[0];
+            const scale = window.canvasManager.scale;
+            const dist = Math.hypot(x - startX, y - startY) * scale;
+            if (dist <= 18) {
+                console.log('Clicked near start vertex, closing polygon');
+                this.closePolygon();
+                return;
+            }
         }
         
         this.polygonVertices.push([x, y]);
@@ -642,7 +777,6 @@ class SegmentationManager {
         // Redraw canvas to show polygon
         if (window.canvasManager) {
             window.canvasManager.redraw();
-            this.drawPolygonPreview();
         }
     }
     
@@ -658,6 +792,9 @@ class SegmentationManager {
         
         this.isPolygonClosed = true;
         this.isManualMask = true;  // This is a manual mask
+        this.currentMousePos = null;
+        const canvasEl = document.getElementById('main-canvas');
+        if (canvasEl) canvasEl.style.cursor = '';
         
         // Convert polygon to contours format for display
         this.previewContours = [this.polygonVertices.slice()];  // Clone the vertices
@@ -695,6 +832,9 @@ class SegmentationManager {
         this.polygonVertices = [];
         this.isPolygonClosed = false;
         this.isManualMask = false;
+        this.currentMousePos = null;
+        const canvasEl = document.getElementById('main-canvas');
+        if (canvasEl) canvasEl.style.cursor = '';
         
         // Update buttons and counter
         this.updatePolygonControls();
@@ -720,82 +860,238 @@ class SegmentationManager {
         const scale = window.canvasManager.scale;
         const offsetX = window.canvasManager.offsetX;
         const offsetY = window.canvasManager.offsetY;
+        const canvasEl = document.getElementById('main-canvas');
         
         ctx.save();
         
         // Different style for edit mode
         const isEditing = this.isEditingPolygon;
         
-        // Draw polygon lines
-        ctx.strokeStyle = isEditing ? '#00aaff' : (this.isPolygonClosed ? '#00ff00' : '#ffff00');
-        ctx.lineWidth = isEditing ? 2.5 : 2;
-        ctx.setLineDash(this.isPolygonClosed ? [] : [5, 5]);
-        
-        ctx.beginPath();
-        
-        for (let i = 0; i < this.polygonVertices.length; i++) {
-            const [x, y] = this.polygonVertices[i];
-            const canvasX = x * scale + offsetX;
-            const canvasY = y * scale + offsetY;
-            
-            if (i === 0) {
-                ctx.moveTo(canvasX, canvasY);
-            } else {
-                ctx.lineTo(canvasX, canvasY);
-            }
-        }
-        
-        // Close path if polygon is closed
-        if (this.isPolygonClosed && this.polygonVertices.length > 2) {
-            ctx.closePath();
-            ctx.fillStyle = isEditing ? 'rgba(0, 170, 255, 0.15)' : 'rgba(0, 255, 0, 0.2)';
-            ctx.fill();
-        }
-        
-        ctx.stroke();
-        
-        // Draw vertices
-        for (let i = 0; i < this.polygonVertices.length; i++) {
-            const [x, y] = this.polygonVertices[i];
-            const canvasX = x * scale + offsetX;
-            const canvasY = y * scale + offsetY;
-            
-            const isSelected = (i === this.selectedVertexIndex);
-            const vertexRadius = isEditing ? 8 : 6;
+        if (isEditing || this.isPolygonClosed) {
+            // Draw polygon lines
+            ctx.strokeStyle = isEditing ? '#00aaff' : '#00ff00';
+            ctx.lineWidth = isEditing ? 2.5 : 2;
+            ctx.setLineDash(this.isPolygonClosed ? [] : [5, 5]);
             
             ctx.beginPath();
-            ctx.arc(canvasX, canvasY, vertexRadius, 0, 2 * Math.PI);
             
-            // Vertex colors
-            if (isSelected) {
-                ctx.fillStyle = '#ff0000';  // Selected vertex is red
-            } else if (isEditing) {
-                ctx.fillStyle = '#00aaff';  // Edit mode vertices are blue
-            } else if (i === 0) {
-                ctx.fillStyle = '#ff6b6b';  // First vertex is light red
-            } else {
-                ctx.fillStyle = '#ffffff';  // Other vertices are white
+            for (let i = 0; i < this.polygonVertices.length; i++) {
+                const [x, y] = this.polygonVertices[i];
+                const canvasX = x * scale + offsetX;
+                const canvasY = y * scale + offsetY;
+                
+                if (i === 0) {
+                    ctx.moveTo(canvasX, canvasY);
+                } else {
+                    ctx.lineTo(canvasX, canvasY);
+                }
             }
             
-            ctx.fill();
-            ctx.strokeStyle = isSelected ? '#ffffff' : '#000000';
-            ctx.lineWidth = isSelected ? 2 : 1;
-            ctx.setLineDash([]);
+            // Close path if polygon is closed
+            if (this.isPolygonClosed && this.polygonVertices.length > 2) {
+                ctx.closePath();
+                ctx.fillStyle = isEditing ? 'rgba(0, 170, 255, 0.15)' : 'rgba(0, 255, 0, 0.2)';
+                ctx.fill();
+            }
+            
             ctx.stroke();
             
-            // Draw vertex number (only in draw mode or if few vertices)
-            if (!isEditing || this.polygonVertices.length <= 20) {
-                ctx.fillStyle = '#000000';
-                ctx.font = isEditing ? 'bold 10px Arial' : '10px Arial';
-                ctx.fillText((i + 1).toString(), canvasX + 10, canvasY - 10);
+            // Draw vertices
+            for (let i = 0; i < this.polygonVertices.length; i++) {
+                const [x, y] = this.polygonVertices[i];
+                const canvasX = x * scale + offsetX;
+                const canvasY = y * scale + offsetY;
+                
+                const isSelected = (i === this.selectedVertexIndex);
+                const vertexRadius = isEditing ? 8 : 6;
+                
+                ctx.beginPath();
+                ctx.arc(canvasX, canvasY, vertexRadius, 0, 2 * Math.PI);
+                
+                // Vertex colors
+                if (isSelected) {
+                    ctx.fillStyle = '#ff0000';  // Selected vertex is red
+                } else if (isEditing) {
+                    ctx.fillStyle = '#00aaff';  // Edit mode vertices are blue
+                } else if (i === 0) {
+                    ctx.fillStyle = '#ff6b6b';  // First vertex is light red
+                } else {
+                    ctx.fillStyle = '#ffffff';  // Other vertices are white
+                }
+                
+                ctx.fill();
+                ctx.strokeStyle = isSelected ? '#ffffff' : '#000000';
+                ctx.lineWidth = isSelected ? 2 : 1;
+                ctx.setLineDash([]);
+                ctx.stroke();
+                
+                // Draw vertex number (only in draw mode or if few vertices)
+                if (!isEditing || this.polygonVertices.length <= 20) {
+                    ctx.fillStyle = '#000000';
+                    ctx.font = isEditing ? 'bold 10px Arial' : '10px Arial';
+                    ctx.fillText((i + 1).toString(), canvasX + 10, canvasY - 10);
+                }
             }
-        }
-        
-        // In edit mode, draw hint for adding points on edges
-        if (isEditing && this.polygonVertices.length >= 3) {
-            ctx.fillStyle = 'rgba(0, 170, 255, 0.7)';
-            ctx.font = '11px Arial';
-            // Don't draw text hint on canvas - it's in the UI
+        } else {
+            // ========================================================
+            // DRAWING MODE: Show live closing preview (>= 2 points)
+            // ========================================================
+            const startP = this.polygonVertices[0];
+            const startCanvasX = startP[0] * scale + offsetX;
+            const startCanvasY = startP[1] * scale + offsetY;
+            
+            let isNearStart = false;
+            let mouseCanvasX = null;
+            let mouseCanvasY = null;
+            
+            if (this.currentMousePos) {
+                mouseCanvasX = this.currentMousePos.x * scale + offsetX;
+                mouseCanvasY = this.currentMousePos.y * scale + offsetY;
+                if (this.polygonVertices.length >= 3) {
+                    const distToStart = Math.hypot(mouseCanvasX - startCanvasX, mouseCanvasY - startCanvasY);
+                    if (distToStart <= 18) {
+                        isNearStart = true;
+                        mouseCanvasX = startCanvasX;
+                        mouseCanvasY = startCanvasY;
+                    }
+                }
+            }
+            
+            if (canvasEl) {
+                canvasEl.style.cursor = isNearStart ? 'pointer' : 'crosshair';
+            }
+
+            // 1. Semi-transparent fill of the preview polygon
+            const previewVertices = this.polygonVertices.map(p => [p[0] * scale + offsetX, p[1] * scale + offsetY]);
+            if (mouseCanvasX !== null && mouseCanvasY !== null && !isNearStart) {
+                previewVertices.push([mouseCanvasX, mouseCanvasY]);
+            }
+            
+            if (previewVertices.length >= 3) {
+                ctx.beginPath();
+                ctx.moveTo(previewVertices[0][0], previewVertices[0][1]);
+                for (let i = 1; i < previewVertices.length; i++) {
+                    ctx.lineTo(previewVertices[i][0], previewVertices[i][1]);
+                }
+                ctx.closePath();
+                ctx.fillStyle = isNearStart ? 'rgba(13, 148, 136, 0.18)' : 'rgba(194, 65, 12, 0.12)';
+                ctx.fill();
+            }
+
+            // 2. Placed solid edges between existing vertices
+            ctx.beginPath();
+            ctx.setLineDash([]);
+            ctx.strokeStyle = '#c2410c';  // Terracotta Primary
+            ctx.lineWidth = 2.5;
+            for (let i = 0; i < this.polygonVertices.length; i++) {
+                const [x, y] = this.polygonVertices[i];
+                const canvasX = x * scale + offsetX;
+                const canvasY = y * scale + offsetY;
+                if (i === 0) ctx.moveTo(canvasX, canvasY);
+                else ctx.lineTo(canvasX, canvasY);
+            }
+            ctx.stroke();
+
+            // 3. Floating edge from last placed vertex to cursor
+            const lastP = this.polygonVertices[this.polygonVertices.length - 1];
+            const lastCanvasX = lastP[0] * scale + offsetX;
+            const lastCanvasY = lastP[1] * scale + offsetY;
+            
+            if (mouseCanvasX !== null && mouseCanvasY !== null && !isNearStart) {
+                ctx.beginPath();
+                ctx.setLineDash([5, 4]);
+                ctx.strokeStyle = '#ea580c';
+                ctx.lineWidth = 2;
+                ctx.moveTo(lastCanvasX, lastCanvasY);
+                ctx.lineTo(mouseCanvasX, mouseCanvasY);
+                ctx.stroke();
+            }
+
+            // 4. CLOSING PREVIEW LINE (Shows how polygon will close back to P0!)
+            if (this.polygonVertices.length >= 2) {
+                ctx.beginPath();
+                ctx.setLineDash([4, 4]);
+                ctx.strokeStyle = isNearStart ? '#0d9488' : 'rgba(13, 148, 136, 0.9)';  // Mediterranean Teal
+                ctx.lineWidth = isNearStart ? 2.5 : 2;
+                
+                if (mouseCanvasX !== null && mouseCanvasY !== null && !isNearStart) {
+                    ctx.moveTo(mouseCanvasX, mouseCanvasY);
+                    ctx.lineTo(startCanvasX, startCanvasY);
+                } else {
+                    ctx.moveTo(lastCanvasX, lastCanvasY);
+                    ctx.lineTo(startCanvasX, startCanvasY);
+                }
+                ctx.stroke();
+            }
+
+            // 5. Draw mouse cursor preview point if active
+            if (mouseCanvasX !== null && mouseCanvasY !== null && !isNearStart) {
+                ctx.beginPath();
+                ctx.arc(mouseCanvasX, mouseCanvasY, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = '#ea580c';
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+            }
+
+            // 6. Draw vertices
+            for (let i = 0; i < this.polygonVertices.length; i++) {
+                const [x, y] = this.polygonVertices[i];
+                const canvasX = x * scale + offsetX;
+                const canvasY = y * scale + offsetY;
+                
+                ctx.beginPath();
+                if (i === 0) {
+                    // Distinct start vertex
+                    ctx.arc(canvasX, canvasY, 7, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#c2410c';  // Terracotta
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    // If near start, draw glowing teal snap ring and tooltip
+                    if (isNearStart) {
+                        ctx.beginPath();
+                        ctx.arc(canvasX, canvasY, 14, 0, 2 * Math.PI);
+                        ctx.strokeStyle = '#0d9488';
+                        ctx.lineWidth = 2.5;
+                        ctx.stroke();
+
+                        // Tooltip badge
+                        ctx.fillStyle = '#1c1917';
+                        const text = 'Click to close';
+                        ctx.font = 'bold 11px system-ui, sans-serif';
+                        const textWidth = ctx.measureText(text).width;
+                        const badgeX = canvasX + 12;
+                        const badgeY = canvasY - 14;
+                        ctx.beginPath();
+                        if (ctx.roundRect) {
+                            ctx.roundRect(badgeX, badgeY - 14, textWidth + 12, 20, 4);
+                        } else {
+                            ctx.rect(badgeX, badgeY - 14, textWidth + 12, 20);
+                        }
+                        ctx.fill();
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillText(text, badgeX + 6, badgeY);
+                    }
+                } else {
+                    ctx.arc(canvasX, canvasY, 5, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fill();
+                    ctx.strokeStyle = '#1c1917';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                }
+
+                // Vertex number
+                if (this.polygonVertices.length <= 25 && !isNearStart) {
+                    ctx.fillStyle = '#1c1917';
+                    ctx.font = 'bold 10px system-ui, sans-serif';
+                    ctx.fillText((i + 1).toString(), canvasX + 9, canvasY - 8);
+                }
+            }
         }
         
         ctx.restore();

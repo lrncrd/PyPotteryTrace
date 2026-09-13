@@ -246,6 +246,7 @@ class VectorizationHandler:
         name: str,
         epsilon: float = 1.5,
         smoothing_factor: float = 0.3,
+        lines_threshold: int = 100,
         debug_svg_dir: Optional[str] = None  # NEW: save intermediate SVG for debugging
     ) -> Dict[str, Any]:
         """
@@ -263,6 +264,7 @@ class VectorizationHandler:
             name: Element name
             epsilon: RDP simplification parameter
             smoothing_factor: Bezier smoothing factor
+            lines_threshold: Binarization threshold for lines
             debug_svg_dir: Directory to save intermediate SVG files for debugging
             
         Returns:
@@ -282,7 +284,7 @@ class VectorizationHandler:
         try:
             # Use the complete vectorize_archaeological_drawing function
             # directly on the saved PNG (like in the notebook!)
-            print(f"  → Vectorizing from PNG: {Path(png_path).name}")
+            print(f"  → Vectorizing from PNG: {Path(png_path).name} (lines_threshold: {lines_threshold})")
             
             # Determine if we should use extract_profile_mode for Profile category
             is_profile_mode = (category == 'Profile' or category == 'Running_Element')
@@ -294,7 +296,7 @@ class VectorizationHandler:
                 output_svg_path=str(svg_output_path),
                 epsilon=epsilon,
                 smoothing_factor=smoothing_factor,
-                lines_threshold=100,
+                lines_threshold=lines_threshold,
                 points_threshold=30,
                 min_dotted_area=10,
                 max_dotted_area=200,

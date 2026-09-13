@@ -15,7 +15,29 @@ class PostProcessingManager {
         this.categories = new Set();
         this.selectedCategories = new Set();
 
+        // Live Preview Studio State
+        this.previewActiveFile = null;
+        this.previewScale = 1;
+        this.previewOffsetX = 0;
+        this.previewOffsetY = 0;
+        this.previewIsDragging = false;
+        this.previewDragStartX = 0;
+        this.previewDragStartY = 0;
+        this.isComparingOriginal = false;
+        this.isGridVisible = true;
+        this.previewDebounceTimer = null;
+
+        // Check if a project is already loaded in session storage
+        const savedProjectId = sessionStorage.getItem('current_project_id');
+        const savedProjectName = sessionStorage.getItem('current_project_name');
+        if (savedProjectId) {
+            this.currentProjectId = savedProjectId;
+            this.updateProjectInfo(savedProjectId, savedProjectName);
+        }
+
         this.initializeEventListeners();
+        this.toggleRasterSettings();
+        this.setupViewportInteractions();
         this.checkForCurrentProject();
     }
 
@@ -43,26 +65,28 @@ class PostProcessingManager {
         const folderInfoDiv = document.getElementById('postprocess-folder-info');
 
         if (projectId && projectName) {
-            // Show project info
-            projectInfoDiv.style.display = 'block';
-            noProjectDiv.style.display = 'none';
+            // Strip removed per user request - keep hidden
+            if (projectInfoDiv) projectInfoDiv.style.display = 'none';
+            if (noProjectDiv) noProjectDiv.style.display = 'none';
             // Hide the load button - we'll load when tab is activated
             if (loadBtn) loadBtn.style.display = 'none';
 
-            document.getElementById('postprocess-project-name').textContent = projectName;
-            document.getElementById('postprocess-folder-path').textContent = `projects/${projectId}/vectorized`;
+            const nameEl = document.getElementById('postprocess-project-name');
+            if (nameEl) nameEl.textContent = projectName;
+            const pathEl = document.getElementById('postprocess-folder-path');
+            if (pathEl) pathEl.textContent = `projects/${projectId}/vectorized`;
 
             // Hide old folder info when switching projects
-            folderInfoDiv.style.display = 'none';
+            if (folderInfoDiv) folderInfoDiv.style.display = 'none';
 
             // Mark that we need to reload files when tab is activated
             this.needsReload = true;
         } else {
             // No project loaded
-            projectInfoDiv.style.display = 'none';
-            noProjectDiv.style.display = 'block';
+            if (projectInfoDiv) projectInfoDiv.style.display = 'none';
+            if (noProjectDiv) noProjectDiv.style.display = 'block';
             if (loadBtn) loadBtn.style.display = 'none';
-            folderInfoDiv.style.display = 'none';
+            if (folderInfoDiv) folderInfoDiv.style.display = 'none';
         }
     }
 
@@ -76,50 +100,128 @@ class PostProcessingManager {
         }
 
         // Format checkboxes
-        document.getElementById('postprocess-format-svg').addEventListener('change', () => {
-            this.updateExportButton();
-        });
-        document.getElementById('postprocess-format-png').addEventListener('change', () => {
-            this.updateExportButton();
-            this.toggleRasterSettings();
-        });
-        document.getElementById('postprocess-format-jpg').addEventListener('change', () => {
-            this.updateExportButton();
-            this.toggleRasterSettings();
-        });
+        const fmtSvg = document.getElementById('postprocess-format-svg');
+        if (fmtSvg) {
+            fmtSvg.addEventListener('change', () => this.updateExportButton());
+        }
+        const fmtPng = document.getElementById('postprocess-format-png');
+        if (fmtPng) {
+            fmtPng.addEventListener('change', () => {
+                this.updateExportButton();
+                this.toggleRasterSettings();
+            });
+        }
+        const fmtJpg = document.getElementById('postprocess-format-jpg');
+        if (fmtJpg) {
+            fmtJpg.addEventListener('change', () => {
+                this.updateExportButton();
+                this.toggleRasterSettings();
+            });
+        }
 
         // Transparent background toggle
-        document.getElementById('postprocess-transparent-bg').addEventListener('change', (e) => {
-            const bgColorGroup = document.getElementById('postprocess-bg-color-group');
-            bgColorGroup.style.display = e.target.checked ? 'none' : 'block';
-        });
+        const transBg = document.getElementById('postprocess-transparent-bg');
+        if (transBg) {
+            transBg.addEventListener('change', (e) => {
+                const bgColorGroup = document.getElementById('postprocess-bg-color-group');
+                if (bgColorGroup) bgColorGroup.style.display = e.target.checked ? 'none' : 'flex';
+            });
+        }
 
         // JPG quality slider
-        document.getElementById('postprocess-jpg-quality').addEventListener('input', (e) => {
-            document.getElementById('postprocess-jpg-quality-value').textContent = e.target.value;
+        const jpgQuality = document.getElementById('postprocess-jpg-quality');
+        if (jpgQuality) {
+            jpgQuality.addEventListener('input', (e) => {
+                const val = document.getElementById('postprocess-jpg-quality-value');
+                if (val) val.textContent = e.target.value;
+            });
+        }
+
+        // Epsilon slider -> updates pill & triggers live preview
+        const epsilonSlider = document.getElementById('postprocess-epsilon');
+        if (epsilonSlider) {
+            epsilonSlider.addEventListener('input', (e) => {
+                const pill = document.getElementById('postprocess-epsilon-value');
+                if (pill) pill.textContent = parseFloat(e.target.value).toFixed(1);
+                this.debouncedUpdateLivePreview();
+            });
+        }
+
+        // Smoothing slider -> updates pill & triggers live preview
+        const smoothingSlider = document.getElementById('postprocess-smoothing');
+        if (smoothingSlider) {
+            smoothingSlider.addEventListener('input', (e) => {
+                const pill = document.getElementById('postprocess-smoothing-value');
+                if (pill) pill.textContent = parseFloat(e.target.value).toFixed(2);
+                this.debouncedUpdateLivePreview();
+            });
+        }
+
+        // Stroke inputs -> triggers live preview
+        const strokeInputIds = [
+            'postprocess-stroke-profile',
+            'postprocess-stroke-application',
+            'postprocess-stroke-handle',
+            'postprocess-stroke-decoration',
+            'postprocess-stroke-runningelement',
+            'postprocess-stroke-detail',
+            'postprocess-stroke-reconstruction',
+            'postprocess-stroke-symmetry',
+            'postprocess-stroke-diameter'
+        ];
+        strokeInputIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('input', () => this.debouncedUpdateLivePreview());
+                el.addEventListener('change', () => this.debouncedUpdateLivePreview());
+            }
         });
 
-        // Epsilon slider
-        document.getElementById('postprocess-epsilon').addEventListener('input', (e) => {
-            document.getElementById('postprocess-epsilon-value').textContent = e.target.value;
-        });
-
-        // Smoothing slider
-        document.getElementById('postprocess-smoothing').addEventListener('input', (e) => {
-            document.getElementById('postprocess-smoothing-value').textContent = e.target.value;
-        });
+        // Reset stroke defaults button
+        const resetStrokesBtn = document.getElementById('postprocess-reset-strokes-btn');
+        if (resetStrokesBtn) {
+            resetStrokesBtn.addEventListener('click', () => {
+                const defaults = {
+                    'postprocess-stroke-profile': '1.0',
+                    'postprocess-stroke-application': '1.0',
+                    'postprocess-stroke-handle': '1.0',
+                    'postprocess-stroke-decoration': '0.8',
+                    'postprocess-stroke-runningelement': '1.0',
+                    'postprocess-stroke-detail': '0.8',
+                    'postprocess-stroke-reconstruction': '1.0',
+                    'postprocess-stroke-symmetry': '0.5',
+                    'postprocess-stroke-diameter': '0.5'
+                };
+                for (const [id, val] of Object.entries(defaults)) {
+                    const inp = document.getElementById(id);
+                    if (inp) inp.value = val;
+                }
+                this.debouncedUpdateLivePreview();
+            });
+        }
 
         // Select all categories
-        document.getElementById('postprocess-select-all-categories').addEventListener('change', (e) => {
-            const checkboxes = document.querySelectorAll('#postprocess-category-filters input[type="checkbox"]');
-            checkboxes.forEach(cb => cb.checked = e.target.checked);
-            this.updateSelectedCategories();
-        });
+        const selectAllCategories = document.getElementById('postprocess-select-all-categories');
+        if (selectAllCategories) {
+            selectAllCategories.addEventListener('change', (e) => {
+                const checkboxes = document.querySelectorAll('#postprocess-category-filters input[type="checkbox"]');
+                checkboxes.forEach(cb => {
+                    cb.checked = e.target.checked;
+                    const chip = cb.closest('.category-chip-toggle');
+                    if (chip) chip.classList.toggle('active', e.target.checked);
+                });
+                this.updateSelectedCategories();
+                this.debouncedUpdateLivePreview();
+            });
+        }
 
         // Export button
-        document.getElementById('postprocess-export-btn').addEventListener('click', () => {
-            this.handleExport();
-        });
+        const exportBtn = document.getElementById('postprocess-export-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => {
+                this.handleExport();
+            });
+        }
     }
 
     /**
@@ -154,6 +256,7 @@ class PostProcessingManager {
                 console.log('No vectorized files found in project yet');
                 // Show empty state in UI
                 this.updateFolderInfo();
+                this.populatePreviewFileSelect();
                 return;
             }
 
@@ -214,12 +317,14 @@ class PostProcessingManager {
 
             if (this.files.svg.length === 0 && this.files.png.length === 0) {
                 console.log('No valid SVG or PNG files found after loading');
+                this.populatePreviewFileSelect();
                 return;
             }
 
             // Update UI
             this.updateFolderInfo();
             this.populateCategoryFilters();
+            this.populatePreviewFileSelect();
             this.updateExportButton();
 
         } catch (error) {
@@ -243,7 +348,7 @@ class PostProcessingManager {
         if (!folderPath.endsWith('_vectorized')) {
             const suggestion = this.workingFolder ?
                 `\n\nSuggested folder: ${this.workingFolder}` : '';
-            alert(`⚠️ Please select a folder ending with "_vectorized"${suggestion}`);
+            alert(`Please select a folder ending with "_vectorized"${suggestion}`);
             return;
         }
 
@@ -287,6 +392,7 @@ class PostProcessingManager {
             // Update UI
             this.updateFolderInfo();
             this.populateCategoryFilters();
+            this.populatePreviewFileSelect();
             this.updateExportButton();
         });
     }
@@ -436,6 +542,8 @@ class PostProcessingManager {
                     category = 'Detail';
                 } else if (categoryRaw.includes('Prospectus')) {
                     category = 'Prospectus';
+                } else if (categoryRaw.includes('Reconstruction')) {
+                    category = 'Reconstruction';
                 }
 
                 if (category && strokeWidths[category] !== undefined) {
@@ -826,19 +934,23 @@ class PostProcessingManager {
 
     populateCategoryFilters() {
         const container = document.getElementById('postprocess-category-filters');
+        if (!container) return;
         container.innerHTML = '';
 
         Array.from(this.categories).sort().forEach(category => {
             const label = document.createElement('label');
+            label.className = 'category-chip-toggle active';
             label.innerHTML = `
-                <input type="checkbox" class="category-filter-checkbox" value="${category}" checked>
-                ${category}
+                <input type="checkbox" class="category-filter-checkbox" value="${category}" checked style="margin: 0; cursor: pointer; accent-color: var(--primary);">
+                <span>${category.replace(/_/g, ' ')}</span>
             `;
             container.appendChild(label);
 
-            // Add event listener
-            label.querySelector('input').addEventListener('change', () => {
+            const input = label.querySelector('input');
+            input.addEventListener('change', () => {
+                label.classList.toggle('active', input.checked);
                 this.updateSelectedCategories();
+                this.debouncedUpdateLivePreview();
             });
         });
 
@@ -853,15 +965,412 @@ class PostProcessingManager {
             this.selectedCategories.add(cb.value);
         });
 
+        const allCheckboxes = document.querySelectorAll('#postprocess-category-filters input[type="checkbox"]');
+        const selectAllCb = document.getElementById('postprocess-select-all-categories');
+        if (selectAllCb && allCheckboxes.length > 0) {
+            selectAllCb.checked = (checkboxes.length === allCheckboxes.length);
+        }
+
         this.updateExportButton();
     }
 
     toggleRasterSettings() {
-        const pngChecked = document.getElementById('postprocess-format-png').checked;
-        const jpgChecked = document.getElementById('postprocess-format-jpg').checked;
+        const pngChecked = document.getElementById('postprocess-format-png')?.checked || false;
+        const jpgChecked = document.getElementById('postprocess-format-jpg')?.checked || false;
         const rasterSettings = document.getElementById('postprocess-raster-settings');
+        const jpgQualityRow = document.getElementById('postprocess-jpg-quality-row');
 
-        rasterSettings.style.display = (pngChecked || jpgChecked) ? 'block' : 'none';
+        const hasRaster = pngChecked || jpgChecked;
+        if (rasterSettings) {
+            rasterSettings.classList.toggle('disabled-opt-group', !hasRaster);
+            const inputs = rasterSettings.querySelectorAll('select, input');
+            inputs.forEach(el => {
+                el.disabled = !hasRaster;
+            });
+        }
+        if (jpgQualityRow) {
+            jpgQualityRow.style.display = jpgChecked ? 'flex' : 'none';
+        }
+    }
+
+    /**
+     * Setup Pan, Zoom, and Tool interactions for Live Preview Studio
+     */
+    setupViewportInteractions() {
+        const container = document.getElementById('postprocess-viewport-container');
+        const viewport = document.getElementById('postprocess-svg-viewport');
+        if (!container || !viewport) return;
+
+        // Mouse wheel zoom
+        container.addEventListener('wheel', (e) => {
+            if (!this.previewActiveFile) return;
+            e.preventDefault();
+            const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+            this.previewScale = Math.min(10, Math.max(0.1, this.previewScale * zoomFactor));
+            this.applyViewportTransform();
+        }, { passive: false });
+
+        // Pan drag
+        container.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 || !this.previewActiveFile) return;
+            this.previewIsDragging = true;
+            this.previewDragStartX = e.clientX - this.previewOffsetX;
+            this.previewDragStartY = e.clientY - this.previewOffsetY;
+            container.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!this.previewIsDragging) return;
+            this.previewOffsetX = e.clientX - this.previewDragStartX;
+            this.previewOffsetY = e.clientY - this.previewDragStartY;
+            this.applyViewportTransform();
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (this.previewIsDragging) {
+                this.previewIsDragging = false;
+                if (container) container.style.cursor = '';
+            }
+        });
+
+        // Zoom In button
+        const zoomInBtn = document.getElementById('postprocess-zoom-in-btn');
+        if (zoomInBtn) {
+            zoomInBtn.addEventListener('click', () => {
+                this.previewScale = Math.min(10, this.previewScale * 1.25);
+                this.applyViewportTransform();
+            });
+        }
+
+        // Zoom Out button
+        const zoomOutBtn = document.getElementById('postprocess-zoom-out-btn');
+        if (zoomOutBtn) {
+            zoomOutBtn.addEventListener('click', () => {
+                this.previewScale = Math.max(0.1, this.previewScale * 0.8);
+                this.applyViewportTransform();
+            });
+        }
+
+        // Reset View button
+        const resetViewBtn = document.getElementById('postprocess-reset-view-btn');
+        if (resetViewBtn) {
+            resetViewBtn.addEventListener('click', () => {
+                this.previewScale = 1;
+                this.previewOffsetX = 0;
+                this.previewOffsetY = 0;
+                this.applyViewportTransform();
+            });
+        }
+
+        // Background toggle button
+        const bgToggleBtn = document.getElementById('postprocess-bg-toggle-btn');
+        if (bgToggleBtn) {
+            bgToggleBtn.addEventListener('click', () => {
+                this.isGridVisible = !this.isGridVisible;
+                if (this.isGridVisible) {
+                    viewport.classList.remove('plain-white');
+                    viewport.classList.add('dot-grid');
+                    bgToggleBtn.classList.remove('active');
+                } else {
+                    viewport.classList.add('plain-white');
+                    viewport.classList.remove('dot-grid');
+                    bgToggleBtn.classList.add('active');
+                }
+            });
+        }
+
+        // Compare button (Original vs Simplified/Modified)
+        const compareBtn = document.getElementById('postprocess-compare-btn');
+        if (compareBtn) {
+            compareBtn.addEventListener('click', () => {
+                this.isComparingOriginal = !this.isComparingOriginal;
+                compareBtn.classList.toggle('active', this.isComparingOriginal);
+                this.updateLivePreview();
+            });
+        }
+
+        // Random piece button (Dice button)
+        const randomBtn = document.getElementById('postprocess-random-file-btn');
+        if (randomBtn) {
+            randomBtn.addEventListener('click', () => {
+                this.pickRandomPreviewFile();
+            });
+        }
+
+        // Optional piece dropdown fallback (if present in DOM)
+        const fileSelect = document.getElementById('postprocess-preview-file-select');
+        if (fileSelect) {
+            fileSelect.addEventListener('change', (e) => {
+                const filename = e.target.value;
+                if (filename && this.svgCache.has(filename)) {
+                    this.previewActiveFile = filename;
+                    const badge = document.getElementById('postprocess-preview-file-badge');
+                    if (badge) badge.textContent = filename;
+                    this.previewScale = 1;
+                    this.previewOffsetX = 0;
+                    this.previewOffsetY = 0;
+                    this.updateLivePreview();
+                }
+            });
+        }
+    }
+
+    /**
+     * Initialize preview piece: chooses a random piece on load
+     */
+    populatePreviewFileSelect() {
+        const badge = document.getElementById('postprocess-preview-file-badge');
+        const emptyState = document.getElementById('postprocess-preview-empty');
+        const viewport = document.getElementById('postprocess-svg-viewport');
+
+        if (!this.files.svg || this.files.svg.length === 0) {
+            if (badge) badge.textContent = 'No File';
+            if (emptyState) emptyState.style.display = 'block';
+            if (viewport) viewport.innerHTML = '';
+            this.previewActiveFile = null;
+            return;
+        }
+
+        // Choose a random piece automatically upon loading files
+        if (!this.previewActiveFile || !this.svgCache.has(this.previewActiveFile)) {
+            const randomIndex = Math.floor(Math.random() * this.files.svg.length);
+            this.previewActiveFile = this.files.svg[randomIndex].name;
+        }
+
+        if (badge) badge.textContent = this.previewActiveFile;
+        if (emptyState) emptyState.style.display = 'none';
+
+        this.updateLivePreview();
+    }
+
+    /**
+     * Pick and display a random SVG file from the loaded pieces
+     */
+    pickRandomPreviewFile() {
+        if (!this.files.svg || this.files.svg.length === 0) return;
+
+        // If more than 1 file, pick one different from current
+        const candidates = this.files.svg.filter(f => f.name !== this.previewActiveFile);
+        const pool = candidates.length > 0 ? candidates : this.files.svg;
+        const chosen = pool[Math.floor(Math.random() * pool.length)];
+
+        this.previewActiveFile = chosen.name;
+        const badge = document.getElementById('postprocess-preview-file-badge');
+        if (badge) badge.textContent = chosen.name;
+
+        // Tactile die face change on click
+        const diceIcons = ['bi-dice-1', 'bi-dice-2', 'bi-dice-3', 'bi-dice-4', 'bi-dice-5', 'bi-dice-6'];
+        const randomDiceIcon = diceIcons[Math.floor(Math.random() * diceIcons.length)];
+        const randomBtn = document.getElementById('postprocess-random-file-btn');
+        if (randomBtn) {
+            const iconEl = randomBtn.querySelector('i');
+            if (iconEl) {
+                iconEl.className = `bi ${randomDiceIcon}`;
+            }
+        }
+
+        this.previewScale = 1;
+        this.previewOffsetX = 0;
+        this.previewOffsetY = 0;
+        this.updateLivePreview();
+    }
+
+    /**
+     * Count vertices across paths, polylines, polygons, and lines in an SVG string
+     */
+    countVerticesInSvg(svgContent) {
+        if (!svgContent) return 0;
+        try {
+            const parser = new DOMParser();
+            const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+            let count = 0;
+
+            const paths = svgDoc.querySelectorAll('path');
+            paths.forEach(p => {
+                const d = p.getAttribute('d') || '';
+                const commands = d.match(/[MLCZmlcz][^MLCZmlcz]*/g) || [];
+                for (const cmd of commands) {
+                    const type = cmd[0].toUpperCase();
+                    if (type === 'M' || type === 'L') {
+                        const coords = cmd.slice(1).trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+                        count += Math.floor(coords.length / 2);
+                    } else if (type === 'C') {
+                        const coords = cmd.slice(1).trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+                        count += Math.floor(coords.length / 6);
+                    }
+                }
+            });
+
+            svgDoc.querySelectorAll('polyline, polygon').forEach(pl => {
+                const pts = (pl.getAttribute('points') || '').trim().split(/[\s,]+/).filter(Boolean);
+                count += Math.floor(pts.length / 2);
+            });
+            svgDoc.querySelectorAll('line').forEach(() => {
+                count += 2;
+            });
+            svgDoc.querySelectorAll('circle, ellipse, rect').forEach(() => {
+                count += 4;
+            });
+
+            return count;
+        } catch (e) {
+            console.error('Error counting SVG vertices:', e);
+            return 0;
+        }
+    }
+
+    /**
+     * Render SVG live preview with current simplification, smoothing, stroke widths, and category filters
+     */
+    updateLivePreview() {
+        const emptyState = document.getElementById('postprocess-preview-empty');
+        const viewport = document.getElementById('postprocess-svg-viewport');
+        const origPtsEl = document.getElementById('postprocess-stat-original-points');
+        const simpPtsEl = document.getElementById('postprocess-stat-simplified-points');
+        const badgeEl = document.getElementById('postprocess-stat-reduction-badge');
+        const layersEl = document.getElementById('postprocess-stat-active-layers');
+
+        if (!this.previewActiveFile || !this.svgCache.has(this.previewActiveFile)) {
+            if (emptyState) emptyState.style.display = 'block';
+            if (viewport) viewport.innerHTML = '';
+            if (origPtsEl) origPtsEl.textContent = '0';
+            if (simpPtsEl) simpPtsEl.textContent = '0';
+            if (badgeEl) {
+                badgeEl.textContent = '0% reduction';
+                badgeEl.style.background = '';
+                badgeEl.style.color = '';
+            }
+            if (layersEl) layersEl.textContent = '0';
+            return;
+        }
+
+        if (emptyState) emptyState.style.display = 'none';
+
+        const rawSvg = this.svgCache.get(this.previewActiveFile);
+        const originalPoints = this.countVerticesInSvg(rawSvg);
+        if (origPtsEl) origPtsEl.textContent = originalPoints.toLocaleString();
+
+        let outputSvg = rawSvg;
+        let simplifiedPoints = originalPoints;
+
+        if (this.isComparingOriginal) {
+            if (simpPtsEl) simpPtsEl.textContent = originalPoints.toLocaleString();
+            if (badgeEl) {
+                badgeEl.textContent = 'Original (Raw)';
+                badgeEl.style.background = '#e2e8f0';
+                badgeEl.style.color = '#475569';
+            }
+            if (layersEl) layersEl.textContent = this.categories.size.toString();
+        } else {
+            // 1. Filter out unselected categories
+            if (this.selectedCategories && this.selectedCategories.size > 0) {
+                outputSvg = this.removeUnselectedLayersFromSVG(outputSvg, this.selectedCategories);
+            }
+
+            // 2. Custom Stroke Widths
+            const strokeWidths = {
+                Profile: parseFloat(document.getElementById('postprocess-stroke-profile')?.value || 1.0),
+                Profile_Mirrored: parseFloat(document.getElementById('postprocess-stroke-profile')?.value || 1.0),
+                Prospectus: parseFloat(document.getElementById('postprocess-stroke-profile')?.value || 1.0),
+                Application: parseFloat(document.getElementById('postprocess-stroke-application')?.value || 1.0),
+                Handle: parseFloat(document.getElementById('postprocess-stroke-handle')?.value || 1.0),
+                Decoration: parseFloat(document.getElementById('postprocess-stroke-decoration')?.value || 0.8),
+                Running_Element: parseFloat(document.getElementById('postprocess-stroke-runningelement')?.value || 1.0),
+                Running_Element_Mirrored: parseFloat(document.getElementById('postprocess-stroke-runningelement')?.value || 1.0),
+                Detail: parseFloat(document.getElementById('postprocess-stroke-detail')?.value || 0.8),
+                Reconstruction: parseFloat(document.getElementById('postprocess-stroke-reconstruction')?.value || 1.0),
+                Symmetry_Line: parseFloat(document.getElementById('postprocess-stroke-symmetry')?.value || 0.5),
+                Diameter: parseFloat(document.getElementById('postprocess-stroke-diameter')?.value || 0.5)
+            };
+            outputSvg = this.applyStrokeWidthsAndColorsToSVG(outputSvg, strokeWidths);
+
+            // 3. Epsilon Simplification & Smoothing
+            const epsilon = parseFloat(document.getElementById('postprocess-epsilon')?.value || 0);
+            const smoothing = parseFloat(document.getElementById('postprocess-smoothing')?.value || 0);
+            outputSvg = this.applyVectorizationParametersToSVG(outputSvg, epsilon, smoothing);
+
+            simplifiedPoints = this.countVerticesInSvg(outputSvg);
+            if (simpPtsEl) simpPtsEl.textContent = simplifiedPoints.toLocaleString();
+
+            const reduction = originalPoints > 0 ? Math.max(0, Math.round((1 - simplifiedPoints / originalPoints) * 100)) : 0;
+            if (badgeEl) {
+                badgeEl.textContent = `${reduction}% reduction`;
+                badgeEl.style.background = reduction > 0 ? '#dcfce7' : '#f1f5f9';
+                badgeEl.style.color = reduction > 0 ? '#15803d' : '#64748b';
+            }
+            if (layersEl) layersEl.textContent = this.selectedCategories.size.toString();
+        }
+
+        // Render in SVG viewport
+        this.renderSvgToViewport(outputSvg);
+    }
+
+    /**
+     * Inject transformed SVG into viewport
+     */
+    renderSvgToViewport(svgContent) {
+        const viewport = document.getElementById('postprocess-svg-viewport');
+        if (!viewport) return;
+
+        try {
+            const parser = new DOMParser();
+            const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+            const svgElement = svgDoc.querySelector('svg');
+
+            if (!svgElement) {
+                viewport.innerHTML = '<div style="color: var(--primary); padding: 20px;">Invalid SVG content</div>';
+                return;
+            }
+
+            // Ensure viewBox is set for responsive scaling
+            if (!svgElement.getAttribute('viewBox')) {
+                const width = parseFloat(svgElement.getAttribute('width')) || 1200;
+                const height = parseFloat(svgElement.getAttribute('height')) || 800;
+                svgElement.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            }
+
+            // Set responsive attributes and styles
+            svgElement.setAttribute('width', '100%');
+            svgElement.setAttribute('height', '100%');
+            svgElement.style.width = '100%';
+            svgElement.style.height = '100%';
+            svgElement.style.maxWidth = '94%';
+            svgElement.style.maxHeight = '94%';
+            svgElement.style.pointerEvents = 'none';
+            svgElement.style.transform = `translate(${this.previewOffsetX}px, ${this.previewOffsetY}px) scale(${this.previewScale})`;
+            svgElement.style.transformOrigin = 'center center';
+            svgElement.style.transition = 'transform 0.05s ease-out';
+            svgElement.style.filter = 'drop-shadow(0 2px 8px rgba(0, 0, 0, 0.08))';
+
+            viewport.innerHTML = '';
+            viewport.appendChild(svgElement);
+        } catch (e) {
+            console.error('Error rendering SVG to viewport:', e);
+        }
+    }
+
+    /**
+     * Apply pan and zoom transform to currently rendered SVG in viewport
+     */
+    applyViewportTransform() {
+        const viewport = document.getElementById('postprocess-svg-viewport');
+        if (!viewport) return;
+        const svgElement = viewport.querySelector('svg');
+        if (svgElement) {
+            svgElement.style.transform = `translate(${this.previewOffsetX}px, ${this.previewOffsetY}px) scale(${this.previewScale})`;
+        }
+    }
+
+    /**
+     * Debounced live preview update for 60fps slider responsiveness
+     */
+    debouncedUpdateLivePreview(delay = 40) {
+        if (this.previewDebounceTimer) {
+            clearTimeout(this.previewDebounceTimer);
+        }
+        this.previewDebounceTimer = setTimeout(() => {
+            this.updateLivePreview();
+        }, delay);
     }
 
     updateExportButton() {
@@ -883,9 +1392,14 @@ class PostProcessingManager {
         const progressText = document.getElementById('postprocess-progress-text');
         const resultDiv = document.getElementById('postprocess-result');
 
-        // Disable button
+        // Disable button and show spinner
+        const originalBtnHtml = exportBtn.innerHTML;
         exportBtn.disabled = true;
-        resultDiv.style.display = 'none';
+        exportBtn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Exporting...';
+        if (resultDiv) {
+            resultDiv.style.display = 'none';
+            resultDiv.innerHTML = '';
+        }
         progressDiv.style.display = 'block';
 
         try {
@@ -912,6 +1426,7 @@ class PostProcessingManager {
                     Running_Element: parseFloat(document.getElementById('postprocess-stroke-runningelement').value),
                     Running_Element_Mirrored: parseFloat(document.getElementById('postprocess-stroke-runningelement').value),
                     Detail: parseFloat(document.getElementById('postprocess-stroke-detail').value),
+                    Reconstruction: parseFloat(document.getElementById('postprocess-stroke-reconstruction').value),
                     Symmetry_Line: parseFloat(document.getElementById('postprocess-stroke-symmetry').value),
                     Diameter: parseFloat(document.getElementById('postprocess-stroke-diameter').value)
                 },
@@ -1071,49 +1586,91 @@ class PostProcessingManager {
             progressBar.style.width = '100%';
             progressText.textContent = 'Export complete!';
 
-            // Show results
+            // Automatically initiate file download directly upon completion
+            if (result.download_url) {
+                const downloadLink = document.createElement('a');
+                downloadLink.href = result.download_url;
+                downloadLink.setAttribute('download', '');
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                downloadLink.remove();
+            }
+
+            // Hide progress and notify user via on-screen modal popup
             setTimeout(() => {
                 progressDiv.style.display = 'none';
+                progressBar.style.width = '0%';
                 this.showExportResults(result);
-            }, 1000);
+            }, 400);
 
         } catch (error) {
             console.error('Export error:', error);
 
             progressDiv.style.display = 'none';
-            resultDiv.style.display = 'block';
-            resultDiv.innerHTML = `
-                <div style="background: #fee; border: 1px solid #fcc; padding: 15px; border-radius: 8px; color: #c00;">
-                    <h4 style="margin: 0 0 10px 0;">❌ Export Failed</h4>
-                    <p style="margin: 0;">${error.message}</p>
-                </div>
-            `;
+            if (resultDiv) {
+                resultDiv.style.display = 'none';
+                resultDiv.innerHTML = '';
+            }
+
+            if (window.showConfirmDialog) {
+                window.showConfirmDialog({
+                    title: 'Export Failed',
+                    subtitle: 'An error occurred during file export.',
+                    icon: 'bi-x-circle-fill',
+                    iconColor: '#dc2626',
+                    iconBg: '#fee2e2',
+                    detailsLabel: 'Error Details:',
+                    details: [error.message || 'Unknown export error occurred.'],
+                    confirmText: 'Close',
+                    cancelText: '',
+                    confirmClass: 'btn-danger'
+                });
+            } else if (window.app && window.app.showNotification) {
+                window.app.showNotification(`Export failed: ${error.message}`, 'error');
+            }
         } finally {
             exportBtn.disabled = false;
+            exportBtn.innerHTML = originalBtnHtml;
         }
     }
 
     showExportResults(result) {
         const resultDiv = document.getElementById('postprocess-result');
-        resultDiv.style.display = 'block';
-
-        let html = `
-            <div style="background: #f0fdf4; border: 1px solid #86efac; padding: 15px; border-radius: 8px;">
-                <h4 style="margin: 0 0 10px 0; color: #15803d;">✓ Export Successful</h4>
-                <p style="margin: 5px 0;"><strong>Files processed:</strong> ${result.total_files}</p>
-                <p style="margin: 5px 0;"><strong>Output formats:</strong> ${result.formats.join(', ').toUpperCase()}</p>
-        `;
-
-        if (result.download_url) {
-            html += `
-                <button onclick="window.location.href='${result.download_url}'" class="btn btn-success" style="margin-top: 15px;">
-                    <span>📥</span> Download Results
-                </button>
-            `;
+        if (resultDiv) {
+            resultDiv.style.display = 'none';
+            resultDiv.innerHTML = '';
         }
 
-        html += `</div>`;
-        resultDiv.innerHTML = html;
+        const formatsList = (result.formats || []).map(f => f.toUpperCase()).join(', ');
+        const fileCount = result.total_files || 0;
+        const organizeByCategory = document.getElementById('postprocess-organize-by-category')?.checked;
+
+        if (window.showConfirmDialog) {
+            window.showConfirmDialog({
+                title: 'Export Complete!',
+                subtitle: `Successfully processed <strong>${fileCount}</strong> file(s) into <strong>${formatsList}</strong>.`,
+                icon: 'bi-check-circle-fill',
+                iconColor: 'var(--teal, #0d9488)',
+                iconBg: 'var(--teal-soft, #ccfbf1)',
+                detailsLabel: 'Export Summary:',
+                details: [
+                    'Download has started automatically',
+                    `Converted format(s): ${formatsList}`,
+                    organizeByCategory ? 'Organized by category in subfolders' : 'Saved in a unified package'
+                ],
+                detailIcon: 'bi-check2-circle',
+                detailIconColor: 'var(--teal, #0d9488)',
+                note: 'Your ZIP archive has been sent to your browser download folder.',
+                noteType: 'success',
+                confirmText: 'OK',
+                cancelText: '',
+                confirmClass: 'btn-primary'
+            });
+        }
+
+        if (window.app && window.app.showNotification) {
+            window.app.showNotification(`Export complete! Downloaded ${fileCount} file(s) (${formatsList})`, 'success');
+        }
     }
 
     /**

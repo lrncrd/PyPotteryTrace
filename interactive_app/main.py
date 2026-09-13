@@ -38,6 +38,8 @@ app.config['SECRET_KEY'] = os.urandom(24)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'tiff', 'bmp'}
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 CORS(app)
 
@@ -253,6 +255,7 @@ def generate_svg_preview():
         
         epsilon = data.get('epsilon', 1.5)
         smoothing = data.get('smoothing_factor', 0.3)
+        lines_threshold = data.get('lines_threshold', 100)
         include_background = data.get('include_background', False)
         
         # Create directory for PNG masks (will NOT be deleted for debugging)
@@ -268,7 +271,7 @@ def generate_svg_preview():
         print(f"{'='*80}")
         print(f"Session ID: {session_id}")
         print(f"Segments to vectorize: {len(session['segments'])}")
-        print(f"Epsilon: {epsilon}, Smoothing: {smoothing}")
+        print(f"Epsilon: {epsilon}, Smoothing: {smoothing}, Lines Threshold: {lines_threshold}")
         print(f"Include background: {include_background}")
         print(f"PNG masks dir: {masks_dir}")
         print(f"SVG debug dir: {svg_debug_dir}")
@@ -639,6 +642,7 @@ def generate_svg_preview():
                         name=segment['name'],
                         epsilon=epsilon,
                         smoothing_factor=smoothing,
+                        lines_threshold=lines_threshold,
                         debug_svg_dir=str(svg_debug_dir)  # Save intermediate SVG for debugging
                     )
                     
@@ -1556,6 +1560,7 @@ def vectorize():
         # Get vectorization parameters
         epsilon = data.get('epsilon', 1.5)
         smoothing = data.get('smoothing_factor', 0.3)
+        lines_threshold = data.get('lines_threshold', 100)
         
         # Create directory for PNG masks (will NOT be deleted for debugging)
         masks_dir = Path(app.config['UPLOAD_FOLDER']) / session_id / 'vectorize_debug_masks'
@@ -1654,6 +1659,7 @@ def vectorize():
                     name=segment['name'],
                     epsilon=epsilon,
                     smoothing_factor=smoothing,
+                    lines_threshold=lines_threshold,
                     debug_svg_dir=str(svg_debug_dir)  # Save intermediate SVG for debugging
                 )
                 
@@ -2710,14 +2716,16 @@ def upload_to_project(project_id):
         if uploaded_count == 0:
             return jsonify({'error': 'No valid image files uploaded'}), 400
         
-        # Update workflow status
+        # Update workflow status with total uploaded images count
+        total_uploads = project_manager.count_files(project_id, 'uploads')
         project_manager.update_workflow_status(project_id, {
-            'images_uploaded': uploaded_count
+            'images_uploaded': total_uploads
         })
         
         return jsonify({
             'success': True,
             'count': uploaded_count,
+            'total_count': total_uploads,
             'message': f'{uploaded_count} images uploaded successfully'
         })
     except Exception as e:

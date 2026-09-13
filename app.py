@@ -1,25 +1,7 @@
 #!/usr/bin/env python3
 """
 PyPotteryTrace Interactive - Launch Script
-Quick launcher for the inte    # Change to interactive_app directory and run
-    import os
-    os.chdir(interactive_dir)
-    
-    # Start browser in a separate thread
-    browser_thread = threading.Thread(target=open_browser, daemon=True)
-    browser_thread.start()
-    
-    # Import and run the Flask app
-    try:
-        from app import app
-        app.run(debug=False, host='0.0.0.0', port=5004)
-    except KeyboardInterrupt:
-        print("\n\nServer stopped by user")
-    except Exception as e:
-        print(f"\n\nError running application: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)tion
+Quick launcher for the interactive segmentation application.
 """
 
 import sys
@@ -28,6 +10,13 @@ import webbrowser
 import threading
 import time
 from pathlib import Path
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 def check_dependencies():
     """Check if required dependencies are installed."""

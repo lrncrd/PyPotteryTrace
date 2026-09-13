@@ -14,6 +14,7 @@ class CanvasManager {
         this.lastMouseY = 0;
         this.mode = 'point';
         this.rotationCenter = null;
+        this.previewRotationCenter = null;
         this.savedMasks = [];  // Array to store all added masks with their colors
 
         this.init();
@@ -67,6 +68,9 @@ class CanvasManager {
 
                 this.redraw();
                 e.preventDefault(); // Prevent default only during dragging
+            } else if (this.mode === 'rotation' && this.image) {
+                this.previewRotationCenter = this.getImageCoordinates(e);
+                this.redraw();
             }
         });
 
@@ -81,6 +85,10 @@ class CanvasManager {
         this.canvas.addEventListener('mouseleave', () => {
             this.isDragging = false;
             this.updateCursor();
+            if (this.previewRotationCenter) {
+                this.previewRotationCenter = null;
+                this.redraw();
+            }
         });
 
         // Mouse wheel for zooming
@@ -93,8 +101,20 @@ class CanvasManager {
 
     resize() {
         const container = this.canvas.parentElement;
-        this.canvas.width = container.clientWidth;
-        this.canvas.height = container.clientHeight;
+        if (!container) return;
+        const w = container.clientWidth;
+        const h = container.clientHeight;
+        if (w === 0 || h === 0) {
+            return;
+        }
+
+        const hadZero = (this.canvas.width === 0 || this.canvas.height === 0);
+        this.canvas.width = w;
+        this.canvas.height = h;
+
+        if (hadZero || !this.scale || this.scale <= 0 || isNaN(this.scale)) {
+            this.fitToCanvas();
+        }
         this.redraw();
     }
 
@@ -110,8 +130,15 @@ class CanvasManager {
         img.onload = () => {
             console.log('Image loaded successfully:', img.width, 'x', img.height);
             this.image = img;
+            this.resize();
             this.fitToCanvas();
             this.redraw();
+
+            // Hide the "Upload an image" message
+            const canvasMessage = document.getElementById('canvas-message');
+            if (canvasMessage) {
+                canvasMessage.style.display = 'none';
+            }
             console.log('Canvas should now show the image');
         };
         img.onerror = (e) => {
@@ -122,7 +149,7 @@ class CanvasManager {
     }
 
     fitToCanvas() {
-        if (!this.image) return;
+        if (!this.image || !this.canvas.width || !this.canvas.height) return;
 
         // Calculate scale to fit image entirely within canvas (90% to leave some margin)
         const scaleX = (this.canvas.width * 0.9) / this.image.width;
@@ -208,7 +235,12 @@ class CanvasManager {
 
         // Draw rotation center if set
         if (this.rotationCenter) {
-            this.drawRotationCenterMarker(this.rotationCenter.x, this.rotationCenter.y);
+            this.drawRotationCenterMarker(this.rotationCenter.x, this.rotationCenter.y, false);
+        }
+
+        // Draw live rotation center preview if in rotation mode
+        if (this.mode === 'rotation' && this.previewRotationCenter) {
+            this.drawRotationCenterMarker(this.previewRotationCenter.x, this.previewRotationCenter.y, true);
         }
 
         // Draw current points if available
@@ -347,6 +379,7 @@ class CanvasManager {
         this.savedMasks = [];
         this.svgImage = null;
         this.rotationCenter = null;
+        this.previewRotationCenter = null;
         console.log('Cleared: masks, SVG overlay, rotation center');
         this.redraw();
     }
@@ -378,40 +411,86 @@ class CanvasManager {
         this.ctx.restore();
     }
 
-    drawRotationCenterMarker(x, y) {
+    drawRotationCenterMarker(x, y, isPreview = false) {
+        const canvasCoords = this.imageToCanvas(x, y);
+        const cx = canvasCoords.x;
+        const cy = canvasCoords.y;
+
         this.ctx.save();
-        this.ctx.translate(this.offsetX, this.offsetY);
-        this.ctx.scale(this.scale, this.scale);
 
-        // Draw crosshair
-        this.ctx.strokeStyle = '#ff0000';
-        this.ctx.lineWidth = 2 / this.scale;
+        // 1. Projected full-canvas guidelines (vertical & horizontal alignment axes)
+        this.ctx.save();
+        this.ctx.strokeStyle = isPreview ? 'rgba(239, 68, 68, 0.65)' : 'rgba(220, 38, 38, 0.85)';
+        this.ctx.lineWidth = 1.5;
+        this.ctx.setLineDash(isPreview ? [5, 5] : [6, 4]);
 
-        const size = 20 / this.scale;
-
-        // Vertical line
+        // Full vertical projection line across canvas height
         this.ctx.beginPath();
-        this.ctx.moveTo(x, y - size);
-        this.ctx.lineTo(x, y + size);
+        this.ctx.moveTo(cx, 0);
+        this.ctx.lineTo(cx, this.canvas.height);
         this.ctx.stroke();
 
-        // Horizontal line
+        // Full horizontal projection line across canvas width
         this.ctx.beginPath();
-        this.ctx.moveTo(x - size, y);
-        this.ctx.lineTo(x + size, y);
+        this.ctx.moveTo(0, cy);
+        this.ctx.lineTo(this.canvas.width, cy);
+        this.ctx.stroke();
+        this.ctx.restore();
+
+        // 2. Central crosshair target and bullseye
+        this.ctx.save();
+        this.ctx.strokeStyle = isPreview ? 'rgba(239, 68, 68, 0.85)' : '#dc2626';
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([]);
+
+        const armSize = 24;
+
+        // Local solid crosshair
+        this.ctx.beginPath();
+        this.ctx.moveTo(cx, cy - armSize);
+        this.ctx.lineTo(cx, cy + armSize);
+        this.ctx.moveTo(cx - armSize, cy);
+        this.ctx.lineTo(cx + armSize, cy);
         this.ctx.stroke();
 
-        // Circle
+        // Target outer ring
         this.ctx.beginPath();
-        this.ctx.arc(x, y, 5 / this.scale, 0, 2 * Math.PI);
-        this.ctx.fillStyle = '#ff0000';
+        this.ctx.arc(cx, cy, 10, 0, 2 * Math.PI);
+        this.ctx.stroke();
+
+        // Inner solid dot
+        this.ctx.beginPath();
+        this.ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
+        this.ctx.fillStyle = isPreview ? 'rgba(239, 68, 68, 0.8)' : '#dc2626';
         this.ctx.fill();
 
+        // Coordinate tooltip badge if preview
+        if (isPreview) {
+            this.ctx.font = '11px monospace';
+            const text = `(${Math.round(x)}, ${Math.round(y)})`;
+            const textWidth = this.ctx.measureText(text).width;
+            this.ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
+            this.ctx.beginPath();
+            if (this.ctx.roundRect) {
+                this.ctx.roundRect(cx + 10, cy - 22, textWidth + 10, 18, 4);
+            } else {
+                this.ctx.rect(cx + 10, cy - 22, textWidth + 10, 18);
+            }
+            this.ctx.fill();
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.fillText(text, cx + 15, cy - 9);
+        }
+
+        this.ctx.restore();
         this.ctx.restore();
     }
 
     setMode(mode) {
         this.mode = mode;
+        if (mode !== 'rotation' && this.previewRotationCenter) {
+            this.previewRotationCenter = null;
+            this.redraw();
+        }
         this.updateCursor();
     }
 

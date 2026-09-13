@@ -4,419 +4,126 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PyPotteryTrace Interactive - Segmentation Tool</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <style>
-        /* Splash Screen Styles */
-        .splash-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            z-index: 9999;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            transition: opacity 0.5s ease;
-        }
+    <title>PyPotteryTrace — Archaeological Ceramic Vectorization Tool</title>
+    <meta name="description" content="PyPotteryTrace - Interactive vectorization and segmentation of archaeological pottery drawings using SAM2">
+    <meta name="theme-color" content="#fbf9f5">
 
-        .splash-screen.fade-out {
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .splash-content {
-            text-align: center;
-            max-width: 600px;
-            padding: 40px;
-        }
-
-        .splash-logo {
-            max-width: 180px;
-            height: auto;
-            margin: 0 auto 20px;
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-
-            0%,
-            100% {
-                transform: scale(1);
-                opacity: 1;
-            }
-
-            50% {
-                transform: scale(1.05);
-                opacity: 0.85;
-            }
-        }
-
-        .splash-spinner {
-            border: 4px solid rgba(255, 255, 255, 0.3);
-            border-top: 4px solid white;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
-        }
-
-        @keyframes spin {
-            0% {
-                transform: rotate(0deg);
-            }
-
-            100% {
-                transform: rotate(360deg);
-            }
-        }
-
-        .splash-title {
-            font-size: 2rem;
-            font-weight: bold;
-            margin-bottom: 1rem;
-        }
-
-        .splash-message {
-            font-size: 1.1rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .splash-progress {
-            width: 100%;
-            max-width: 500px;
-            margin: 20px auto;
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 10px;
-            overflow: hidden;
-            height: 30px;
-        }
-
-        .splash-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #10b981, #3b82f6);
-            border-radius: 10px;
-            transition: width 0.3s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.9rem;
-            font-weight: bold;
-        }
-
-        /* Info Modal Styles */
-        .info-modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(5px);
-            -webkit-backdrop-filter: blur(5px);
-            z-index: 10000;
-            /* Higher than other layers */
-            display: none;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .info-modal-overlay.active {
-            display: flex;
-            opacity: 1;
-        }
-
-        .info-modal-content {
-            background: rgba(255, 255, 255, 0.85);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.5);
-            border-radius: 20px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
-            padding: 40px;
-            text-align: center;
-            max-width: 400px;
-            width: 90%;
-            position: relative;
-            transform: scale(0.95);
-            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
-        }
-
-        .info-modal-overlay.active .info-modal-content {
-            transform: scale(1);
-        }
-
-        .info-modal-close {
-            position: absolute;
-            top: 15px;
-            right: 20px;
-            font-size: 24px;
-            color: #aaa;
-            cursor: pointer;
-            transition: color 0.2s;
-            background: none;
-            border: none;
-            padding: 0;
-        }
-
-        .info-modal-close:hover {
-            color: #333;
-        }
-
-        .info-logo {
-            width: 80px;
-            height: auto;
-            margin-bottom: 20px;
-        }
-
-        .info-title {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #2c3e50;
-            margin: 0 0 10px;
-        }
-
-        .info-version {
-            display: inline-block;
-            background: #e0e7ff;
-            color: #4338ca;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            margin-bottom: 20px;
-        }
-
-        .info-author {
-            color: #64748b;
-            font-size: 1rem;
-            margin-bottom: 25px;
-        }
-
-        .info-github-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            color: #333;
-            text-decoration: none;
-            font-weight: 600;
-            padding: 10px 20px;
-            border: 2px solid #333;
-            border-radius: 30px;
-            transition: all 0.2s;
-        }
-
-        .info-github-link:hover {
-            background: #333;
-            color: white;
-        }
-
-        .info-btn {
-            background: none;
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 50%;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: rgba(255, 255, 255, 0.8);
-            margin-left: 10px;
-        }
-
-        .info-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            border-color: rgba(255, 255, 255, 0.8);
-            color: #fff;
-            transform: scale(1.05);
-        }
-
-        /* Model Download Overlay Styles */
-        .model-download-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            z-index: 9998;
-            display: none;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .model-download-overlay.active {
-            display: flex;
-        }
-
-        .download-content {
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            text-align: center;
-            max-width: 500px;
-            width: 90%;
-            padding: 40px;
-            color: #1f2937;
-        }
-
-        .download-spinner {
-            border: 4px solid #e5e7eb;
-            border-top: 4px solid #667eea;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 25px;
-        }
-
-        .download-title {
-            font-size: 1.5rem;
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-            color: #1f2937;
-        }
-
-        .download-message {
-            font-size: 1rem;
-            margin-bottom: 1.5rem;
-            color: #6b7280;
-        }
-
-        .download-progress {
-            width: 100%;
-            margin: 20px auto;
-            background: #e5e7eb;
-            border-radius: 10px;
-            overflow: hidden;
-            height: 20px;
-        }
-
-        .download-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea, #764ba2);
-            border-radius: 10px;
-            transition: width 0.2s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.75rem;
-            font-weight: bold;
-            color: white;
-            min-width: 35px;
-        }
-
-        .download-stats {
-            margin-top: 15px;
-            font-size: 0.875rem;
-            color: #6b7280;
-        }
-
-        .download-error {
-            background: #fef2f2;
-            border: 1px solid #ef4444;
-            border-radius: 8px;
-            padding: 15px;
-            margin-top: 15px;
-            color: #991b1b;
-        }
-
-        .download-error button {
-            margin-top: 10px;
-        }
-
-        /* Pixel Header Animation Styles */
-        #pixel-help-btn #pixel-face-idle-header {
-            opacity: 1;
-            visibility: visible;
-            transition: opacity 0.3s ease-in-out, visibility 0.3s;
-        }
-
-        #pixel-help-btn #pixel-face-awake-header {
-            opacity: 0;
-            visibility: hidden;
-            transition: opacity 0.3s ease-in-out, visibility 0.3s;
-        }
-
-        #pixel-help-btn:hover #pixel-face-idle-header {
-            opacity: 0 !important;
-            visibility: hidden;
-            transition-delay: 0s;
-        }
-
-        #pixel-help-btn:hover #pixel-face-awake-header {
-            opacity: 1 !important;
-            visibility: visible;
-            transition-delay: 0s;
-        }
-
-        #pixel-help-btn svg {
-            transition: transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            transform-origin: center;
-        }
-
-        #pixel-help-btn:hover svg {
-            transform: scale(1.1) rotate(-5deg);
-        }
-    </style>
+    <!-- Local Offline Vendor Assets with CDN Fallback -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.min.css') }}" onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css';">
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/fonts/fonts.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ version }}">
 </head>
 
 <body>
-    <!-- Splash Screen -->
+    <!-- Splash Screen - Archaeological Field Desk & Drafting Grid -->
     <div id="splash-screen" class="splash-screen">
         <div class="splash-content">
             <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="splash-logo">
             <div class="splash-spinner"></div>
-            <h1 class="splash-title">PyPotteryTrace</h1>
+            <h1 class="splash-title">PyPottery<span class="splash-accent">Trace</span></h1>
             <p class="splash-message" id="splash-message">Initializing application...</p>
 
             <div class="splash-progress">
-                <div class="splash-progress-bar" id="splash-progress-bar" style="width: 0%">
-                    <span id="splash-progress-text">0%</span>
-                </div>
+                <div class="splash-progress-bar" id="splash-progress-bar" style="width: 0%"></div>
+                <span class="splash-progress-text" id="splash-progress-text">0%</span>
             </div>
         </div>
     </div>
 
     <!-- Info Modal -->
-    <div id="info-modal" class="info-modal-overlay">
+    <div id="info-modal" class="info-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="info-modal-title">
         <div class="info-modal-content">
-            <button class="info-modal-close" id="info-modal-close">&times;</button>
-            <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="info-logo">
-            <h2 class="info-title">PyPotteryTrace</h2>
-            <span class="info-version">v{{ version }}</span>
+            <button class="info-modal-close" id="info-modal-close" aria-label="Close modal"><i class="bi bi-x-lg"></i></button>
+            <div class="info-header-icon">
+                <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="info-logo">
+            </div>
+            <h2 class="info-title" id="info-modal-title">PyPotteryTrace</h2>
+            <div class="info-version-wrapper">
+                <span class="version-badge">v{{ version }}</span>
+            </div>
             <p class="info-author">Created by <strong>Lorenzo Cardarelli</strong></p>
 
-            <a href="https://github.com/lrncrd/PyPotteryTrace" target="_blank" class="info-github-link">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path
-                        d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                </svg>
-                View on GitHub
-            </a>
+            <div class="info-description">
+                <p>Interactive vectorization and segmentation of archaeological pottery drawings using Segment Anything Model 2 (SAM2) to produce publication-grade SVG vector profiles and illustrations.</p>
+            </div>
+
+            <div class="disclosure-section">
+                <div class="disclosure-header">
+                    <i class="bi bi-shield-check"></i>
+                    <h4>SCIENTIFIC ATTRIBUTION REQUIREMENT</h4>
+                </div>
+                <p>PyPottery is developed for scientific archaeological research. When publishing drawings, plates, or vectors generated using PyPotteryTrace, please cite the software and provide methodological attribution in your publications.</p>
+            </div>
+
+            <div class="info-actions">
+                <a href="https://github.com/lrncrd/PyPotteryTrace" target="_blank" class="info-github-link">
+                    <i class="bi bi-github"></i> View on GitHub
+                </a>
+            </div>
         </div>
     </div>
 
-    <!-- Model Download Overlay -->
-    <div id="model-download-overlay" class="model-download-overlay">
+    <!-- Model Download Confirmation Modal -->
+    <div id="model-confirm-modal" class="project-modal" style="display: none;">
+        <div class="modal-overlay" id="model-confirm-overlay"></div>
+        <div class="modal-dialog" style="max-width: 440px;">
+            <div class="modal-header">
+                <h3><i class="bi bi-cloud-arrow-down" style="color: var(--primary);"></i> Download SAM2 Model</h3>
+                <button class="modal-close" id="model-confirm-close-btn" aria-label="Close modal"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 12px; font-size: 0.95rem; color: var(--text-main);">
+                    The model <strong id="model-confirm-name" style="color: var(--primary);">SAM2</strong> (<span id="model-confirm-size">~0 MB</span>) is not downloaded locally.
+                </p>
+                <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0;">
+                    Would you like to download it now? The model weights will be saved to your computer for subsequent use.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="model-confirm-cancel-btn">Cancel</button>
+                <button class="btn btn-primary" id="model-confirm-ok-btn"><i class="bi bi-download"></i> Download Model</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Opacity Modal -->
+    <div id="image-opacity-modal" class="project-modal" style="display: none;">
+        <div class="modal-overlay" id="image-opacity-overlay"></div>
+        <div class="modal-dialog" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3><i class="bi bi-circle-half" style="color: var(--teal);"></i> Adjust Image Opacity</h3>
+                <button class="modal-close" id="image-opacity-close-btn" aria-label="Close modal"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="modal-body">
+                <p id="image-opacity-subtitle" style="font-size: 0.88rem; color: var(--text-dim); margin-bottom: 16px;">
+                    Set opacity for image
+                </p>
+                <div class="form-group" style="margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <label style="font-weight: 600; font-size: 0.85rem; color: var(--text-main); margin-bottom: 0;">Opacity Level</label>
+                        <span id="image-opacity-badge" style="font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem; color: var(--primary); background: var(--primary-soft); padding: 2px 8px; border-radius: var(--radius-full); border: 1px solid var(--primary-border);">70%</span>
+                    </div>
+                    <input type="range" id="image-opacity-slider" min="0" max="100" step="1" value="70" class="slider" style="width: 100%;">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-small" id="image-opacity-cancel-btn">Cancel</button>
+                <button class="btn btn-primary btn-small" id="image-opacity-apply-btn"><i class="bi bi-check2"></i> Apply</button>
+            </div>
+        </div>
+    </div>
+    <div id="model-download-overlay" class="model-download-overlay" role="dialog" aria-modal="true">
         <div class="download-content">
             <div class="download-spinner"></div>
-            <h1 class="download-title">Downloading Model</h1>
+            <h2 class="download-title"><i class="bi bi-cloud-arrow-down-fill" style="color: var(--primary);"></i> Downloading SAM2 Model</h2>
             <p class="download-message" id="download-message">Preparing download...</p>
 
             <div class="download-progress">
-                <div class="download-progress-bar" id="download-progress-bar" style="width: 0%">
-                    <span id="download-progress-text">0%</span>
-                </div>
+                <div class="download-progress-bar" id="download-progress-bar" style="width: 0%"></div>
+                <span class="download-progress-text" id="download-progress-text">0%</span>
             </div>
 
             <div class="download-stats" id="download-stats">
@@ -425,103 +132,91 @@
             </div>
 
             <div class="download-error" id="download-error" style="display: none;">
-                <strong>⚠️ Download Error</strong>
+                <div class="download-error-title"><i class="bi bi-exclamation-triangle-fill"></i> Download Error</div>
                 <p id="download-error-message"></p>
-                <button class="btn btn-secondary" onclick="closeDownloadOverlay()">Close</button>
+                <button class="btn btn-secondary btn-small" onclick="closeDownloadOverlay()">Close</button>
             </div>
         </div>
     </div>
 
     <div class="container" id="main-container">
-        <!-- Header -->
+        <!-- Unified App Header -->
         <header class="app-header">
-            <div class="logo-section">
-                <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="logo">
-                <div>
-                    <h1 style="margin: 0;">PyPotteryTrace</h1>
-                    <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-                        <span class="version-badge">v{{ version }}</span>
-                        <p style="margin: 0; font-size: 0.85rem; opacity: 0.9; font-weight: 400;">
-                            AI-powered application for semantic segmentation and vectorization of archaeological pottery
-                        </p>
+            <div class="header-top">
+                <div class="logo-section">
+                    <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="logo">
+                    <div class="header-title-group">
+                        <h1>PyPotteryTrace <span class="version-badge">v{{ version }}</span></h1>
+                        <div class="header-subtitle">
+                            AI-powered semantic segmentation and vectorization of archaeological pottery drawings
+                        </div>
                     </div>
+                </div>
+
+                <!-- Active Project Pill (Lens style) -->
+                <div id="project-info-bar" class="header-project-badge" title="Active Project (Click to manage projects)">
+                    <span class="project-icon" id="project-icon"><i class="bi bi-folder2-open"></i></span>
+                    <span class="header-project-label">Project:</span>
+                    <strong id="current-project-name" class="header-project-name">No project selected</strong>
+                </div>
+
+                <!-- Header Actions -->
+                <div class="header-actions">
+                    <!-- Pixel Help Assistant -->
+                    <a href="https://pypottery.readthedocs.io/en/latest/" target="_blank" id="pixel-help-btn" class="pixel-assistant-container" title="Need help? Read documentation">
+                        <div class="pixel-speech-bubble" id="pixel-speech-bubble">Need help? <i class="bi bi-arrow-right-short"></i></div>
+                        <svg width="48" height="48" viewBox="30 45 180 140" aria-hidden="true">
+                            <g id="pixel-monitor-header">
+                                <rect x="40" y="50" width="160" height="130" rx="15" ry="15" fill="#d0d0d0" stroke="#444" stroke-width="3" />
+                                <rect x="55" y="65" width="130" height="90" rx="5" ry="5" fill="#a0a0a0" stroke="#444" stroke-width="2" />
+                                <rect id="pixel-screen-header" x="60" y="70" width="120" height="80" rx="2" ry="2" fill="#111" />
+                                <g id="pixel-face-idle-header" transform="translate(120, 115)">
+                                    <text x="0" y="5" text-anchor="middle" font-family="monospace" font-size="24" fill="#0f0" font-weight="bold">Zzz...</text>
+                                </g>
+                                <g id="pixel-face-awake-header" class="pixel-face-awake-header" transform="translate(120, 115)">
+                                    <rect x="-30" y="-15" width="10" height="12" rx="2" fill="#0f0" />
+                                    <rect x="20" y="-15" width="10" height="12" rx="2" fill="#0f0" />
+                                    <path d="M-15,10 Q0,25 15,10" stroke="#0f0" stroke-width="4" fill="none" stroke-linecap="round" />
+                                </g>
+                                <circle cx="180" cy="165" r="3" fill="#e74c3c" stroke="#c0392b" stroke-width="1" />
+                            </g>
+                        </svg>
+                    </a>
+
+                    <!-- User Guide & About Buttons -->
+                    <button id="guide-btn" class="icon-btn" title="User Guide" aria-label="User Guide" onclick="document.getElementById('help-modal').style.display='flex'">
+                        <i class="bi bi-book"></i>
+                    </button>
+                    <button id="info-btn" class="icon-btn" title="About PyPotteryTrace" aria-label="About PyPotteryTrace">
+                        <i class="bi bi-info-circle"></i>
+                    </button>
                 </div>
             </div>
 
-            <!-- Header Right Section -->
-            <div class="header-right-section">
-                <!-- Pixel Help Assistant in Header -->
-                <a href="https://pypottery.readthedocs.io/en/latest/" target="_blank" id="pixel-help-btn"
-                    class="pixel-help-header">
-                    <div class="pixel-speech-bubble-header">Need help?</div>
-                    <svg width="50" height="50" viewBox="30 45 180 140">
-                        <g id="pixel-monitor-header">
-                            <rect x="40" y="50" width="160" height="130" rx="15" ry="15" fill="#d0d0d0" stroke="#444"
-                                stroke-width="3" />
-                            <rect x="55" y="65" width="130" height="90" rx="5" ry="5" fill="#a0a0a0" stroke="#444"
-                                stroke-width="2" />
-                            <rect id="pixel-screen-header" x="60" y="70" width="120" height="80" rx="2" ry="2"
-                                fill="#111" />
-                            <g id="pixel-face-idle-header" transform="translate(120, 115)">
-                                <text x="0" y="5" text-anchor="middle" font-family="monospace" font-size="24"
-                                    fill="#0f0" font-weight="bold">Zzz...</text>
-                            </g>
-                            <g id="pixel-face-awake-header" class="pixel-face-awake-header"
-                                transform="translate(120, 115)">
-                                <rect x="-30" y="-15" width="10" height="12" rx="2" fill="#0f0" />
-                                <rect x="20" y="-15" width="10" height="12" rx="2" fill="#0f0" />
-                                <path d="M-15,10 Q0,25 15,10" stroke="#0f0" stroke-width="4" fill="none"
-                                    stroke-linecap="round" />
-                            </g>
-                            <circle cx="180" cy="165" r="3" fill="#e74c3c" stroke="#c0392b" stroke-width="1" />
-                        </g>
-                    </svg>
-                </a>
-
-                <!-- Info Button -->
-                <button id="info-btn" class="info-btn" title="About PyPotteryTrace">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="12" y1="16" x2="12" y2="12"></line>
-                        <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                    </svg>
+            <!-- Integrated Tab Navigation -->
+            <nav class="tab-navigation">
+                <button class="tab-button active" data-tab="projects-tab">
+                    <i class="bi bi-folder2"></i>
+                    <span class="tab-label">Projects</span>
                 </button>
-            </div>
+                <button class="tab-button" data-tab="model-tab">
+                    <i class="bi bi-gear"></i>
+                    <span class="tab-label">Setup</span>
+                </button>
+                <button class="tab-button" data-tab="segmentation-tab" id="segmentation-tab-btn" disabled>
+                    <i class="bi bi-bezier2"></i>
+                    <span class="tab-label">Segmentation</span>
+                </button>
+                <button class="tab-button" data-tab="svg-editor-tab" id="svg-editor-tab-btn" disabled>
+                    <i class="bi bi-vector-pen"></i>
+                    <span class="tab-label">SVG Editor</span>
+                </button>
+                <button class="tab-button" data-tab="postprocess-tab" id="postprocess-tab-btn" disabled>
+                    <i class="bi bi-layers"></i>
+                    <span class="tab-label">Post-Processing</span>
+                </button>
+            </nav>
         </header>
-
-        <!-- Project Info Bar -->
-        <div id="project-info-bar" class="project-info-bar" style="display: none;">
-            <div class="project-info-content">
-                <span class="project-icon" id="project-icon">🏺</span>
-                <span class="project-label">Current Project:</span>
-                <span id="current-project-name" class="project-name">No project selected</span>
-            </div>
-        </div>
-
-        <!-- Tab Navigation -->
-        <div class="tab-navigation">
-            <button class="tab-button active" data-tab="projects-tab">
-                <span class="tab-icon">📂</span>
-                <span class="tab-label">Projects</span>
-            </button>
-            <button class="tab-button" data-tab="model-tab">
-                <span class="tab-icon">⚙️</span>
-                <span class="tab-label">Setup</span>
-            </button>
-            <button class="tab-button" data-tab="segmentation-tab" id="segmentation-tab-btn" disabled>
-                <span class="tab-icon">✂️</span>
-                <span class="tab-label">Segmentation</span>
-            </button>
-            <button class="tab-button" data-tab="svg-editor-tab" id="svg-editor-tab-btn" disabled>
-                <span class="tab-icon">✏️</span>
-                <span class="tab-label">SVG Editor</span>
-            </button>
-            <button class="tab-button" data-tab="postprocess-tab" id="postprocess-tab-btn">
-                <span class="tab-icon">🎨</span>
-                <span class="tab-label">Post-Processing</span>
-            </button>
-        </div>
 
         <!-- Tab 0: Projects -->
         <div class="tab-content active" id="projects-tab">
@@ -529,15 +224,15 @@
                 <!-- Top Bar -->
                 <div class="projects-top-bar">
                     <div class="top-bar-left">
-                        <h2>📁 Projects</h2>
-                        <p>Manage your pottery analysis projects</p>
+                        <h2><i class="bi bi-folder2-open"></i> Projects</h2>
+                        <p>Manage your ceramic documentation and vectorization projects</p>
                     </div>
                     <div class="top-bar-right">
                         <button class="btn btn-secondary" id="refresh-projects-btn">
-                            🔄 Refresh
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
                         </button>
                         <button class="btn btn-primary" id="new-project-btn">
-                            ➕ New Project
+                            <i class="bi bi-plus-lg"></i> New Project
                         </button>
                     </div>
                 </div>
@@ -554,20 +249,20 @@
                     <div class="modal-overlay"></div>
                     <div class="modal-dialog">
                         <div class="modal-header">
-                            <h3>Create New Project</h3>
-                            <button class="modal-close" id="close-create-modal">&times;</button>
+                            <h3><i class="bi bi-folder-plus"></i> Create New Project</h3>
+                            <button class="modal-close" id="close-create-modal" aria-label="Close modal"><i class="bi bi-x-lg"></i></button>
                         </div>
                         <div class="modal-body">
                             <div class="form-group">
                                 <label for="new-project-name">Project Name *</label>
                                 <input type="text" id="new-project-name" class="form-control"
-                                    placeholder="e.g., Pompeii_Pottery_2024" required>
+                                    placeholder="e.g., Montale_Ceramics_2024" required>
                             </div>
 
                             <div class="form-group">
                                 <label for="new-project-description">Description</label>
                                 <textarea id="new-project-description" class="form-control" rows="3"
-                                    placeholder="Brief description of your project..."></textarea>
+                                    placeholder="Brief description of finds, context, or site..." style="resize: none;"></textarea>
                             </div>
 
                             <div class="form-group">
@@ -596,7 +291,7 @@
                         </div>
                         <div class="modal-footer">
                             <button class="btn btn-secondary" id="cancel-create-btn">Cancel</button>
-                            <button class="btn btn-primary" id="create-project-btn">Create Project</button>
+                            <button class="btn btn-primary" id="create-project-btn"><i class="bi bi-check-lg"></i> Create Project</button>
                         </div>
                     </div>
                 </div>
@@ -607,64 +302,70 @@
         <div class="tab-content" id="model-tab">
             <div class="setup-container">
                 <div class="setup-header">
-                    <h2>📁 Setup - Project Images and Model</h2>
-                    <p>View your project images and configure the segmentation model</p>
+                    <h2><i class="bi bi-gear"></i> Setup — Project Images and Model</h2>
+                    <p>View your project images and configure the SAM2 segmentation model</p>
                 </div>
 
                 <div class="setup-panels">
                     <!-- Panel 1: Project Images Gallery -->
                     <div class="setup-panel" style="flex: 2;">
-                        <h3>🖼️ Project Images</h3>
+                        <h3><i class="bi bi-images"></i> Project Images</h3>
                         <div id="folder-info" class="folder-info">
-                            <p id="no-project-message" style="color: #888; text-align: center; padding: 20px;">
-                                📂 No project loaded. Use the <strong>Project Manager</strong> button to create or open
-                                a project.
+                            <p id="no-project-message" style="color: var(--text-muted); text-align: center; padding: 24px;">
+                                <i class="bi bi-folder2-open" style="font-size: 1.8rem; display: block; margin-bottom: 8px; color: var(--primary);"></i>
+                                No project loaded. Use the <strong>Projects</strong> tab to create or open a project.
                             </p>
                             <div id="project-images-info" style="display: none;">
-                                <p><strong>Project:</strong> <span id="folder-name"></span></p>
-                                <p><strong>Images:</strong> <span id="images-count">0</span></p>
+                                <p><i class="bi bi-folder2-open" style="color: var(--primary);"></i> <strong>Project:</strong> <span id="folder-name"></span></p>
+                                <p><i class="bi bi-images" style="color: var(--primary);"></i> <strong>Images:</strong> <span id="images-count">0</span></p>
                             </div>
                             <div id="images-preview" class="images-preview"></div>
+                            <div id="setup-drop-zone" class="setup-drop-zone" style="display: none;">
+                                <i class="bi bi-cloud-arrow-up setup-drop-icon"></i>
+                                <div class="setup-drop-text">
+                                    <span>Drag & drop images here, or <strong>browse files</strong></span>
+                                    <small>Supports PNG, JPG, JPEG, BMP, TIFF</small>
+                                </div>
+                                <input type="file" id="setup-file-input" multiple accept="image/png, image/jpeg, image/jpg, image/bmp, image/tiff, image/webp" style="display: none;">
+                            </div>
                         </div>
                     </div>
 
                     <!-- Panel 2: Model Selection -->
                     <div class="setup-panel" style="flex: 1;">
-                        <h3>🤖 Select SAM2 Model</h3>
+                        <h3><i class="bi bi-cpu"></i> Select SAM2 Model</h3>
                         <div class="model-selection-compact">
                             <div class="model-option">
                                 <input type="radio" id="model-tiny" name="model" value="tiny">
                                 <label for="model-tiny">
-                                    <strong>⚡ Tiny</strong>
-                                    <span class="model-desc">~40MB - Very Fast - Good accuracy</span>
+                                    <strong><i class="bi bi-lightning-charge"></i> Tiny</strong>
+                                    <span class="model-desc">~40MB • Very Fast • Good accuracy</span>
                                 </label>
                             </div>
                             <div class="model-option">
                                 <input type="radio" id="model-small" name="model" value="small" checked>
                                 <label for="model-small">
-                                    <strong>⭐ Small (Recommended)</strong>
-                                    <span class="model-desc">~180MB - Fast - Very Good accuracy</span>
+                                    <strong><i class="bi bi-star-fill" style="color: var(--primary);"></i> Small (Recommended)</strong>
+                                    <span class="model-desc">~180MB • Fast • High accuracy</span>
                                 </label>
                             </div>
                             <div class="model-option">
                                 <input type="radio" id="model-base" name="model" value="base">
                                 <label for="model-base">
-                                    <strong>🎯 Base+</strong>
-                                    <span class="model-desc">~230MB - Medium - Excellent accuracy</span>
+                                    <strong><i class="bi bi-bullseye"></i> Base+</strong>
+                                    <span class="model-desc">~230MB • Medium • Excellent accuracy</span>
                                 </label>
                             </div>
                             <div class="model-option">
                                 <input type="radio" id="model-large" name="model" value="large">
                                 <label for="model-large">
-                                    <strong>🚀 Large</strong>
-                                    <span class="model-desc">~900MB - Slow - Best accuracy</span>
+                                    <strong><i class="bi bi-rocket-takeoff"></i> Large</strong>
+                                    <span class="model-desc">~900MB • Slower • Highest precision</span>
                                 </label>
                             </div>
                         </div>
                     </div>
                 </div>
-
-                <!-- Start Button removed: processing is triggered automatically or from other controls -->
 
                 <div class="model-status" id="model-loading-status" style="display: none;">
                     <div class="spinner"></div>
@@ -679,34 +380,33 @@
                 <!-- Left Sidebar - Tools & Controls -->
                 <aside class="sidebar left-sidebar">
                     <div class="panel">
-                        <h2>📁 Current Image</h2>
+                        <h2><i class="bi bi-image"></i> Current Image</h2>
                         <div id="image-info" class="image-info">
                             <p><strong>File:</strong> <span id="filename">No image loaded</span></p>
-                            <p><strong>Image:</strong> <span id="current-image-number">-</span> / <span
-                                    id="total-images">-</span></p>
+                            <p><strong>Image:</strong> <span id="current-image-number">-</span> / <span id="total-images">-</span></p>
                         </div>
                     </div>
 
                     <div class="panel">
-                        <h2>🎯 Segmentation Mode</h2>
+                        <h2><i class="bi bi-cursor"></i> Segmentation Mode</h2>
                         <div class="mode-selector">
                             <button class="mode-btn active" data-mode="point" id="point-mode-btn">
-                                <span class="mode-icon">👆</span>
+                                <span class="mode-icon"><i class="bi bi-hand-index-thumb"></i></span>
                                 <span>Point Mode</span>
                                 <span class="mode-desc">Click to segment</span>
                             </button>
                             <button class="mode-btn" data-mode="box" id="box-mode-btn">
-                                <span class="mode-icon">▭</span>
+                                <span class="mode-icon"><i class="bi bi-bounding-box"></i></span>
                                 <span>Box Mode</span>
                                 <span class="mode-desc">Draw bounding box</span>
                             </button>
                             <button class="mode-btn" data-mode="polygon" id="polygon-mode-btn">
-                                <span class="mode-icon">⬡</span>
+                                <span class="mode-icon"><i class="bi bi-hexagon"></i></span>
                                 <span>Manual Polygon</span>
                                 <span class="mode-desc">Draw mask manually</span>
                             </button>
                             <button class="mode-btn" data-mode="rotation" id="rotation-mode-btn">
-                                <span class="mode-icon">⊕</span>
+                                <span class="mode-icon"><i class="bi bi-bullseye"></i></span>
                                 <span>Rotation Center</span>
                                 <span class="mode-desc">Set mirror axis</span>
                             </button>
@@ -715,66 +415,60 @@
                         <div class="point-controls" id="point-controls">
                             <label>
                                 <input type="radio" name="point-label" value="1" checked>
-                                <span class="positive">➕ Positive</span>
+                                <span class="positive"><i class="bi bi-plus-circle"></i> Positive</span>
                             </label>
                             <label>
                                 <input type="radio" name="point-label" value="0">
-                                <span class="negative">➖ Negative</span>
+                                <span class="negative"><i class="bi bi-dash-circle"></i> Negative</span>
                             </label>
                         </div>
 
                         <div class="polygon-controls" id="polygon-controls" style="display: none;">
-                            <p style="font-size: 0.85rem; color: #666; margin-bottom: 8px;">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 8px;">
                                 <span id="polygon-mode-instructions">
-                                    Click to add vertices. Double-click or press Enter to close polygon.
+                                    Click to add vertices. Click start point, double-click or press Enter to close.
                                 </span><br>
                                 <span id="polygon-points-counter">Points: 0</span>
                             </p>
-                            <div id="polygon-draw-controls">
-                                <button id="undo-polygon-point-btn" class="btn btn-secondary btn-small"
-                                    style="margin-bottom: 8px;" disabled>
-                                    <span>↩️</span> Undo Point
+                            <div id="polygon-draw-controls" style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                <button id="undo-polygon-point-btn" class="btn btn-secondary btn-small" style="flex: 1;" disabled>
+                                    <i class="bi bi-arrow-counterclockwise"></i> Undo Point
                                 </button>
-                                <button id="close-polygon-btn" class="btn btn-secondary btn-small"
-                                    style="margin-bottom: 8px;" disabled>
-                                    <span>✓</span> Close Polygon
-                                </button>
-                                <button id="clear-polygon-btn" class="btn btn-secondary btn-small" disabled>
-                                    <span>✗</span> Clear All
+                                <button id="clear-polygon-btn" class="btn btn-secondary btn-small" style="flex: 1;" disabled>
+                                    <i class="bi bi-x-circle"></i> Clear All
                                 </button>
                             </div>
                             <div id="polygon-edit-controls" style="display: none;">
-                                <p style="font-size: 0.8rem; color: #666; margin: 4px 0;">
-                                    <strong>Edit mode:</strong> Drag vertices to move. Click edge to add point.
-                                    Right-click vertex to delete.
+                                <p style="font-size: 0.8rem; color: var(--text-dim); margin: 4px 0;">
+                                    <strong>Edit mode:</strong> Drag vertices to move. Click edge to add point. Right-click vertex to delete.
                                 </p>
                                 <div class="form-group" style="margin: 8px 0;">
-                                    <label for="simplify-slider" style="font-size: 0.85rem;">Simplification: <span
-                                            id="simplify-value">15</span></label>
-                                    <input type="range" id="simplify-slider" min="1" max="30" step="1" value="15"
-                                        style="width: 100%;">
-                                    <small style="color: #888;">Higher = fewer vertices (min 3)</small>
+                                    <label for="simplify-slider" style="font-size: 0.85rem;">Simplification: <span id="simplify-value">15</span></label>
+                                    <input type="range" id="simplify-slider" min="1" max="30" step="1" value="15" style="width: 100%;">
+                                    <small style="color: var(--text-muted);">Higher = fewer vertices (min 3)</small>
                                 </div>
-                                <button id="apply-simplify-btn" class="btn btn-secondary btn-small">
-                                    <span>📐</span> Apply Simplification
-                                </button>
-                                <button id="finish-edit-btn" class="btn btn-primary btn-small">
-                                    <span>✓</span> Done Editing
-                                </button>
+                                <div style="display: flex; gap: 8px; margin-top: 8px;">
+                                    <button id="cancel-edit-btn" class="btn btn-secondary btn-small" style="flex: 1;" title="Cancel editing and revert mask">
+                                        <i class="bi bi-x-lg"></i> Cancel
+                                    </button>
+                                    <button id="finish-edit-btn" class="btn btn-primary btn-small" style="flex: 1;" title="Save edited polygon">
+                                        <i class="bi bi-check-lg"></i> Done Editing
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <div class="panel">
-                        <h2>🏷️ Category</h2>
+                        <h2><i class="bi bi-tags"></i> Category</h2>
                         <select id="category-select" class="category-select">
-                            <option value="Profile">🏺 Profile</option>
-                            <option value="Application">🎯 Application</option>
-                            <option value="Handle">🪢 Handle</option>
-                            <option value="Prospectus">👁️ Prospectus</option>
-                            <option value="Decoration">🎨 Decoration</option>
-                            <option value="Running_Element">🏃 Running element</option>
-                            <option value="Detail">📌 Detail</option>
+                            <option value="Profile">Profile</option>
+                            <option value="Application">Application</option>
+                            <option value="Handle">Handle</option>
+                            <option value="Prospectus">Prospectus</option>
+                            <option value="Decoration">Decoration</option>
+                            <option value="Running_Element">Running element</option>
+                            <option value="Detail">Detail</option>
                         </select>
 
                         <div class="form-group">
@@ -783,39 +477,53 @@
                         </div>
 
                         <div class="form-group">
-                            <label>
-                                <input type="checkbox" id="vectorize-checkbox" checked>
-                                Enable vectorization (SVG)
-                            </label>
-                            <small style="color: #666; display: block; margin-top: 4px;">
-                                Uncheck to export as PNG with transparent background
-                            </small>
+                            <label class="form-label" style="font-weight: 600; font-size: 0.82rem; margin-bottom: 6px; display: block;">Export Format:</label>
+                            <div class="format-radio-group">
+                                <label class="format-radio-btn active" id="format-radio-svg-label">
+                                    <input type="radio" name="export-format-type" id="export-format-svg" value="svg" checked>
+                                    <i class="bi bi-filetype-svg"></i>
+                                    <span>Vector (SVG)</span>
+                                </label>
+                                <label class="format-radio-btn" id="format-radio-png-label">
+                                    <input type="radio" name="export-format-type" id="export-format-png" value="png">
+                                    <i class="bi bi-filetype-png"></i>
+                                    <span>Raster (PNG)</span>
+                                </label>
+                            </div>
+                            <input type="checkbox" id="vectorize-checkbox" checked style="display: none;" aria-hidden="true">
                         </div>
 
                         <button id="edit-mask-btn" class="btn btn-secondary" disabled style="margin-bottom: 8px;">
-                            <span>✏️</span> Edit Mask
+                            <i class="bi bi-pencil"></i> Edit Mask
                         </button>
 
                         <button id="add-segment-btn" class="btn btn-primary" disabled style="margin-bottom: 8px;">
-                            <span>✓</span> Add Segment
+                            <i class="bi bi-plus-lg"></i> Add Segment
                         </button>
 
-                        <button id="clear-preview-btn" class="btn btn-secondary" disabled>
-                            <span>✗</span> Clear Preview
-                        </button>
+                        <div class="clear-preview-wrapper" style="display: flex; justify-content: center; width: 100%; margin-top: 4px;">
+                            <button id="clear-preview-btn" class="btn btn-secondary" disabled>
+                                <i class="bi bi-x-circle"></i> Clear Preview
+                            </button>
+                        </div>
                     </div>
 
                     <div class="panel">
-                        <h2>⚙️ Settings</h2>
+                        <h2><i class="bi bi-sliders"></i> Settings</h2>
                         <div class="form-group">
                             <label>Simplification: <span id="epsilon-value">1.5</span></label>
-                            <input type="range" id="epsilon-slider" min="0.5" max="5" step="0.1" value="1.5"
-                                class="slider">
+                            <input type="range" id="epsilon-slider" min="0.5" max="5" step="0.1" value="1.5" class="slider">
                         </div>
                         <div class="form-group">
                             <label>Smoothing: <span id="smoothing-value">0.3</span></label>
-                            <input type="range" id="smoothing-slider" min="0" max="1" step="0.1" value="0.3"
-                                class="slider">
+                            <input type="range" id="smoothing-slider" min="0" max="1" step="0.1" value="0.3" class="slider">
+                        </div>
+                        <div class="form-group">
+                            <label>Line Threshold (Black Level): <span id="lines-threshold-value">100</span></label>
+                            <input type="range" id="lines-threshold-slider" min="10" max="240" step="5" value="100" class="slider" title="Binarization threshold for lines (higher = only dark lines, lower = faint lines)">
+                            <small style="color: var(--text-muted); display: block; margin-top: 3px; font-size: 0.75rem;">
+                                Higher values detect only dark lines; lower values capture fainter strokes.
+                            </small>
                         </div>
                     </div>
                 </aside>
@@ -825,30 +533,30 @@
                     <div class="canvas-container" id="canvas-container">
                         <canvas id="main-canvas"></canvas>
                         <div id="canvas-message" class="canvas-message">
-                            <span class="message-icon">📷</span>
-                            <p>Clicca su un'immagine nella galleria per iniziare la segmentazione</p>
+                            <span class="message-icon"><i class="bi bi-image" style="font-size: 2.5rem; color: var(--primary);"></i></span>
+                            <p>Select an image from the gallery to begin segmentation</p>
                         </div>
                     </div>
 
                     <div class="canvas-toolbar">
                         <button id="zoom-in-btn" class="toolbar-btn" title="Zoom In">
-                            <span>🔍+</span>
+                            <i class="bi bi-zoom-in"></i>
                         </button>
                         <button id="zoom-out-btn" class="toolbar-btn" title="Zoom Out">
-                            <span>🔍-</span>
+                            <i class="bi bi-zoom-out"></i>
                         </button>
                         <button id="reset-view-btn" class="toolbar-btn" title="Reset View">
-                            <span>⟲</span>
+                            <i class="bi bi-arrow-repeat"></i>
                         </button>
                         <div class="toolbar-divider"></div>
                         <button id="undo-btn" class="toolbar-btn" title="Undo" disabled>
-                            <span>↶</span>
+                            <i class="bi bi-arrow-counterclockwise"></i>
                         </button>
                     </div>
 
                     <!-- Image Navigation Grid -->
                     <div class="image-grid-panel">
-                        <h3>📁 Project Images (<span id="grid-image-count">0</span>)</h3>
+                        <h3><i class="bi bi-grid-3x3"></i> Project Images (<span id="grid-image-count">0</span>)</h3>
                         <div id="image-navigation-grid" class="image-navigation-grid">
                             <p class="empty-message">No images in project</p>
                         </div>
@@ -858,12 +566,20 @@
                 <!-- Right Sidebar - Segments List -->
                 <aside class="sidebar right-sidebar">
                     <div class="panel">
-                        <h2>📋 Segments</h2>
+                        <h2><i class="bi bi-list-check"></i> Segments</h2>
                         <div id="rotation-center-info" class="rotation-info" style="display: none;">
-                            <p>⊕ Rotation Center: <span id="rotation-coords"></span></p>
-                            <button id="clear-rotation-btn" class="btn btn-secondary btn-small"
-                                style="margin-top: 5px;">
-                                <span>✗</span> Clear Rotation Center
+                            <div class="rotation-info-main">
+                                <div class="rotation-icon-badge">
+                                    <i class="bi bi-bullseye"></i>
+                                </div>
+                                <div class="rotation-details">
+                                    <span class="rotation-label">Rotation Center</span>
+                                    <span id="rotation-coords" class="rotation-coords"></span>
+                                </div>
+                            </div>
+                            <button id="clear-rotation-btn" type="button" class="rotation-clear-btn" title="Clear rotation center">
+                                <i class="bi bi-x-lg"></i>
+                                <span>Clear</span>
                             </button>
                         </div>
                         <div id="segments-list" class="segments-list">
@@ -872,21 +588,22 @@
                     </div>
 
                     <div class="panel">
-                        <h2>📤 Export</h2>
-                        <button id="export-btn" class="btn btn-success btn-large" disabled>
-                            <span>🎨</span> Generate SVG
+                        <h2><i class="bi bi-box-arrow-up-right"></i> Export</h2>
+                        <button id="export-btn" class="btn btn-primary btn-large" disabled>
+                            <i class="bi bi-filetype-svg"></i> Generate SVG
                         </button>
-                        <p style="font-size: 0.9em; color: #666; margin-top: 8px;">
-                            Generate SVG and switch to "SVG Editor" tab to modify it before saving
+                        <p style="font-size: 0.85rem; color: var(--text-dim); margin-top: 8px;">
+                            Generate SVG and switch to "SVG Editor" tab to refine paths before saving
                         </p>
-                        <p id="ml-export-notice"
-                            style="font-size: 0.85em; color: #10b981; margin-top: 4px; display: none;">
-                            🤖 ML training data will be automatically exported
+                        <p id="ml-export-notice" style="font-size: 0.85rem; color: var(--teal); margin-top: 4px; display: none;">
+                            <i class="bi bi-cpu"></i> ML training data will be automatically exported
                         </p>
 
-                        <button id="debug-export-btn" class="btn btn-secondary" disabled style="margin-top: 10px;">
-                            <span>🔧</span> DEBUG: Export Masks as PNG
-                        </button>
+                        <div class="debug-btn-wrapper">
+                            <button id="debug-export-btn" class="btn btn-secondary btn-small" disabled>
+                                <i class="bi bi-tools"></i> DEBUG: Export Masks as PNG
+                            </button>
+                        </div>
 
                         <div id="export-status" class="export-status" style="display: none;">
                             <div class="progress-bar">
@@ -895,8 +612,6 @@
                             <p id="status-text">Processing...</p>
                         </div>
                     </div>
-
-
                 </aside>
             </div>
         </div>
@@ -907,44 +622,48 @@
                 <!-- Left Sidebar - Tools & Info -->
                 <aside class="sidebar left-sidebar">
                     <div class="panel">
-                        <h2>🎨 SVG Editor</h2>
-                        <p style="font-size: 0.875rem; color: #666; margin-bottom: 1rem;">
-                            View and edit the exported SVG. You can select and delete individual points.
+                        <h2><i class="bi bi-vector-pen"></i> SVG Editor</h2>
+                        <p style="font-size: 0.875rem; color: var(--text-dim); margin-bottom: 1rem;">
+                            View and edit the exported SVG. You can select and manipulate individual points and layers.
                         </p>
                     </div>
 
                     <div class="panel">
-                        <h2>🔧 Tools</h2>
+                        <h2><i class="bi bi-tools"></i> Tools</h2>
                         <div class="mode-selector">
                             <button class="mode-btn active" data-svg-mode="view" id="svg-view-mode-btn">
-                                <span class="mode-icon">👁️</span>
+                                <span class="mode-icon"><i class="bi bi-arrows-move"></i></span>
                                 <span>View Mode</span>
                                 <span class="mode-desc">Pan & zoom</span>
                             </button>
                             <button class="mode-btn" data-svg-mode="select" id="svg-select-mode-btn">
-                                <span class="mode-icon">👆</span>
+                                <span class="mode-icon"><i class="bi bi-cursor"></i></span>
                                 <span>Select Mode</span>
                                 <span class="mode-desc">Select points</span>
                             </button>
                             <button class="mode-btn" data-svg-mode="add" id="svg-add-mode-btn">
-                                <span class="mode-icon">➕</span>
+                                <span class="mode-icon"><i class="bi bi-plus-circle"></i></span>
                                 <span>Add Point</span>
                                 <span class="mode-desc">Click on path to add point</span>
                             </button>
                             <button class="mode-btn" data-svg-mode="delete" id="svg-delete-mode-btn">
-                                <span class="mode-icon">🗑️</span>
+                                <span class="mode-icon"><i class="bi bi-trash"></i></span>
                                 <span>Delete Mode</span>
                                 <span class="mode-desc">Click to delete points</span>
+                            </button>
+                            <button class="mode-btn" data-svg-mode="reconstruct-spline" id="svg-reconstruct-spline-mode-btn" title="Outer face first (click break point, then a reference point) - it mirrors automatically. Then the inner/fracture face, which does not mirror.">
+                                <span class="mode-icon"><i class="bi bi-bezier"></i></span>
+                                <span>Continuation Line</span>
+                                <span class="mode-desc">Outer face, then inner face</span>
                             </button>
                         </div>
                     </div>
 
                     <div class="panel">
-                        <h2>⚙️ Settings</h2>
+                        <h2><i class="bi bi-sliders"></i> Settings</h2>
                         <div class="form-group">
                             <label>Point Size: <span id="svg-point-size-value">8</span>px</label>
-                            <input type="range" id="svg-point-size-slider" min="4" max="16" step="1" value="8"
-                                class="slider">
+                            <input type="range" id="svg-point-size-slider" min="4" max="16" step="1" value="8" class="slider">
                         </div>
                         <div class="form-group">
                             <label>
@@ -959,59 +678,58 @@
                             </label>
                         </div>
 
-                        <div
-                            style="margin-top: 15px; padding: 10px; background: #f0f0f0; border-radius: 4px; font-size: 0.8rem;">
-                            <strong style="display: block; margin-bottom: 8px;">Point Types:</strong>
+                        <div style="margin-top: 15px; padding: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem;">
+                            <strong style="display: block; margin-bottom: 8px; color: var(--text-main);">Point Types:</strong>
                             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                                <span
-                                    style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #2563eb;"></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #2563eb;"></span>
                                 <span>Path Points</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                                <span
-                                    style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9333ea;"></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #9333ea;"></span>
                                 <span>Control Points (Curves)</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                                <span
-                                    style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f59e0b;"></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #d97706;"></span>
                                 <span>Hovered</span>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
-                                <span
-                                    style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #ef4444;"></span>
+                                <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--primary);"></span>
                                 <span>Selected</span>
                             </div>
                         </div>
                     </div>
 
                     <div class="panel">
-                        <h2>📊 Selection Info</h2>
+                        <h2><i class="bi bi-info-circle"></i> Selection Info</h2>
                         <div id="svg-selection-info" style="font-size: 0.875rem;">
                             <p>No point selected</p>
                         </div>
                     </div>
 
                     <div class="panel">
-                        <h2>💡 Shortcuts</h2>
-                        <div style="font-size: 0.8rem; line-height: 1.6; color: #666;">
-                            <p><strong>Mode View:</strong></p>
-                            <p>• Drag (empty area): Pan view<br>
+                        <h2><i class="bi bi-keyboard"></i> Shortcuts</h2>
+                        <div style="font-size: 0.8rem; line-height: 1.6; color: var(--text-dim);">
+                            <p><strong>View Mode:</strong></p>
+                            <p>• Drag: Pan view<br>
                                 • Scroll: Zoom<br>
-                                • <span style="color: #10b981; font-weight: bold;">Click on Image: Move Image
-                                    🆕</span><br>
-                                • Shift + Drag: Force pan (ignore images)</p>
+                                • <span style="color: var(--teal); font-weight: bold;">Click on Image: Move Image</span><br>
+                                • Shift + Drag: Force pan</p>
 
-                            <p style="margin-top: 8px;"><strong>Mode Select:</strong></p>
-                            <p>• Click: Select Point<br>
+                            <p style="margin-top: 8px;"><strong>Select Mode:</strong></p>
+                            <p>• Click: Select point<br>
                                 • Shift + Click: Multi-select<br>
-                                • Ctrl + Drag: Move Point</p>
+                                • Ctrl + Drag: Move point</p>
 
-                            <p style="margin-top: 8px;"><strong>Mode Add Point:</strong></p>
-                            <p>• Click on path: Add new point at position</p>
+                            <p style="margin-top: 8px;"><strong>Add Point Mode:</strong></p>
+                            <p>• Click on path: Add new point</p>
 
-                            <p style="margin-top: 8px;"><strong>Mode Delete:</strong></p>
-                            <p>• Click: Delete Point</p>
+                            <p style="margin-top: 8px;"><strong>Delete Mode:</strong></p>
+                            <p>• Click: Delete point</p>
+
+                            <p style="margin-top: 8px;"><strong>Continuation Line Mode:</strong></p>
+                            <p>• Phase 1 — outer face (enlarged points): click the break point, then a second point further back on the same fragment (its curvature is sampled between them). This one mirrors automatically.<br>
+                                • Phase 2 — inner/fracture face: same two clicks, but this line is never mirrored.<br>
+                                • Esc / right-click: Cancel the pending break point</p>
                         </div>
                     </div>
                 </aside>
@@ -1021,24 +739,24 @@
                     <div class="canvas-container" id="svg-canvas-container">
                         <canvas id="svg-canvas"></canvas>
                         <div id="svg-canvas-message" class="canvas-message">
-                            <span class="message-icon">📄</span>
-                            <p>Export an SVG from the Segmentation tab to begin</p>
+                            <span class="message-icon"><i class="bi bi-file-earmark-code" style="font-size: 2.5rem; color: var(--primary);"></i></span>
+                            <p>Export an SVG from the Segmentation tab to begin editing</p>
                         </div>
                     </div>
 
                     <div class="canvas-toolbar">
                         <button id="svg-zoom-in-btn" class="toolbar-btn" title="Zoom In">
-                            <span>🔍+</span>
+                            <i class="bi bi-zoom-in"></i>
                         </button>
                         <button id="svg-zoom-out-btn" class="toolbar-btn" title="Zoom Out">
-                            <span>🔍-</span>
+                            <i class="bi bi-zoom-out"></i>
                         </button>
                         <button id="svg-reset-view-btn" class="toolbar-btn" title="Reset View">
-                            <span>⟲</span>
+                            <i class="bi bi-arrow-repeat"></i>
                         </button>
                         <div class="toolbar-divider"></div>
                         <button id="svg-undo-btn" class="toolbar-btn" title="Undo" disabled>
-                            <span>↶</span>
+                            <i class="bi bi-arrow-counterclockwise"></i>
                         </button>
                     </div>
                 </main>
@@ -1046,10 +764,10 @@
                 <!-- Right Sidebar - Layers & Export -->
                 <aside class="sidebar right-sidebar">
                     <div class="panel">
-                        <h2>📋 Layers</h2>
-                        <button id="svg-add-image-btn" class="btn btn-secondary btn-small"
-                            style="width: 100%; margin-bottom: 10px;">
-                            <span>📷</span> Add Current Image
+                        <h2><i class="bi bi-layers"></i> Layers</h2>
+                        <button id="svg-add-image-btn" class="layer-add-image-btn" title="Add current image as a reference layer">
+                            <i class="bi bi-image"></i>
+                            <span>Add Reference Image</span>
                         </button>
                         <div id="svg-layers-list" class="segments-list">
                             <p class="empty-message">No layers loaded</p>
@@ -1057,32 +775,37 @@
                     </div>
 
                     <div class="panel">
-                        <h2>📤 Export</h2>
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label>
-                                <input type="checkbox" id="svg-bg-checkbox">
-                                Include background in SVG
-                            </label>
-                            <p style="font-size: 0.85rem; color: #666; margin-top: 4px;">
-                                Include the original image as background in the exported SVG
+                        <h2><i class="bi bi-box-arrow-up-right"></i> Export</h2>
+                        <div class="macos-control-group">
+                            <span class="macos-control-label">Background Mode:</span>
+                            <div class="macos-segmented-control" role="radiogroup" aria-label="SVG Background Mode">
+                                <label class="macos-segment active" id="svg-bg-opt-none" title="Export clean SVG without background image">
+                                    <input type="radio" name="svg-bg-mode" id="svg-bg-mode-none" value="false" checked>
+                                    <i class="bi bi-filetype-svg"></i>
+                                    <span>SVG Only</span>
+                                </label>
+                                <label class="macos-segment" id="svg-bg-opt-include" title="Include original image as background in SVG">
+                                    <input type="radio" name="svg-bg-mode" id="svg-bg-mode-include" value="true">
+                                    <i class="bi bi-image"></i>
+                                    <span>With Image</span>
+                                </label>
+                            </div>
+                            <input type="checkbox" id="svg-bg-checkbox" style="display: none;" aria-hidden="true">
+                            <p id="svg-bg-desc" class="macos-control-desc">
+                                Export clean vector paths with transparent background
                             </p>
                         </div>
-                        <button id="svg-save-btn" class="btn btn-success btn-large" disabled>
-                            <span>💾</span> Save Modified SVG
+
+                        <button id="svg-save-btn" class="btn btn-primary btn-large" disabled>
+                            <i class="bi bi-floppy"></i> Save Modified SVG
                         </button>
-                        <p style="font-size: 0.85rem; color: #666; margin-top: 8px;">
-                            Save the modified SVG and download the complete package
-                        </p>
-                        <button id="svg-download-zip-btn" class="btn btn-secondary" disabled style="margin-top: 10px;">
-                            <span>📦</span> Download Complete ZIP
-                        </button>
-                        <p style="font-size: 0.85rem; color: #666; margin-top: 8px;">
-                            Download all files (SVG + PNG) without modifications
+                        <p style="font-size: 0.83rem; color: var(--text-dim); margin-top: 8px; margin-bottom: 0;">
+                            Save the modified SVG to the project folder
                         </p>
                     </div>
 
                     <div class="panel stats-panel">
-                        <h3>📊 Statistics</h3>
+                        <h3><i class="bi bi-bar-chart-line"></i> Statistics</h3>
                         <div class="stat-row">
                             <span>Total Paths:</span>
                             <span id="svg-stat-paths">0</span>
@@ -1104,266 +827,353 @@
         <div class="tab-content" id="postprocess-tab">
             <div class="postprocess-container">
                 <header class="postprocess-header">
-                    <h2>🎨 Post-Processing - Batch Export Vectorized Data</h2>
-                    <p>Export all vectorized files from your output folder in different formats</p>
+                    <h2><i class="bi bi-layers"></i> Post-Processing — Batch Export & Live Preview Studio</h2>
+                    <p>Interactive preview of path simplification, line weights, and batch export for archaeological publication</p>
                 </header>
 
                 <div class="postprocess-panels">
-                    <!-- Left Panel: Project Info & Preview -->
+                    <!-- Left Column: Live Preview Studio -->
                     <div class="postprocess-left">
-                        <div class="panel">
-                            <h3>📂 Current Project</h3>
-                            <p style="color: #666; font-size: 0.9rem; margin-bottom: 15px;">
-                                Export vectorized files from the current project
-                            </p>
-
-                            <div id="postprocess-project-info"
-                                style="display: none; background: #eff6ff; border: 1px solid #3b82f6; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
-                                <h4 style="margin: 0 0 10px 0; color: #1e40af;">📁 <span
-                                        id="postprocess-project-name">Project Name</span></h4>
-                                <p style="margin: 5px 0; color: #475569; font-size: 0.85rem;">
-                                    <strong>Vectorized folder:</strong><br>
-                                    <span id="postprocess-folder-path"
-                                        style="font-family: monospace; font-size: 0.8rem; word-break: break-all;"></span>
-                                </p>
-                            </div>
-
-                            <div id="postprocess-no-project"
-                                style="background: #fef3c7; border: 1px solid #f59e0b; padding: 15px; border-radius: 8px; text-align: center;">
-                                <p style="margin: 0; color: #92400e; font-size: 0.9rem;">
-                                    ⚠️ <strong>No project loaded</strong><br>
-                                    Please load a project from the Projects tab first
-                                </p>
-                            </div>
-
-                            <div id="postprocess-folder-info" style="display: none; margin-top: 20px;">
-                                <div
-                                    style="background: #f0fdf4; border: 1px solid #86efac; padding: 15px; border-radius: 8px;">
-                                    <h4 style="margin: 0 0 10px 0; color: #15803d;">✓ Files Loaded</h4>
-                                    <p style="margin: 5px 0;"><strong>SVG Files:</strong> <span
-                                            id="postprocess-svg-count">0</span></p>
-                                    <p style="margin: 5px 0;"><strong>PNG Files:</strong> <span
-                                            id="postprocess-png-count">0</span></p>
+                        <div class="panel postprocess-studio-panel">
+                            <div class="postprocess-studio-header">
+                                <div class="studio-title-wrap">
+                                    <h3><i class="bi bi-eye"></i> Live Preview Studio</h3>
+                                    <span class="studio-file-badge" id="postprocess-preview-file-badge">No File</span>
                                 </div>
-
-                                <div id="postprocess-categories" style="margin-top: 20px;">
-                                    <h4>📋 Categories Found:</h4>
-                                    <div id="postprocess-categories-list" style="margin-top: 10px;">
-                                        <!-- Categories will be populated here -->
+                                <div class="postprocess-toolbar">
+                                    <button type="button" id="postprocess-random-file-btn" class="studio-tool-btn random-piece-btn" title="Pick a random piece to preview">
+                                        <i class="bi bi-dice-5"></i> <span class="btn-label">Random</span>
+                                    </button>
+                                    <div class="studio-btn-group">
+                                        <button type="button" id="postprocess-compare-btn" class="studio-tool-btn" title="Click to compare with raw original SVG">
+                                            <i class="bi bi-arrow-left-right"></i> <span class="btn-label">Original</span>
+                                        </button>
+                                        <button type="button" id="postprocess-zoom-in-btn" class="studio-tool-btn" title="Zoom In">
+                                            <i class="bi bi-zoom-in"></i>
+                                        </button>
+                                        <button type="button" id="postprocess-zoom-out-btn" class="studio-tool-btn" title="Zoom Out">
+                                            <i class="bi bi-zoom-out"></i>
+                                        </button>
+                                        <button type="button" id="postprocess-reset-view-btn" class="studio-tool-btn" title="Reset View">
+                                            <i class="bi bi-arrows-angle-contract"></i>
+                                        </button>
+                                        <button type="button" id="postprocess-bg-toggle-btn" class="studio-tool-btn" title="Toggle Dot Grid / Pure White Background">
+                                            <i class="bi bi-grid-3x3"></i>
+                                        </button>
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- Interactive SVG Viewport -->
+                            <div class="postprocess-viewport-container" id="postprocess-viewport-container">
+                                <div id="postprocess-svg-viewport" class="postprocess-svg-viewport dot-grid">
+                                    <!-- Embedded SVG will be dynamically injected here -->
+                                </div>
+                                <div id="postprocess-preview-empty" class="preview-empty-state">
+                                    <i class="bi bi-folder2-open empty-icon"></i>
+                                    <h4>No Vectorized Piece Selected</h4>
+                                    <p>Load a project with vectorized profiles to preview simplification and stroke customization live</p>
+                                </div>
+                                <div id="postprocess-preview-loading" class="preview-loading-overlay" style="display: none;">
+                                    <div class="spinner-border text-primary" role="status"></div>
+                                    <span>Rendering live preview...</span>
+                                </div>
+                            </div>
+
+                            <!-- Live Diagnostics Bar -->
+                            <div class="postprocess-diagnostics-bar">
+                                <div class="diag-item" id="diag-points-wrap">
+                                    <i class="bi bi-bezier2"></i>
+                                    <span>Vertices:</span>
+                                    <strong id="postprocess-stat-original-points">0</strong>
+                                    <i class="bi bi-arrow-right-short"></i>
+                                    <strong id="postprocess-stat-simplified-points" class="highlight">0</strong>
+                                    <span id="postprocess-stat-reduction-badge" class="reduction-badge">0% reduction</span>
+                                </div>
+                                <div class="diag-item" id="diag-layers-wrap">
+                                    <i class="bi bi-layers-half"></i>
+                                    <span>Active Categories:</span>
+                                    <span id="postprocess-stat-active-layers" class="active-layers-pill">0</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Project tracking hidden elements (strip removed per user request) -->
+                        <div id="postprocess-project-info" style="display: none !important;">
+                            <strong id="postprocess-project-name"></strong>
+                            <span id="postprocess-folder-path"></span>
+                            <strong id="postprocess-svg-count">0</strong>
+                            <strong id="postprocess-png-count">0</strong>
+                            <div id="postprocess-categories-list" style="display: none;"></div>
+                        </div>
+
+                        <div id="postprocess-folder-info" style="display: none !important;"></div>
+
+                        <div id="postprocess-no-project" class="panel" style="display: none; text-align: center; padding: 18px;">
+                            <p style="margin: 0; color: var(--primary); font-size: 0.9rem;">
+                                <i class="bi bi-exclamation-circle" style="font-size: 1.3rem; display: block; margin-bottom: 6px;"></i>
+                                <strong>No project loaded</strong><br>
+                                Please open a project from the Projects tab
+                            </p>
                         </div>
                     </div>
 
-                    <!-- Right Panel: Export Options -->
+                    <!-- Right Column: Structured Control Deck -->
                     <div class="postprocess-right">
+                        <!-- Card 1: Geometry & Path Simplification -->
                         <div class="panel">
-                            <h3>⚙️ Export Settings</h3>
+                            <h3><i class="bi bi-bezier"></i> Geometry & Simplification</h3>
+                            <p class="panel-subtitle">Douglas-Peucker reduction and corner smoothing (Preview updates live)</p>
 
-                            <div class="form-group">
-                                <h4 style="margin-bottom: 10px;">📄 Output Format</h4>
-
-                                <div
-                                    style="background: #d1fae5; border: 1px solid #10b981; padding: 10px; border-radius: 6px; margin-bottom: 12px;">
-                                    <p style="margin: 0; color: #065f46; font-size: 0.85rem;">
-                                        ✨ <strong>Smart Conversion:</strong> SVG files are converted to PNG/JPG directly
-                                        in your browser!
-                                        High quality, no server dependencies required.
-                                    </p>
+                            <div class="control-card-inner">
+                                <div class="slider-control-row">
+                                    <div class="slider-label-row">
+                                        <label for="postprocess-epsilon">Simplification (Epsilon):</label>
+                                        <span id="postprocess-epsilon-value" class="slider-value-pill">0.0</span>
+                                    </div>
+                                    <input type="range" id="postprocess-epsilon" min="0" max="5" step="0.1" value="0" class="form-range" style="width: 100%;">
+                                    <div class="slider-hint">0 = preserve exact vertices · Higher = cleaner, fewer points</div>
                                 </div>
 
-                                <label style="display: block; margin-bottom: 8px;">
-                                    <input type="checkbox" id="postprocess-format-svg" checked>
-                                    <strong>SVG</strong> - Vector format (editable)
-                                </label>
-                                <label style="display: block; margin-bottom: 8px;">
-                                    <input type="checkbox" id="postprocess-format-png" checked>
-                                    <strong>PNG</strong> - Raster with transparency
-                                </label>
-                                <label style="display: block; margin-bottom: 8px;">
-                                    <input type="checkbox" id="postprocess-format-jpg">
-                                    <strong>JPG</strong> - Compressed raster
-                                </label>
-                            </div>
-
-                            <div class="form-group" style="margin-top: 20px;" id="postprocess-raster-settings">
-                                <h4 style="margin-bottom: 10px;">🖼️ Raster Settings (PNG/JPG)</h4>
-                                <label style="display: block; margin-bottom: 10px;">
-                                    Resolution (DPI):
-                                    <select id="postprocess-dpi" style="width: 100%; padding: 8px; margin-top: 5px;">
-                                        <option value="72">72 DPI (Screen)</option>
-                                        <option value="150">150 DPI (Standard)</option>
-                                        <option value="300" selected>300 DPI (Print Quality)</option>
-                                        <option value="600">600 DPI (High Quality)</option>
-                                    </select>
-                                </label>
-
-                                <label style="display: block; margin-bottom: 10px;">
-                                    <input type="checkbox" id="postprocess-transparent-bg" checked>
-                                    Transparent background (PNG only)
-                                </label>
-
-                                <div id="postprocess-bg-color-group" style="display: none; margin-top: 10px;">
-                                    <label>
-                                        Background color:
-                                        <input type="color" id="postprocess-bg-color" value="#ffffff"
-                                            style="margin-left: 10px;">
-                                    </label>
+                                <div class="slider-control-row" style="margin-top: 14px;">
+                                    <div class="slider-label-row">
+                                        <label for="postprocess-smoothing">Path Smoothing:</label>
+                                        <span id="postprocess-smoothing-value" class="slider-value-pill">0.0</span>
+                                    </div>
+                                    <input type="range" id="postprocess-smoothing" min="0" max="1" step="0.05" value="0" class="form-range" style="width: 100%;">
+                                    <div class="slider-hint">0 = sharp technical corners · 1 = smooth curvature</div>
                                 </div>
-
-                                <label style="display: block; margin-top: 10px;">
-                                    JPG Quality:
-                                    <input type="range" id="postprocess-jpg-quality" min="60" max="100" value="90"
-                                        style="width: 100%;">
-                                    <span id="postprocess-jpg-quality-value">90</span>%
-                                </label>
-                            </div>
-
-                            <div class="form-group" style="margin-top: 20px;">
-                                <h4 style="margin-bottom: 10px;">� Stroke Width Settings</h4>
-                                <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
-                                    Customize stroke widths for different element types (in pixels)
-                                </p>
-
-                                <div
-                                    style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 10px;">
-                                    <h5 style="margin: 0 0 8px 0; font-size: 0.9rem;">Main Elements:</h5>
-                                    <label
-                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span>Profile / Prospectus:</span>
-                                        <input type="number" id="postprocess-stroke-profile" min="0.5" max="5"
-                                            step="0.1" value="1.0" style="width: 70px; padding: 4px;">
-                                    </label>
-                                    <label
-                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span>Application:</span>
-                                        <input type="number" id="postprocess-stroke-application" min="0.5" max="5"
-                                            step="0.1" value="1.0" style="width: 70px; padding: 4px;">
-                                    </label>
-                                    <label
-                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span>Handle:</span>
-                                        <input type="number" id="postprocess-stroke-handle" min="0.5" max="5" step="0.1"
-                                            value="1.0" style="width: 70px; padding: 4px;">
-                                    </label>
-                                    <label
-                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span>Decoration:</span>
-                                        <input type="number" id="postprocess-stroke-decoration" min="0.3" max="3"
-                                            step="0.1" value="1.0" style="width: 70px; padding: 4px;">
-                                    </label>
-                                    <label
-                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span>Running element:</span>
-                                        <input type="number" id="postprocess-stroke-runningelement" min="0.5" max="5"
-                                            step="0.1" value="1.0" style="width: 70px; padding: 4px;">
-                                    </label>
-                                    <label style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span>Detail:</span>
-                                        <input type="number" id="postprocess-stroke-detail" min="0.3" max="3" step="0.1"
-                                            value="1.0" style="width: 70px; padding: 4px;">
-                                    </label>
-                                </div>
-
-                                <div style="background: #f8f9fa; padding: 12px; border-radius: 6px;">
-                                    <h5 style="margin: 0 0 8px 0; font-size: 0.9rem;">Construction Lines:</h5>
-                                    <label
-                                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                        <span>Symmetry Line:</span>
-                                        <input type="number" id="postprocess-stroke-symmetry" min="0.1" max="2"
-                                            step="0.1" value="0.5" style="width: 70px; padding: 4px;">
-                                    </label>
-                                    <label style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span>Diameter:</span>
-                                        <input type="number" id="postprocess-stroke-diameter" min="0.1" max="2"
-                                            step="0.1" value="0.5" style="width: 70px; padding: 4px;">
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div class="form-group" style="margin-top: 20px;">
-                                <h4 style="margin-bottom: 10px;">🔧 Vectorization Parameters (Main Elements Only)</h4>
-                                <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
-                                    Adjust path simplification and smoothing for Profile, Application, Handle,
-                                    Decoration, Running element, Detail
-                                </p>
-
-                                <div style="background: #f8f9fa; padding: 12px; border-radius: 6px;">
-                                    <label style="display: block; margin-bottom: 12px;">
-                                        <div
-                                            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                            <span>Simplification (Epsilon):</span>
-                                            <span id="postprocess-epsilon-value" style="font-weight: bold;">0</span>
-                                        </div>
-                                        <input type="range" id="postprocess-epsilon" min="0" max="5" step="0.1"
-                                            value="0" style="width: 100%;">
-                                        <small style="color: #666;">0 = no changes, Higher = simpler paths</small>
-                                    </label>
-
-                                    <label style="display: block;">
-                                        <div
-                                            style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                                            <span>Smoothing:</span>
-                                            <span id="postprocess-smoothing-value" style="font-weight: bold;">0</span>
-                                        </div>
-                                        <input type="range" id="postprocess-smoothing" min="0" max="1" step="0.1"
-                                            value="0" style="width: 100%;">
-                                        <small style="color: #666;">0 = no smoothing, 1 = maximum smoothing</small>
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div class="form-group" style="margin-top: 20px;">
-                                <h4 style="margin-bottom: 10px;">�🏷️ Category Filter</h4>
-                                <p style="color: #666; font-size: 0.85rem; margin-bottom: 10px;">
-                                    Select which layer categories to include in the export. Unselected layers will be
-                                    removed from SVG files.
-                                </p>
-                                <label style="display: block; margin-bottom: 8px;">
-                                    <input type="checkbox" id="postprocess-select-all-categories" checked>
-                                    <strong>Select All</strong>
-                                </label>
-                                <div id="postprocess-category-filters" style="margin-top: 10px; padding-left: 10px;">
-                                    <!-- Category checkboxes will be populated here -->
-                                </div>
-                            </div>
-
-                            <div class="form-group" style="margin-top: 20px;">
-                                <h4 style="margin-bottom: 10px;">📦 Archive Options</h4>
-                                <label style="display: block; margin-bottom: 8px;">
-                                    <input type="checkbox" id="postprocess-create-zip" checked>
-                                    Create ZIP archive
-                                </label>
-                                <label style="display: block; margin-bottom: 8px;">
-                                    <input type="checkbox" id="postprocess-organize-by-category">
-                                    Organize files by category in subfolders
-                                </label>
                             </div>
                         </div>
 
+                        <!-- Card 2: Stroke Widths -->
                         <div class="panel">
-                            <h3>🚀 Export</h3>
-                            <button id="postprocess-export-btn" class="btn btn-success btn-large" disabled>
-                                <span>📤</span> Export Files
-                            </button>
-                            <p style="font-size: 0.85rem; color: #666; margin-top: 8px;">
-                                Process and export all selected files
-                            </p>
+                            <div class="panel-header-with-action">
+                                <h3><i class="bi bi-border-width"></i> Stroke Widths (px)</h3>
+                                <button type="button" id="postprocess-reset-strokes-btn" class="mini-text-btn" title="Reset to standard defaults">
+                                    <i class="bi bi-arrow-counterclockwise"></i> Defaults
+                                </button>
+                            </div>
+                            <p class="panel-subtitle">Standardized archaeological line weights across categories</p>
 
-                            <div id="postprocess-progress" style="display: none; margin-top: 20px;">
-                                <div style="background: #f3f4f6; border-radius: 8px; overflow: hidden; height: 30px;">
-                                    <div id="postprocess-progress-bar"
-                                        style="background: linear-gradient(90deg, #10b981, #3b82f6); height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 0.85rem;">
+                            <div class="control-card-inner">
+                                <span class="group-mini-label">Vessel Features</span>
+                                <div class="stroke-grid">
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-profile">Profile / Rim:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-profile" min="0.2" max="10" step="0.1" value="1.0">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-application">Application:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-application" min="0.2" max="10" step="0.1" value="1.0">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-handle">Handle:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-handle" min="0.2" max="10" step="0.1" value="1.0">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-decoration">Decoration:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-decoration" min="0.2" max="10" step="0.1" value="0.8">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-runningelement">Running Elem.:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-runningelement" min="0.2" max="10" step="0.1" value="1.0">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-detail">Detail:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-detail" min="0.2" max="10" step="0.1" value="0.8">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-reconstruction">Reconstruction:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-reconstruction" min="0.2" max="10" step="0.1" value="1.0">
+                                            <span>px</span>
+                                        </div>
                                     </div>
                                 </div>
-                                <p id="postprocess-progress-text"
-                                    style="margin-top: 8px; font-size: 0.9rem; color: #666; text-align: center;">
-                                </p>
-                            </div>
 
-                            <div id="postprocess-result" style="display: none; margin-top: 20px;">
-                                <!-- Export results will be shown here -->
+                                <span class="group-mini-label" style="margin-top: 10px;">Technical Drafting Lines</span>
+                                <div class="stroke-grid">
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-symmetry">Symmetry Axis:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-symmetry" min="0.1" max="5" step="0.1" value="0.5">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                    <div class="stroke-item">
+                                        <label for="postprocess-stroke-diameter">Diameter Line:</label>
+                                        <div class="input-with-unit">
+                                            <input type="number" id="postprocess-stroke-diameter" min="0.1" max="5" step="0.1" value="0.5">
+                                            <span>px</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Card 3: Layer Categories Filter -->
+                        <div class="panel">
+                            <div class="panel-header-with-action">
+                                <h3><i class="bi bi-tags"></i> Category Filter</h3>
+                                <label class="mini-checkbox-label">
+                                    <input type="checkbox" id="postprocess-select-all-categories" checked>
+                                    <span>Select All</span>
+                                </label>
+                            </div>
+                            <p class="panel-subtitle">Toggle included categories (updates live preview)</p>
+                            <div id="postprocess-category-filters" class="category-chips-container">
+                                <!-- Dynamically populated category chips -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Full-Width Export Settings & Action Deck -->
+                <div class="panel postprocess-export-fullwidth">
+                    <div class="export-fullwidth-header">
+                        <div class="export-fullwidth-title">
+                            <h3><i class="bi bi-box-arrow-up-right"></i> Export Settings & Action</h3>
+                            <span class="export-fullwidth-subtitle">Configure output formats and batch export all vectorized files</span>
+                        </div>
+                    </div>
+
+                    <div class="export-fullwidth-grid">
+                        <!-- Col 1: Output Formats -->
+                        <div class="export-grid-col">
+                            <span class="group-mini-label">1. Output Formats:</span>
+                            <div class="format-cards-box">
+                                <div class="format-checkbox-row">
+                                    <label class="format-check-card">
+                                        <input type="checkbox" id="postprocess-format-svg" checked>
+                                        <div class="format-check-content">
+                                            <i class="bi bi-filetype-svg"></i>
+                                            <div>
+                                                <strong>SVG</strong>
+                                                <span>Vector</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                    <label class="format-check-card">
+                                        <input type="checkbox" id="postprocess-format-png" checked>
+                                        <div class="format-check-content">
+                                            <i class="bi bi-filetype-png"></i>
+                                            <div>
+                                                <strong>PNG</strong>
+                                                <span>Raster</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                    <label class="format-check-card">
+                                        <input type="checkbox" id="postprocess-format-jpg">
+                                        <div class="format-check-content">
+                                            <i class="bi bi-filetype-jpg"></i>
+                                            <div>
+                                                <strong>JPG</strong>
+                                                <span>Photo</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Col 2: Raster Options & Archive -->
+                        <div class="export-grid-col">
+                            <span class="group-mini-label">2. Export Options:</span>
+                            <div class="export-options-box">
+                                <!-- Left Half: Raster Settings -->
+                                <div class="export-opt-col" id="postprocess-raster-settings">
+                                    <div class="opt-inline-row">
+                                        <label for="postprocess-dpi" class="opt-field-label">
+                                            <i class="bi bi-aspect-ratio"></i> Resolution:
+                                        </label>
+                                        <select id="postprocess-dpi" class="form-select-sm opt-select">
+                                            <option value="72">72 DPI (Web)</option>
+                                            <option value="150">150 DPI (Draft)</option>
+                                            <option value="300" selected>300 DPI (Print)</option>
+                                            <option value="600">600 DPI (Archival)</option>
+                                        </select>
+                                    </div>
+                                    <div class="opt-inline-row">
+                                        <label class="opt-checkbox-label" for="postprocess-transparent-bg">
+                                            <input type="checkbox" id="postprocess-transparent-bg" checked>
+                                            <i class="bi bi-circle-half"></i>
+                                            <span>Transparent PNG</span>
+                                        </label>
+                                        <div id="postprocess-bg-color-group" style="display: none; align-items: center; gap: 4px; margin-left: 2px;">
+                                            <input type="color" id="postprocess-bg-color" value="#ffffff" class="color-picker-mini" title="Solid Background Color">
+                                        </div>
+                                    </div>
+                                    <div class="opt-inline-row" id="postprocess-jpg-quality-row" style="display: none;">
+                                        <label for="postprocess-jpg-quality" class="opt-field-label">
+                                            <i class="bi bi-file-image"></i> JPG:
+                                        </label>
+                                        <input type="range" id="postprocess-jpg-quality" min="60" max="100" value="90" class="form-range-sm" style="width: 75px;">
+                                        <span id="postprocess-jpg-quality-value" class="slider-value-pill">90%</span>
+                                    </div>
+                                </div>
+
+                                <!-- Subtle Vertical Divider -->
+                                <div class="export-opt-divider"></div>
+
+                                <!-- Right Half: Packaging & Organization -->
+                                <div class="export-opt-col">
+                                    <div class="opt-inline-row">
+                                        <label class="opt-checkbox-label" for="postprocess-create-zip">
+                                            <input type="checkbox" id="postprocess-create-zip" checked>
+                                            <i class="bi bi-file-earmark-zip"></i>
+                                            <span>Download ZIP Archive</span>
+                                        </label>
+                                    </div>
+                                    <div class="opt-inline-row">
+                                        <label class="opt-checkbox-label" for="postprocess-organize-by-category">
+                                            <input type="checkbox" id="postprocess-organize-by-category">
+                                            <i class="bi bi-folder-symlink"></i>
+                                            <span>Category Subfolders</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Col 3: Action Button & Feedback -->
+                        <div class="export-grid-col export-action-col">
+                            <span class="group-mini-label">3. Batch Action:</span>
+                            <div class="export-action-box">
+                                <button id="postprocess-export-btn" class="btn btn-primary btn-large export-fullwidth-btn" disabled>
+                                    <i class="bi bi-box-arrow-up-right"></i> Export All Vectorized Files
+                                </button>
+                                <span class="export-action-hint"><i class="bi bi-info-circle"></i> Batch converts all project pieces</span>
+
+                                <div id="postprocess-progress" style="display: none; margin-top: 6px; width: 100%;">
+                                    <div class="progress-bar">
+                                        <div id="postprocess-progress-bar" class="progress-fill" style="width: 0%;"></div>
+                                    </div>
+                                    <p id="postprocess-progress-text" style="margin-top: 4px; font-size: 0.8rem; color: var(--text-dim); text-align: center;">
+                                        Processing...
+                                    </p>
+                                </div>
+
+                                <div id="postprocess-result" style="display: none;"></div>
                             </div>
                         </div>
                     </div>
@@ -1373,11 +1183,10 @@
     </div>
 
     <!-- Help Modal -->
-    <div id="help-modal"
-        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center;">
+    <div id="help-modal" class="info-modal-overlay" role="dialog" aria-modal="true">
         <div class="modal-content help-modal-content">
-            <span class="close">&times;</span>
-            <h2 class="help-title">📖 PyPotteryTrace - User Guide</h2>
+            <button class="info-modal-close" onclick="document.getElementById('help-modal').style.display='none'" aria-label="Close help">&times;</button>
+            <h2 class="help-title"><i class="bi bi-book"></i> PyPotteryTrace — User Guide</h2>
 
             <div class="help-tabs">
                 <button class="help-tab-btn active" data-help-tab="projects">Projects</button>
@@ -1389,74 +1198,64 @@
             </div>
 
             <div class="help-tab-content active" data-help-content="projects">
-                <h3>📁 Project Management</h3>
+                <h3><i class="bi bi-folder2-open"></i> Project Management</h3>
                 <div class="help-step">
                     <span class="help-step-number">1</span>
                     <div class="help-step-content">
                         <h4>Create New Project</h4>
-                        <p>Click "➕ New Project" to create a new pottery analysis project. Give it a name and
-                            description, then choose an icon.</p>
+                        <p>Click "New Project" to create a new pottery analysis project. Give it a name and description, then choose an icon.</p>
                     </div>
                 </div>
                 <div class="help-step">
                     <span class="help-step-number">2</span>
                     <div class="help-step-content">
                         <h4>Load Existing Project</h4>
-                        <p>Click on any project card to load it. The project name will appear in the header.</p>
+                        <p>Click on any project card to load it. The project name will appear in the header and info bar.</p>
                     </div>
                 </div>
                 <div class="help-step">
                     <span class="help-step-number">3</span>
                     <div class="help-step-content">
                         <h4>Project Organization</h4>
-                        <p>Each project maintains its own images, segmentations, and vectorized outputs. Files are
-                            automatically organized in the project folder.</p>
+                        <p>Each project maintains its own images, segmentations, and vectorized outputs. Files are automatically organized in the project folder.</p>
                     </div>
                 </div>
             </div>
 
             <div class="help-tab-content" data-help-content="setup">
-                <h3>⚙️ Setup</h3>
+                <h3><i class="bi bi-gear"></i> Setup</h3>
                 <div class="help-step">
                     <span class="help-step-number">1</span>
                     <div class="help-step-content">
                         <h4>Create or Open a Project</h4>
-                        <p>Use the Project Manager to create a new project or open an existing one. When creating a new
-                            project, you can upload your pottery images directly. Supported formats: PNG, JPG, JPEG,
-                            TIFF, BMP.</p>
+                        <p>Use the Project Manager to create a new project or open an existing one. Supported formats: PNG, JPG, JPEG, TIFF, BMP.</p>
                     </div>
                 </div>
                 <div class="help-step">
                     <span class="help-step-number">2</span>
                     <div class="help-step-content">
                         <h4>Choose SAM2 Model</h4>
-                        <p>Select model size based on your needs:</p>
+                        <p>Select model size based on your hardware and requirements:</p>
                         <ul>
-                            <li><strong>Tiny:</strong> Fastest, good for quick tests</li>
-                            <li><strong>Small:</strong> Recommended for most cases (best balance)</li>
-                            <li><strong>Base+:</strong> Better accuracy, slower</li>
-                            <li><strong>Large:</strong> Best quality, requires more resources</li>
+                            <li><strong>Tiny:</strong> Fastest, good for quick tests (~40MB)</li>
+                            <li><strong>Small:</strong> Recommended for most workflows (~180MB)</li>
+                            <li><strong>Base+:</strong> Higher precision, moderate speed (~230MB)</li>
+                            <li><strong>Large:</strong> Highest precision, best for complex profiles (~900MB)</li>
                         </ul>
                     </div>
                 </div>
-                <!-- Help step about Start Processing removed because the Start button was removed -->
             </div>
 
             <div class="help-tab-content" data-help-content="segmentation">
-                <h3>✂️ Segmentation Workflow</h3>
+                <h3><i class="bi bi-bezier2"></i> Segmentation Workflow</h3>
                 <div class="help-step">
                     <span class="help-step-number">1</span>
                     <div class="help-step-content">
                         <h4>Choose Segmentation Mode</h4>
-                        <p><strong>Point Mode:</strong> Click to add positive (➕) or negative (➖) points. SAM2 will
-                            segment the object based on your clicks.</p>
-                        <p><strong>Box Mode:</strong> Draw a bounding box around the entire object for automatic
-                            segmentation.</p>
-                        <p><strong>Polygon Mode:</strong> Manually draw a polygon mask by clicking vertices.
-                            Double-click to close the polygon. Press Escape to cancel or remove the last point.</p>
-                        <p><strong>Edit Mask:</strong> After creating a mask with SAM (point/box mode), click "Edit
-                            Mask" to convert it to an editable polygon. You can then drag vertices, click edges to add
-                            new vertices, or right-click to delete vertices.</p>
+                        <p><strong>Point Mode:</strong> Click to add positive or negative points. SAM2 will segment the object based on your clicks.</p>
+                        <p><strong>Box Mode:</strong> Draw a bounding box around the object for automatic segmentation.</p>
+                        <p><strong>Polygon Mode:</strong> Manually draw a polygon mask by clicking vertices.</p>
+                        <p><strong>Edit Mask:</strong> Convert mask to an editable polygon to fine-tune vertices.</p>
                         <p><strong>Rotation Center:</strong> Set the symmetry axis for profile mirroring.</p>
                     </div>
                 </div>
@@ -1464,489 +1263,542 @@
                     <span class="help-step-number">2</span>
                     <div class="help-step-content">
                         <h4>Assign Category</h4>
-                        <p>Select the appropriate category for the segmented element:</p>
-                        <ul>
-                            <li><strong>Profile:</strong> Main vessel profile (auto-mirrored if rotation center is set)
-                            </li>
-                            <li><strong>Application:</strong> Applied decorations, stamps</li>
-                            <li><strong>Handle:</strong> Vessel handles</li>
-                            <li><strong>Prospectus:</strong> Front/side views</li>
-                            <li><strong>Decoration:</strong> Painted or incised decorations</li>
-                            <li><strong>Running element:</strong> Running elements</li>
-                            <li><strong>Detail:</strong> Close-up details</li>
-                        </ul>
+                        <p>Select the appropriate category for the segmented element (Profile, Application, Handle, Prospectus, Decoration, Running element, Detail).</p>
                     </div>
                 </div>
                 <div class="help-step">
                     <span class="help-step-number">3</span>
                     <div class="help-step-content">
-                        <h4>Vectorization Option</h4>
-                        <p>Check "Enable vectorization" to export as SVG (vector). Uncheck to export as PNG with
-                            transparent background.</p>
-                        <p><em>Note: Some categories default to PNG export (Decoration, Handle, Application).</em></p>
-                    </div>
-                </div>
-                <div class="help-step">
-                    <span class="help-step-number">4</span>
-                    <div class="help-step-content">
                         <h4>Export</h4>
-                        <p>Click "Generate SVG" to create the vectorized output and switch to SVG Editor for refinement.
-                        </p>
+                        <p>Click "Generate SVG" to create the vectorized output and switch to SVG Editor for path refinement.</p>
                     </div>
                 </div>
             </div>
 
             <div class="help-tab-content" data-help-content="editor">
-                <h3>✏️ SVG Editor</h3>
+                <h3><i class="bi bi-vector-pen"></i> SVG Editor</h3>
                 <div class="help-step">
                     <span class="help-step-number">1</span>
                     <div class="help-step-content">
                         <h4>View Mode</h4>
-                        <p>Pan and zoom to navigate the SVG. Click and drag on images to reposition them.</p>
+                        <p>Pan and zoom to navigate the SVG canvas. Reposition reference layers as needed.</p>
                     </div>
                 </div>
                 <div class="help-step">
                     <span class="help-step-number">2</span>
                     <div class="help-step-content">
-                        <h4>Select Mode</h4>
-                        <p>Click to select individual path points. Hold Shift for multi-selection. Hold Ctrl while
-                            dragging to move points.</p>
+                        <h4>Select & Edit Points</h4>
+                        <p>Select points individually or multi-select with Shift. Drag points to adjust profile curves precisely.</p>
                     </div>
                 </div>
                 <div class="help-step">
                     <span class="help-step-number">3</span>
                     <div class="help-step-content">
-                        <h4>Add Point Mode</h4>
-                        <p>Click on any path to add a new point at that position. Useful for adding detail to simplified
-                            paths.</p>
-                    </div>
-                </div>
-                <div class="help-step">
-                    <span class="help-step-number">4</span>
-                    <div class="help-step-content">
-                        <h4>Delete Mode</h4>
-                        <p>Click on points to remove them. Use this to simplify overly complex paths.</p>
-                    </div>
-                </div>
-                <div class="help-step">
-                    <span class="help-step-number">5</span>
-                    <div class="help-step-content">
-                        <h4>Layer Management</h4>
-                        <p>Toggle layer visibility, add PNG images, and organize your composition. Use "Add PNG Image"
-                            to import reference photos or decorations.</p>
-                    </div>
-                    <div class="shortcuts-section">
-                        <h4>🎯 Segmentation Tab</h4>
-                        <div class="shortcut-row">
-                            <kbd>P</kbd>
-                            <span>Point Mode</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>B</kbd>
-                            <span>Box Mode</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>M</kbd>
-                            <span>Manual Polygon Mode</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>R</kbd>
-                            <span>Rotation Center Mode</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Esc</kbd>
-                            <span>Cancel Polygon / Undo Last Point</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Ctrl</kbd> + <kbd>Z</kbd>
-                            <span>Undo Last Action</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>+</kbd> / <kbd>-</kbd>
-                            <span>Zoom In / Out</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Mouse Wheel</kbd>
-                            <span>Zoom</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Drag</kbd>
-                            <span>Pan Canvas</span>
-                        </div>
-                    </div>
-
-                    <div class="shortcuts-section">
-                        <h4>✏️ SVG Editor</h4>
-                        <div class="shortcut-row">
-                            <kbd>V</kbd>
-                            <span>View Mode</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>S</kbd>
-                            <span>Select Mode</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>A</kbd>
-                            <span>Add Point Mode</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>D</kbd> / <kbd>Delete</kbd>
-                            <span>Delete Mode / Delete Selected</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Shift</kbd> + <kbd>Click</kbd>
-                            <span>Multi-select Points</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Ctrl</kbd> + <kbd>Drag</kbd>
-                            <span>Move Selected Point</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Shift</kbd> + <kbd>Drag</kbd>
-                            <span>Force Pan (ignore images)</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Ctrl</kbd> + <kbd>Z</kbd>
-                            <span>Undo</span>
-                        </div>
-                    </div>
-
-                    <div class="shortcuts-section">
-                        <h4>🔄 Navigation</h4>
-                        <div class="shortcut-row">
-                            <kbd>←</kbd> / <kbd>→</kbd>
-                            <span>Previous / Next Image</span>
-                        </div>
-                        <div class="shortcut-row">
-                            <kbd>Esc</kbd>
-                            <span>Close Modal / Cancel Action</span>
-                        </div>
+                        <h4>Add & Delete Points</h4>
+                        <p>Add new points along existing paths to increase fidelity, or delete redundant points to simplify contours.</p>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Loading Overlay (for image uploads) -->
-        <div id="loading-overlay" class="loading-overlay">
-            <div class="loading-overlay-content">
-                <div class="loading-overlay-spinner"></div>
-                <h3 class="loading-overlay-title" id="loading-overlay-title">Loading Images...</h3>
-                <p class="loading-overlay-message" id="loading-overlay-message">Please wait while we process your images
-                </p>
-                <div class="loading-overlay-progress">
-                    <div class="loading-overlay-progress-bar" id="loading-overlay-progress-bar"></div>
+            <div class="help-tab-content" data-help-content="postprocess">
+                <h3><i class="bi bi-layers"></i> Post-Processing</h3>
+                <div class="help-step">
+                    <span class="help-step-number">1</span>
+                    <div class="help-step-content">
+                        <h4>Batch Export</h4>
+                        <p>Convert and standardize your vectorized drawings into publication formats (SVG, 300 DPI transparent PNG, JPG).</p>
+                    </div>
                 </div>
-                <p class="loading-overlay-progress-text" id="loading-overlay-progress-text">0 / 0 images loaded</p>
+                <div class="help-step">
+                    <span class="help-step-number">2</span>
+                    <div class="help-step-content">
+                        <h4>Stroke Customization</h4>
+                        <p>Configure stroke widths according to classical ceramic drawing conventions (profile thicker, decoration and construction lines lighter).</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="help-tab-content" data-help-content="shortcuts">
+                <h3><i class="bi bi-keyboard"></i> Keyboard Shortcuts</h3>
+                <div class="shortcuts-section">
+                    <h4>Segmentation</h4>
+                    <div class="shortcut-row"><kbd>P</kbd> <span>Point Mode</span></div>
+                    <div class="shortcut-row"><kbd>B</kbd> <span>Box Mode</span></div>
+                    <div class="shortcut-row"><kbd>M</kbd> <span>Manual Polygon Mode</span></div>
+                    <div class="shortcut-row"><kbd>R</kbd> <span>Rotation Center Mode</span></div>
+                    <div class="shortcut-row"><kbd>Esc</kbd> <span>Cancel / Undo Last Point</span></div>
+                    <div class="shortcut-row"><kbd>Ctrl</kbd> + <kbd>Z</kbd> <span>Undo Last Action</span></div>
+                </div>
+                <div class="shortcuts-section" style="margin-top: 15px;">
+                    <h4>SVG Editor</h4>
+                    <div class="shortcut-row"><kbd>V</kbd> <span>View Mode</span></div>
+                    <div class="shortcut-row"><kbd>S</kbd> <span>Select Mode</span></div>
+                    <div class="shortcut-row"><kbd>A</kbd> <span>Add Point Mode</span></div>
+                    <div class="shortcut-row"><kbd>D</kbd> / <kbd>Delete</kbd> <span>Delete Mode / Delete Selected</span></div>
+                    <div class="shortcut-row"><kbd>Ctrl</kbd> + <kbd>Z</kbd> <span>Undo</span></div>
+                </div>
             </div>
         </div>
+    </div>
 
-        <style>
-            /* Header Right Section */
-            .header-right-section {
-                display: flex;
-                align-items: center;
-                gap: 15px;
-                margin-left: auto;
-            }
-        </style>
+    <!-- Loading Overlay (for image uploads) -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-overlay-content">
+            <div class="loading-overlay-spinner"></div>
+            <h3 class="loading-overlay-title" id="loading-overlay-title">Loading Images...</h3>
+            <p class="loading-overlay-message" id="loading-overlay-message">Please wait while we process your images</p>
+            <div class="loading-overlay-progress">
+                <div class="loading-overlay-progress-bar" id="loading-overlay-progress-bar"></div>
+            </div>
+            <p class="loading-overlay-progress-text" id="loading-overlay-progress-text">0 / 0 images loaded</p>
+        </div>
+    </div>
 
-        <style>
-            /* Pixel Help Assistant Header Styles */
-            .pixel-help-header {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                text-decoration: none;
-                cursor: pointer;
-                transition: transform 0.3s ease;
-                position: relative;
-            }
+    <!-- App Universal Confirmation Dialog (PRODUCT.md Consistent) -->
+    <div id="app-confirm-dialog" class="dialog-overlay app-confirm-overlay" style="display: none;">
+        <div class="dialog app-confirm-modal" role="dialog" aria-modal="true">
+            <div class="confirm-modal-header">
+                <div class="confirm-modal-icon" id="app-confirm-icon-wrap">
+                    <i class="bi bi-trash3-fill" id="app-confirm-icon"></i>
+                </div>
+                <div class="confirm-modal-titles">
+                    <h2 id="app-confirm-title">Delete Project</h2>
+                    <p class="confirm-modal-subtitle" id="app-confirm-subtitle">Are you sure you want to delete this project?</p>
+                </div>
+                <button class="confirm-modal-close" id="app-confirm-x" title="Close">&times;</button>
+            </div>
+            <div class="confirm-modal-body">
+                <div class="confirm-details-box" id="app-confirm-details-box" style="display: none;">
+                    <span class="confirm-details-label" id="app-confirm-details-label">This action will delete:</span>
+                    <ul class="confirm-details-list" id="app-confirm-details-list"></ul>
+                </div>
+                <div class="confirm-note-box" id="app-confirm-note-box" style="display: none;">
+                    <i class="bi bi-exclamation-octagon-fill"></i>
+                    <span id="app-confirm-note">This action is IRREVERSIBLE and cannot be undone!</span>
+                </div>
+            </div>
+            <div class="confirm-modal-footer">
+                <button type="button" class="btn btn-secondary" id="app-confirm-cancel">
+                    <i class="bi bi-x-lg"></i> Cancel
+                </button>
+                <button type="button" class="btn btn-danger" id="app-confirm-ok">
+                    <i class="bi bi-trash3"></i> Delete Project
+                </button>
+            </div>
+        </div>
+    </div>
 
-            .pixel-help-header:hover {
-                transform: scale(1.1);
-            }
-
-            .pixel-speech-bubble-header {
-                background: #fff;
-                color: #000;
-                padding: 6px 10px;
-                border-radius: 8px;
-                border: 2px solid #444;
-                font-weight: bold;
-                font-size: 11px;
-                font-family: 'Courier New', monospace;
-                opacity: 0;
-                transform: translateX(10px);
-                transition: all 0.3s ease;
-                white-space: nowrap;
-                box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.1);
-            }
-
-            .pixel-help-header:hover .pixel-speech-bubble-header {
-                opacity: 1;
-                transform: translateX(0);
-            }
-
-            #pixel-face-idle-header {
-                animation: pixel-breathe-header 4s infinite ease-in-out;
-            }
-
-            .pixel-face-awake-header {
-                opacity: 0;
-                transition: opacity 0.3s;
-            }
-
-            .pixel-help-header:hover #pixel-face-idle-header {
-                opacity: 0;
-            }
-
-            .pixel-help-header:hover .pixel-face-awake-header {
-                opacity: 1;
-            }
-
-            .pixel-help-header:hover #pixel-screen-header {
-                fill: #002200;
-            }
-
-            @keyframes pixel-breathe-header {
-
-                0%,
-                100% {
-                    opacity: 0.7;
+    <!-- Universal Dialog Helper -->
+    <script>
+        function showConfirmDialog({
+            title = 'Confirm Action',
+            subtitle = 'Are you sure you want to proceed?',
+            icon = 'bi-exclamation-triangle-fill',
+            iconColor = '#dc2626',
+            iconBg = '#fee2e2',
+            detailsLabel = 'This action will affect:',
+            details = [],
+            detailIcon = null,
+            detailIconColor = null,
+            note = '',
+            noteType = 'warning',
+            confirmText = 'Confirm',
+            cancelText = 'Cancel',
+            confirmClass = 'btn-danger'
+        } = {}) {
+            return new Promise((resolve) => {
+                const dialog = document.getElementById('app-confirm-dialog');
+                if (!dialog) {
+                    resolve(window.confirm(`${title}\n\n${subtitle}`));
+                    return;
                 }
 
-                50% {
-                    opacity: 0.4;
+                const titleEl = dialog.querySelector('#app-confirm-title');
+                const subtitleEl = dialog.querySelector('#app-confirm-subtitle');
+                const iconWrap = dialog.querySelector('#app-confirm-icon-wrap');
+                const iconEl = dialog.querySelector('#app-confirm-icon');
+                const detailsBox = dialog.querySelector('#app-confirm-details-box');
+                const detailsLabelEl = dialog.querySelector('#app-confirm-details-label');
+                const detailsList = dialog.querySelector('#app-confirm-details-list');
+                const noteBox = dialog.querySelector('#app-confirm-note-box');
+                const noteEl = dialog.querySelector('#app-confirm-note');
+                const noteIcon = noteBox ? noteBox.querySelector('i') : null;
+                const okBtn = dialog.querySelector('#app-confirm-ok');
+                const cancelBtn = dialog.querySelector('#app-confirm-cancel');
+                const xBtn = dialog.querySelector('#app-confirm-x');
+
+                if (titleEl) titleEl.textContent = title;
+                if (subtitleEl) subtitleEl.innerHTML = subtitle;
+                if (iconWrap) {
+                    iconWrap.style.background = iconBg;
+                    iconWrap.style.boxShadow = confirmClass.includes('danger') ? '0 3px 8px rgba(220, 38, 38, 0.15)' : '0 3px 8px rgba(13, 148, 136, 0.15)';
                 }
-            }
-        </style>
-
-        <!-- Scripts -->
-        <script src="{{ url_for('static', filename='js/tabs.js') }}"></script>
-        <script src="{{ url_for('static', filename='js/projects.js') }}"></script>
-        <script src="{{ url_for('static', filename='js/image-grid.js') }}"></script>
-        <script src="{{ url_for('static', filename='js/canvas.js') }}"></script>
-        <script src="{{ url_for('static', filename='js/segmentation.js') }}"></script>
-        <script src="{{ url_for('static', filename='js/svg-editor.js') }}"></script>
-        <script src="{{ url_for('static', filename='js/batch-export.js') }}"></script>
-        <script src="{{ url_for('static', filename='js/postprocess.js') }}"></script>
-
-        <!-- Model Download Handler -->
-        <script>
-            // Global variable to store currently selected model
-            let currentSelectedModel = 'small';  // Default
-
-            // Close download overlay
-            function closeDownloadOverlay() {
-                const overlay = document.getElementById('model-download-overlay');
-                overlay.classList.remove('active');
-            }
-
-            // Show download overlay
-            function showDownloadOverlay(modelSize) {
-                const overlay = document.getElementById('model-download-overlay');
-                const message = document.getElementById('download-message');
-                const errorDiv = document.getElementById('download-error');
-                const spinner = document.querySelector('.download-spinner');
-                const stats = document.getElementById('download-stats');
-                const progressDiv = document.querySelector('.download-progress');
-                const progressBar = document.getElementById('download-progress-bar');
-
-                // Reset UI to initial state
-                message.textContent = `Checking ${modelSize} model...`;
-                errorDiv.style.display = 'none';
-                spinner.style.display = 'block';
-                stats.style.display = 'block';
-                progressDiv.style.display = 'block';
-                progressBar.style.width = '0%';
-                document.getElementById('download-progress-text').textContent = '0%';
-                document.getElementById('download-size').textContent = '0 MB / 0 MB';
-                document.getElementById('download-speed').textContent = '';
-
-                overlay.classList.add('active');
-            }
-
-            // Update download progress
-            function updateDownloadProgress(progress, downloadedMB, totalMB, speed) {
-                const progressBar = document.getElementById('download-progress-bar');
-                const progressText = document.getElementById('download-progress-text');
-                const sizeText = document.getElementById('download-size');
-                const speedText = document.getElementById('download-speed');
-                const message = document.getElementById('download-message');
-
-                progressBar.style.width = progress + '%';
-                progressText.textContent = progress + '%';
-                sizeText.textContent = `${downloadedMB} MB / ${totalMB} MB`;
-                if (speed !== undefined && speed > 0) {
-                    speedText.textContent = `• ${speed} MB/s`;
+                if (iconEl) {
+                    iconEl.className = `bi ${icon}`;
+                    iconEl.style.color = iconColor;
                 }
-                // Only change message to "Downloading..." if we're actually downloading (not at 100%)
-                if (progress < 100) {
-                    message.textContent = 'Downloading model...';
-                }
-            }
 
-            // Show download error
-            function showDownloadError(errorMsg) {
-                const errorDiv = document.getElementById('download-error');
-                const errorMessage = document.getElementById('download-error-message');
-                const spinner = document.querySelector('.download-spinner');
-                const stats = document.getElementById('download-stats');
-                const progress = document.getElementById('download-progress');
-
-                errorMessage.textContent = errorMsg;
-                errorDiv.style.display = 'block';
-                spinner.style.display = 'none';
-                stats.style.display = 'none';
-                progress.style.display = 'none';
-            }
-
-            // Check and download model if needed
-            async function checkAndDownloadModel(modelSize) {
-                showDownloadOverlay(modelSize);
-
-                try {
-                    // First, check if model exists
-                    const checkResponse = await fetch('/api/check_model', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ model_size: modelSize })
-                    });
-
-                    const checkData = await checkResponse.json();
-
-                    if (!checkResponse.ok) {
-                        throw new Error(checkData.error || 'Failed to check model');
+                if (details && details.length > 0) {
+                    if (detailsBox) detailsBox.style.display = 'block';
+                    if (detailsLabelEl) detailsLabelEl.textContent = detailsLabel;
+                    if (detailsList) {
+                        const dIcon = detailIcon || (confirmClass.includes('danger') ? 'bi-x-circle' : 'bi-check-circle-fill');
+                        const dColor = detailIconColor || (confirmClass.includes('danger') ? '#dc2626' : 'var(--teal, #0d9488)');
+                        detailsList.innerHTML = details.map(d => `<li><i class="bi ${dIcon}" style="color: ${dColor};"></i> <span>${d}</span></li>`).join('');
                     }
+                } else if (detailsBox) {
+                    detailsBox.style.display = 'none';
+                }
 
-                    // If model exists, load it immediately
-                    if (checkData.exists) {
-                        console.log(`Model ${modelSize} already exists, loading...`);
-                        document.getElementById('download-message').textContent = 'Model found! Loading...';
-                        updateDownloadProgress(100, checkData.size_mb, checkData.size_mb, 0);
-
-                        // Small delay to show the message
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                        closeDownloadOverlay();
-                        currentSelectedModel = modelSize;
-                        return;
-                    }
-
-                    // Model doesn't exist, start download with SSE
-                    console.log(`Model ${modelSize} not found, downloading...`);
-                    document.getElementById('download-message').textContent = 'Starting download...';
-
-                    // Create EventSource for Server-Sent Events
-                    const eventSource = new EventSource(`/api/download_model?model_size=${modelSize}`);
-
-                    eventSource.onmessage = function (event) {
-                        const data = JSON.parse(event.data);
-
-                        if (data.status === 'downloading') {
-                            updateDownloadProgress(
-                                data.progress,
-                                data.downloaded_mb,
-                                data.total_mb,
-                                data.speed_mbps
-                            );
-                        } else if (data.status === 'complete') {
-                            updateDownloadProgress(100, data.total_mb || checkData.size_mb, data.total_mb || checkData.size_mb, 0);
-                            document.getElementById('download-message').textContent = 'Download complete! Model ready.';
-
-                            eventSource.close();
-
-                            // Close overlay after short delay
-                            setTimeout(() => {
-                                closeDownloadOverlay();
-                                currentSelectedModel = modelSize;
-                            }, 1000);
-                        } else if (data.status === 'error') {
-                            eventSource.close();
-                            showDownloadError(data.error || 'Unknown error occurred during download');
-
-                            // Revert to previous model selection
-                            const previousRadio = document.querySelector(`input[name="model"][value="${currentSelectedModel}"]`);
-                            if (previousRadio) {
-                                previousRadio.checked = true;
+                if (note) {
+                    if (noteBox) {
+                        noteBox.style.display = 'flex';
+                        if (noteType === 'success') {
+                            noteBox.style.background = '#f0fdf4';
+                            noteBox.style.borderColor = '#bbf7d0';
+                            noteBox.style.color = '#15803d';
+                            if (noteIcon) {
+                                noteIcon.className = 'bi bi-check-circle-fill';
+                                noteIcon.style.color = '#16a34a';
+                            }
+                        } else if (noteType === 'info') {
+                            noteBox.style.background = '#f0f9ff';
+                            noteBox.style.borderColor = '#bae6fd';
+                            noteBox.style.color = '#0369a1';
+                            if (noteIcon) {
+                                noteIcon.className = 'bi bi-info-circle-fill';
+                                noteIcon.style.color = '#0284c7';
+                            }
+                        } else {
+                            noteBox.style.background = '#fff1f2';
+                            noteBox.style.borderColor = '#fecdd3';
+                            noteBox.style.color = '#be123c';
+                            if (noteIcon) {
+                                noteIcon.className = 'bi bi-exclamation-octagon-fill';
+                                noteIcon.style.color = '#e11d48';
                             }
                         }
-                    };
+                    }
+                    if (noteEl) noteEl.textContent = note;
+                } else if (noteBox) {
+                    noteBox.style.display = 'none';
+                }
 
-                    eventSource.onerror = function (error) {
-                        console.error('EventSource error:', error);
-                        eventSource.close();
-                        showDownloadError('Network error: Could not connect to server');
-
-                        // Revert to previous model selection
-                        const previousRadio = document.querySelector(`input[name="model"][value="${currentSelectedModel}"]`);
-                        if (previousRadio) {
-                            previousRadio.checked = true;
-                        }
-                    };
-
-                } catch (error) {
-                    console.error('Error checking/downloading model:', error);
-                    showDownloadError(error.message);
-
-                    // Revert to previous model selection
-                    const previousRadio = document.querySelector(`input[name="model"][value="${currentSelectedModel}"]`);
-                    if (previousRadio) {
-                        previousRadio.checked = true;
+                if (okBtn) {
+                    okBtn.className = `btn ${confirmClass}`;
+                    okBtn.innerHTML = `<i class="bi ${icon}"></i> ${confirmText}`;
+                }
+                if (cancelBtn) {
+                    if (cancelText) {
+                        cancelBtn.style.display = '';
+                        cancelBtn.innerHTML = `<i class="bi bi-x-lg"></i> ${cancelText}`;
+                    } else {
+                        cancelBtn.style.display = 'none';
                     }
                 }
-            }
 
+                dialog.style.display = 'flex';
+                void dialog.offsetWidth;
+                dialog.classList.add('show');
 
-            // Info Modal Logic
-            const infoBtn = document.getElementById('info-btn');
-            const infoModal = document.getElementById('info-modal');
-            const infoClose = document.getElementById('info-modal-close');
-
-            function openInfoModal() {
-                infoModal.style.display = 'flex';
-                // Trigger reflow
-                infoModal.offsetHeight;
-                infoModal.classList.add('active');
-            }
-
-            function closeInfoModal() {
-                infoModal.classList.remove('active');
-                setTimeout(() => {
-                    infoModal.style.display = 'none';
-                }, 300);
-            }
-
-            if (infoBtn) infoBtn.addEventListener('click', openInfoModal);
-            if (infoClose) infoClose.addEventListener('click', closeInfoModal);
-            if (infoModal) {
-                infoModal.addEventListener('click', (e) => {
-                    if (e.target === infoModal) closeInfoModal();
-                });
-            }
-
-            // Initialize model selection handlers when document loads
-            document.addEventListener('DOMContentLoaded', function () {
-                const modelRadios = document.querySelectorAll('input[name="model"]');
-
-                modelRadios.forEach(radio => {
-                    radio.addEventListener('change', function () {
-                        const selectedModel = this.value;
-                        console.log(`Model selected: ${selectedModel}`);
-                        checkAndDownloadModel(selectedModel);
-                    });
-                });
-
-                // Set initial model based on checked radio
-                const checkedRadio = document.querySelector('input[name="model"]:checked');
-                if (checkedRadio) {
-                    currentSelectedModel = checkedRadio.value;
+                let isClosed = false;
+                function cleanup(result) {
+                    if (isClosed) return;
+                    isClosed = true;
+                    dialog.classList.remove('show');
+                    okBtn.removeEventListener('click', onOk);
+                    cancelBtn.removeEventListener('click', onCancel);
+                    if (xBtn) xBtn.removeEventListener('click', onCancel);
+                    dialog.removeEventListener('click', onBackdrop);
+                    window.removeEventListener('keydown', onKeyDown);
+                    setTimeout(() => {
+                        dialog.style.display = 'none';
+                        resolve(result);
+                    }, 220);
                 }
+
+                function onOk(e) { e.stopPropagation(); cleanup(true); }
+                function onCancel(e) { e.stopPropagation(); cleanup(false); }
+                function onBackdrop(e) { if (e.target === dialog) cleanup(false); }
+                function onKeyDown(e) { if (e.key === 'Escape') cleanup(false); }
+
+                okBtn.addEventListener('click', onOk);
+                cancelBtn.addEventListener('click', onCancel);
+                if (xBtn) xBtn.addEventListener('click', onCancel);
+                dialog.addEventListener('click', onBackdrop);
+                window.addEventListener('keydown', onKeyDown);
             });
-        </script>
+        }
+        window.showConfirmDialog = showConfirmDialog;
+        window.PyPotteryUtils = window.PyPotteryUtils || {};
+        window.PyPotteryUtils.showConfirmDialog = showConfirmDialog;
+    </script>
 
-        <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <!-- Scripts -->
+    <script src="{{ url_for('static', filename='js/tabs.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/projects.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/image-grid.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/canvas.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/segmentation.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/svg-editor.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/batch-export.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/postprocess.js') }}"></script>
 
+    <!-- Model Download Handler & Modal Handlers -->
+    <script>
+        let currentSelectedModel = 'small';
 
+        function closeDownloadOverlay() {
+            const overlay = document.getElementById('model-download-overlay');
+            overlay.classList.remove('active');
+        }
+
+        function showDownloadOverlay(modelSize) {
+            const overlay = document.getElementById('model-download-overlay');
+            const message = document.getElementById('download-message');
+            const errorDiv = document.getElementById('download-error');
+            const spinner = document.querySelector('.download-spinner');
+            const stats = document.getElementById('download-stats');
+            const progressDiv = document.querySelector('.download-progress');
+            const progressBar = document.getElementById('download-progress-bar');
+
+            message.textContent = `Checking ${modelSize} model...`;
+            errorDiv.style.display = 'none';
+            spinner.style.display = 'block';
+            stats.style.display = 'block';
+            progressDiv.style.display = 'block';
+            progressBar.style.width = '0%';
+            document.getElementById('download-progress-text').textContent = '0%';
+            document.getElementById('download-size').textContent = '0 MB / 0 MB';
+            document.getElementById('download-speed').textContent = '';
+
+            overlay.classList.add('active');
+        }
+
+        function updateDownloadProgress(progress, downloadedMB, totalMB, speed) {
+            const progressBar = document.getElementById('download-progress-bar');
+            const progressText = document.getElementById('download-progress-text');
+            const sizeText = document.getElementById('download-size');
+            const speedText = document.getElementById('download-speed');
+            const message = document.getElementById('download-message');
+
+            progressBar.style.width = progress + '%';
+            progressText.textContent = progress + '%';
+            sizeText.textContent = `${downloadedMB} MB / ${totalMB} MB`;
+            if (speed !== undefined && speed > 0) {
+                speedText.textContent = `• ${speed} MB/s`;
+            }
+            if (progress < 100) {
+                message.textContent = 'Downloading SAM2 model weights...';
+            }
+        }
+
+        function showDownloadError(errorMsg) {
+            const errorDiv = document.getElementById('download-error');
+            const errorMessage = document.getElementById('download-error-message');
+            const spinner = document.querySelector('.download-spinner');
+            const stats = document.getElementById('download-stats');
+            const progress = document.querySelector('.download-progress');
+
+            errorMessage.textContent = errorMsg;
+            errorDiv.style.display = 'block';
+            spinner.style.display = 'none';
+            stats.style.display = 'none';
+            progress.style.display = 'none';
+        }
+
+        function askDownloadConfirmation(modelSize, sizeMb) {
+            return new Promise((resolve) => {
+                const modal = document.getElementById('model-confirm-modal');
+                const nameEl = document.getElementById('model-confirm-name');
+                const sizeEl = document.getElementById('model-confirm-size');
+                const okBtn = document.getElementById('model-confirm-ok-btn');
+                const cancelBtn = document.getElementById('model-confirm-cancel-btn');
+                const closeBtn = document.getElementById('model-confirm-close-btn');
+                const overlay = document.getElementById('model-confirm-overlay');
+
+                const modelDisplayNames = {
+                    'tiny': 'Tiny',
+                    'small': 'Small',
+                    'base': 'Base+',
+                    'large': 'Large'
+                };
+                const name = modelDisplayNames[modelSize] || modelSize;
+                nameEl.textContent = `SAM2 ${name}`;
+                sizeEl.textContent = `~${sizeMb} MB`;
+
+                function cleanup(result) {
+                    modal.style.display = 'none';
+                    okBtn.removeEventListener('click', onOk);
+                    cancelBtn.removeEventListener('click', onCancel);
+                    closeBtn.removeEventListener('click', onCancel);
+                    overlay.removeEventListener('click', onCancel);
+                    resolve(result);
+                }
+
+                function onOk() {
+                    cleanup(true);
+                }
+
+                function onCancel() {
+                    cleanup(false);
+                }
+
+                okBtn.addEventListener('click', onOk);
+                cancelBtn.addEventListener('click', onCancel);
+                closeBtn.addEventListener('click', onCancel);
+                overlay.addEventListener('click', onCancel);
+
+                modal.style.display = 'flex';
+            });
+        }
+
+        async function checkAndDownloadModel(modelSize) {
+            try {
+                const checkResponse = await fetch('/api/check_model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model_size: modelSize })
+                });
+
+                const checkData = await checkResponse.json();
+
+                if (!checkResponse.ok) {
+                    throw new Error(checkData.error || 'Failed to check model');
+                }
+
+                if (checkData.exists) {
+                    // Model is already present locally: activate it in the backend
+                    currentSelectedModel = modelSize;
+                    try {
+                        await fetch('/api/load_model', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ model_size: modelSize })
+                        });
+                    } catch (err) {
+                        console.warn('Could not activate model on backend:', err);
+                    }
+                    return;
+                }
+
+                // Model does not exist locally: ask user confirmation via custom modal
+                const sizeMb = checkData.size_mb || (modelSize === 'tiny' ? 40 : modelSize === 'small' ? 180 : modelSize === 'base' ? 230 : 900);
+                const confirmed = await askDownloadConfirmation(modelSize, sizeMb);
+
+                if (!confirmed) {
+                    // Revert radio button selection back to previously selected model
+                    const previousRadio = document.querySelector(`input[name="model"][value="${currentSelectedModel}"]`);
+                    if (previousRadio) previousRadio.checked = true;
+                    return;
+                }
+
+                // User confirmed: display overlay and start SSE download
+                showDownloadOverlay(modelSize);
+                document.getElementById('download-message').textContent = 'Starting download...';
+                const eventSource = new EventSource(`/api/download_model?model_size=${modelSize}`);
+
+                eventSource.onmessage = function (event) {
+                    const data = JSON.parse(event.data);
+
+                    if (data.status === 'downloading') {
+                        updateDownloadProgress(
+                            data.progress,
+                            data.downloaded_mb,
+                            data.total_mb,
+                            data.speed_mbps
+                        );
+                    } else if (data.status === 'complete') {
+                        updateDownloadProgress(100, data.total_mb || checkData.size_mb, data.total_mb || checkData.size_mb, 0);
+                        document.getElementById('download-message').textContent = 'Download complete! Model ready.';
+                        eventSource.close();
+
+                        // Activate the downloaded model in the backend
+                        fetch('/api/load_model', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ model_size: modelSize })
+                        }).catch(err => console.warn('Could not activate model on backend:', err));
+
+                        setTimeout(() => {
+                            closeDownloadOverlay();
+                            currentSelectedModel = modelSize;
+                        }, 1000);
+                    } else if (data.status === 'error') {
+                        eventSource.close();
+                        showDownloadError(data.error || 'Unknown error occurred during download');
+                        const previousRadio = document.querySelector(`input[name="model"][value="${currentSelectedModel}"]`);
+                        if (previousRadio) previousRadio.checked = true;
+                    }
+                };
+
+                eventSource.onerror = function (error) {
+                    eventSource.close();
+                    showDownloadError('Network error: Could not connect to server');
+                    const previousRadio = document.querySelector(`input[name="model"][value="${currentSelectedModel}"]`);
+                    if (previousRadio) previousRadio.checked = true;
+                };
+
+            } catch (error) {
+                showDownloadOverlay(modelSize);
+                showDownloadError(error.message);
+                const previousRadio = document.querySelector(`input[name="model"][value="${currentSelectedModel}"]`);
+                if (previousRadio) previousRadio.checked = true;
+            }
+        }
+
+        // Info Modal Logic
+        const infoBtn = document.getElementById('info-btn');
+        const infoModal = document.getElementById('info-modal');
+        const infoClose = document.getElementById('info-modal-close');
+
+        function openInfoModal() {
+            infoModal.style.display = 'flex';
+            infoModal.offsetHeight;
+            infoModal.classList.add('active');
+        }
+
+        function closeInfoModal() {
+            infoModal.classList.remove('active');
+            setTimeout(() => {
+                infoModal.style.display = 'none';
+            }, 250);
+        }
+
+        if (infoBtn) infoBtn.addEventListener('click', openInfoModal);
+        if (infoClose) infoClose.addEventListener('click', closeInfoModal);
+        if (infoModal) {
+            infoModal.addEventListener('click', (e) => {
+                if (e.target === infoModal) closeInfoModal();
+            });
+        }
+
+        // Help Modal Close on click outside
+        const helpModal = document.getElementById('help-modal');
+        if (helpModal) {
+            helpModal.addEventListener('click', (e) => {
+                if (e.target === helpModal) helpModal.style.display = 'none';
+            });
+        }
+
+        // Initialize model selection handlers
+        document.addEventListener('DOMContentLoaded', function () {
+            const modelRadios = document.querySelectorAll('input[name="model"]');
+            modelRadios.forEach(radio => {
+                radio.addEventListener('change', function () {
+                    const selectedModel = this.value;
+                    checkAndDownloadModel(selectedModel);
+                });
+            });
+
+            const checkedRadio = document.querySelector('input[name="model"]:checked');
+            if (checkedRadio) {
+                currentSelectedModel = checkedRadio.value;
+            }
+        });
+    </script>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 
 </html>

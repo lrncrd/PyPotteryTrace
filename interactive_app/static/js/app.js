@@ -12,6 +12,7 @@ class PyPotteryTraceApp {
         this.currentMode = 'point';
         this.epsilon = 1.5;
         this.smoothing = 0.3;
+        this.linesThreshold = 100;
 
         // New: Image folder navigation
         this.imageFiles = [];
@@ -102,6 +103,15 @@ class PyPotteryTraceApp {
         });
 
         // Settings sliders
+        const linesSlider = document.getElementById('lines-threshold-slider');
+        if (linesSlider) {
+            linesSlider.addEventListener('input', (e) => {
+                this.linesThreshold = parseInt(e.target.value, 10);
+                const valEl = document.getElementById('lines-threshold-value');
+                if (valEl) valEl.textContent = this.linesThreshold;
+            });
+        }
+
         document.getElementById('epsilon-slider').addEventListener('input', (e) => {
             this.epsilon = parseFloat(e.target.value);
             document.getElementById('epsilon-value').textContent = this.epsilon.toFixed(1);
@@ -111,6 +121,23 @@ class PyPotteryTraceApp {
             this.smoothing = parseFloat(e.target.value);
             document.getElementById('smoothing-value').textContent = this.smoothing.toFixed(1);
         });
+
+        // Export format radio buttons
+        const svgRadio = document.getElementById('export-format-svg');
+        const pngRadio = document.getElementById('export-format-png');
+        const svgLabel = document.getElementById('format-radio-svg-label');
+        const pngLabel = document.getElementById('format-radio-png-label');
+        const vectorizeCheckbox = document.getElementById('vectorize-checkbox');
+
+        const updateRadioVisuals = () => {
+            const isSvg = svgRadio && svgRadio.checked;
+            if (svgLabel) svgLabel.classList.toggle('active', isSvg);
+            if (pngLabel) pngLabel.classList.toggle('active', !isSvg);
+            if (vectorizeCheckbox) vectorizeCheckbox.checked = isSvg;
+        };
+
+        if (svgRadio) svgRadio.addEventListener('change', updateRadioVisuals);
+        if (pngRadio) pngRadio.addEventListener('change', updateRadioVisuals);
 
         // Export button
         document.getElementById('export-btn').addEventListener('click', () => {
@@ -246,6 +273,13 @@ class PyPotteryTraceApp {
 
     setMode(mode) {
         console.log('Setting mode to:', mode);
+
+        // GUARD: Block switching modes if mask is in edit mode
+        if (window.segmentationManager && window.segmentationManager.isEditingPolygon && mode !== 'polygon') {
+            this.showNotification('Please finish or cancel mask editing before changing tools (click "Done Editing" or "Cancel")', 'warning');
+            return;
+        }
+
         this.currentMode = mode;
 
         // Update UI
@@ -414,11 +448,28 @@ class PyPotteryTraceApp {
         nameInput.placeholder = `${category} ${count}`;
 
         // Set default vectorization based on category
+        const shouldVectorize = this.getDefaultVectorization(category);
         const vectorizeCheckbox = document.getElementById('vectorize-checkbox');
-        vectorizeCheckbox.checked = this.getDefaultVectorization(category);
+        if (vectorizeCheckbox) vectorizeCheckbox.checked = shouldVectorize;
+
+        const svgRadio = document.getElementById('export-format-svg');
+        const pngRadio = document.getElementById('export-format-png');
+        const svgLabel = document.getElementById('format-radio-svg-label');
+        const pngLabel = document.getElementById('format-radio-png-label');
+        if (svgRadio && pngRadio) {
+            svgRadio.checked = shouldVectorize;
+            pngRadio.checked = !shouldVectorize;
+            if (svgLabel) svgLabel.classList.toggle('active', shouldVectorize);
+            if (pngLabel) pngLabel.classList.toggle('active', !shouldVectorize);
+        }
     }
 
     async addCurrentSegment() {
+        if (window.segmentationManager && window.segmentationManager.isEditingPolygon) {
+            this.showNotification('Please finish editing first (click "Done Editing" or "Cancel")', 'warning');
+            return;
+        }
+
         if (!segmentationManager.currentMask) {
             this.showNotification('No segment to add', 'warning');
             return;
@@ -432,7 +483,9 @@ class PyPotteryTraceApp {
         const category = document.getElementById('category-select').value;
         const nameInput = document.getElementById('element-name');
         const name = nameInput.value || nameInput.placeholder;
-        const shouldVectorize = document.getElementById('vectorize-checkbox').checked;
+        const svgRadio = document.getElementById('export-format-svg');
+        const vectorizeCheckbox = document.getElementById('vectorize-checkbox');
+        const shouldVectorize = svgRadio ? svgRadio.checked : (vectorizeCheckbox ? vectorizeCheckbox.checked : true);
 
         // Check if this is a manual mask (polygon)
         const isManualMask = segmentationManager.isManualMask;
@@ -536,27 +589,46 @@ class PyPotteryTraceApp {
         this.segments.forEach((segment, index) => {
             // Use stored value or default based on category
             const shouldVectorize = segment.should_vectorize !== undefined ? segment.should_vectorize : this.getDefaultVectorization(segment.category);
-            const vectorizeIcon = shouldVectorize ? '🎨' : '🖼️';
+            const vectorizeIcon = shouldVectorize ? '<i class="bi bi-filetype-svg"></i>' : '<i class="bi bi-filetype-png"></i>';
             const vectorizeText = shouldVectorize ? 'SVG' : 'PNG';
 
             // Check if manual mask
             const isManual = segment.is_manual || false;
-            const manualBadge = isManual ? '<span style="background: #f59e0b; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 4px;">Manual</span>' : '';
+            const manualBadge = isManual ? '<span class="segment-manual-badge">Manual</span>' : '';
 
             const item = document.createElement('div');
-            item.className = 'segment-item';
+            item.className = 'segment-item segment-card';
             item.innerHTML = `
-                <div class="segment-info">
-                    <div class="segment-name">${segment.name}${manualBadge}</div>
-                    <div class="segment-category">${this.getCategoryIcon(segment.category)} ${segment.category}</div>
-                    <div class="segment-vectorize" style="font-size: 0.8em; color: #666; margin-top: 2px;">
-                        ${vectorizeIcon} ${vectorizeText}
+                <div class="segment-card-header">
+                    <div class="segment-card-title">
+                        <span class="segment-card-icon">${this.getCategoryIcon(segment.category)}</span>
+                        <span class="segment-name" title="${segment.name}">${segment.name}</span>
+                        ${manualBadge}
                     </div>
-                </div>
-                <div class="segment-actions">
-                    <button class="icon-btn delete" onclick="window.app.deleteSegment('${segment.id}')">
-                        🗑️
+                    <button type="button" class="segment-delete-btn" onclick="window.app.deleteSegment('${segment.id}')" title="Delete segment">
+                        <i class="bi bi-trash3"></i>
                     </button>
+                </div>
+                <div class="segment-card-body">
+                    <div class="segment-category-col">
+                        <select class="segment-category-select" onchange="window.app.changeSegmentCategory('${segment.id}', this.value)" title="Change segment category">
+                            ${this.getCategoryOptionsHtml(segment.category)}
+                        </select>
+                    </div>
+                    <div class="segment-format-col">
+                        <div class="segment-format-toggle" role="group" aria-label="Format toggle">
+                            <button type="button" class="format-mini-btn ${shouldVectorize ? 'active' : ''}" 
+                                    onclick="window.app.toggleSegmentVectorize('${segment.id}', true)" 
+                                    title="Export as Vector (SVG)">
+                                <i class="bi bi-filetype-svg"></i> SVG
+                            </button>
+                            <button type="button" class="format-mini-btn ${!shouldVectorize ? 'active' : ''}" 
+                                    onclick="window.app.toggleSegmentVectorize('${segment.id}', false)" 
+                                    title="Export as Raster (PNG)">
+                                <i class="bi bi-filetype-png"></i> PNG
+                            </button>
+                        </div>
+                    </div>
                 </div>
             `;
             list.appendChild(item);
@@ -569,17 +641,86 @@ class PyPotteryTraceApp {
         this.updateMLExportNotice();
     }
 
+    getCategoryOptionsHtml(currentCategory) {
+        const categories = [
+            { value: 'Profile', label: 'Profile' },
+            { value: 'Application', label: 'Application' },
+            { value: 'Handle', label: 'Handle' },
+            { value: 'Prospectus', label: 'Prospectus' },
+            { value: 'Decoration', label: 'Decoration' },
+            { value: 'Running_Element', label: 'Running element' },
+            { value: 'Section', label: 'Section' },
+            { value: 'Detail', label: 'Detail' }
+        ];
+
+        return categories.map(cat => `
+            <option value="${cat.value}" ${cat.value === currentCategory ? 'selected' : ''}>
+                ${cat.label}
+            </option>
+        `).join('');
+    }
+
+    async changeSegmentCategory(segmentId, newCategory) {
+        const segment = this.segments.find(s => s.id === segmentId);
+        if (!segment || segment.category === newCategory) return;
+
+        console.log(`Updating category for segment "${segment.name}": ${segment.category} -> ${newCategory}`);
+        segment.category = newCategory;
+
+        // Update canvas savedMasks if present
+        if (window.canvasManager && window.canvasManager.savedMasks) {
+            const mask = window.canvasManager.savedMasks.find(m => m.segmentId === segmentId || m.id === segmentId);
+            if (mask) {
+                mask.category = newCategory;
+            }
+            window.canvasManager.redraw();
+        }
+
+        // Re-render UI list
+        this.updateSegmentsList();
+
+        // Sync with backend session and project storage
+        await this.syncSegmentsWithBackend();
+        await this.saveAnnotationsToProject();
+
+        this.showNotification(`Segment updated to "${newCategory}"`, 'success');
+    }
+
+    async toggleSegmentVectorize(segmentId, shouldVectorize) {
+        const segment = this.segments.find(s => s.id === segmentId);
+        if (!segment) return;
+
+        const currentVal = segment.should_vectorize !== undefined
+            ? segment.should_vectorize
+            : this.getDefaultVectorization(segment.category);
+
+        if (currentVal === shouldVectorize) return;
+
+        console.log(`Updating format for segment "${segment.name}": ${currentVal ? 'SVG' : 'PNG'} -> ${shouldVectorize ? 'SVG' : 'PNG'}`);
+        segment.should_vectorize = shouldVectorize;
+
+        // Re-render UI list
+        this.updateSegmentsList();
+
+        // Sync with backend session and project storage
+        await this.syncSegmentsWithBackend();
+        await this.saveAnnotationsToProject();
+
+        this.showNotification(`Format for "${segment.name}" updated to ${shouldVectorize ? 'SVG (Vector)' : 'PNG (Raster)'}`, 'success');
+    }
+
     getCategoryIcon(category) {
         const icons = {
-            'Profile': '🏺',
-            'Application': '🎯',
-            'Handle': '🪢',
-            'Prospectus': '👁️',
-            'Decoration': '🎨',
-            'Section': '✂️',
-            'Detail': '📌'
+            'Profile': '<i class="bi bi-bezier2"></i>',
+            'Application': '<i class="bi bi-bullseye"></i>',
+            'Handle': '<i class="bi bi-link-45deg"></i>',
+            'Prospectus': '<i class="bi bi-eye"></i>',
+            'Decoration': '<i class="bi bi-palette"></i>',
+            'Running_Element': '<i class="bi bi-arrow-repeat"></i>',
+            'Section': '<i class="bi bi-scissors"></i>',
+            'Detail': '<i class="bi bi-zoom-in"></i>'
         };
-        return icons[category] || '📄';
+        return icons[category] || '<i class="bi bi-file-earmark"></i>';
     }
 
     getDefaultVectorization(category) {
@@ -595,7 +736,17 @@ class PyPotteryTraceApp {
             console.log('Saved masks in canvas:', window.canvasManager.savedMasks.map(m => ({ id: m.segmentId, name: m.name })));
         }
 
-        if (!confirm('Are you sure you want to delete this segment?')) {
+        const confirmFn = window.showConfirmDialog || showConfirmDialog;
+        const confirmed = await confirmFn({
+            title: 'Delete Segment',
+            subtitle: 'Are you sure you want to delete this segment?',
+            confirmText: 'Delete Segment',
+            cancelText: 'Cancel',
+            confirmClass: 'btn-danger',
+            icon: 'bi-trash3-fill'
+        });
+
+        if (!confirmed) {
             return;
         }
 
@@ -671,7 +822,7 @@ class PyPotteryTraceApp {
                 this.rotationCenter = { x, y };
 
                 // Update UI
-                document.getElementById('rotation-center-info').style.display = 'block';
+                document.getElementById('rotation-center-info').style.display = 'flex';
                 document.getElementById('rotation-coords').textContent = `(${Math.round(x)}, ${Math.round(y)})`;
 
                 // Draw marker on canvas
@@ -738,6 +889,7 @@ class PyPotteryTraceApp {
                     session_id: this.sessionId,
                     epsilon: this.epsilon,
                     smoothing_factor: this.smoothing,
+                    lines_threshold: this.linesThreshold !== undefined ? this.linesThreshold : 100,
                     include_background: false
                 })
             });
@@ -1093,7 +1245,7 @@ class PyPotteryTraceApp {
                         opacity: 0;
                         transition: opacity 0.3s;
                     `;
-                    indicator.textContent = '💾 Saved';
+                    indicator.innerHTML = '<i class="bi bi-floppy"></i> Saved';
                     document.body.appendChild(indicator);
 
                     setTimeout(() => indicator.style.opacity = '1', 10);
@@ -1163,7 +1315,7 @@ class PyPotteryTraceApp {
 
                 // Load rotation center
                 if (this.rotationCenter) {
-                    document.getElementById('rotation-center-info').style.display = 'block';
+                    document.getElementById('rotation-center-info').style.display = 'flex';
                     document.getElementById('rotation-coords').textContent =
                         `(${Math.round(this.rotationCenter.x)}, ${Math.round(this.rotationCenter.y)})`;
 
@@ -1241,7 +1393,7 @@ class PyPotteryTraceApp {
             this.rotationCenter = sessionData.rotation_center;
 
             // Update UI
-            document.getElementById('rotation-center-info').style.display = 'block';
+            document.getElementById('rotation-center-info').style.display = 'flex';
             document.getElementById('rotation-coords').textContent =
                 `(${Math.round(this.rotationCenter.x)}, ${Math.round(this.rotationCenter.y)})`;
 
@@ -1322,7 +1474,7 @@ class PyPotteryTraceApp {
                 category: seg.category,
                 contours: seg.contours,
                 mask: seg.mask,  // Include mask data (contains polygon vertices for manual masks)
-                should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : true,
+                should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : this.getDefaultVectorization(seg.category),
                 is_manual: seg.is_manual || false  // Preserve manual mask flag
             }));
 

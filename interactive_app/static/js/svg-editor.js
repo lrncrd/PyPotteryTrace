@@ -31,6 +31,7 @@ class SVGEditor {
         this.layerCategories = {}; // Organized by category (Profile, Symmetry, etc.)
         this.layerVisibility = {}; // Track which layers are visible
         this.imageVisibility = {}; // Track which images are visible
+        this.collapsedCategories = new Set(); // Track collapsed layer categories
 
         // ZIP download URL (set by app.js after export)
         this.zipDownloadUrl = null;
@@ -51,6 +52,25 @@ class SVGEditor {
         this.hoveredPoint = null;
         this.draggedPoint = null; // Point being dragged
         this.draggedImage = null; // Image layer being dragged
+        this.pendingReconstructPoint = null; // Break point picked in Continuation Line mode, awaiting its reference point
+
+        // Continuation Line mode walks the primary profile in two phases: 'outer'
+        // (the face that gets mirrored) first, then 'inner' (the fracture-section
+        // face that never is). reconstructZones (set on mode entry, see setMode)
+        // holds which point indices of the primary path belong to each face; null
+        // means the path is open and has no inner face, so everything is one phase.
+        this.reconstructPhase = 'outer';
+        this.reconstructZones = null;
+
+        // Number of <path> elements present in the originally loaded SVG DOM.
+        // Paths added later (e.g. reconstruction/continuation lines) live only in
+        // this.paths beyond this count and are materialized into the DOM at export
+        // time (see exportModifiedSVG) so that undo never has to reverse a DOM edit.
+        this.originalPathCount = 0;
+
+        // Pristine (pre-extension) points of the Symmetry Line path, set once per
+        // loaded file - see extractPaths() and syncSymmetryLineExtension().
+        this.symmetryBasePoints = null;
 
         // Settings
         this.pointSize = 8;
@@ -74,8 +94,13 @@ class SVGEditor {
         const resizeCanvas = () => {
             // Get actual container size
             const rect = container.getBoundingClientRect();
-            this.canvas.width = rect.width || container.clientWidth;
-            this.canvas.height = rect.height || container.clientHeight;
+            if (rect.width > 0 && rect.height > 0) {
+                this.canvas.width = rect.width;
+                this.canvas.height = rect.height;
+            } else {
+                this.canvas.width = container.clientWidth || 800;
+                this.canvas.height = container.clientHeight || 600;
+            }
             console.log('Canvas resized to:', this.canvas.width, 'x', this.canvas.height);
 
             // Force redraw after a short delay to ensure canvas is ready
@@ -89,14 +114,14 @@ class SVGEditor {
 
         window.addEventListener('resize', resizeCanvas);
 
-        // Also resize when tab becomes visible
+        // Also resize and reset view when tab becomes visible
         const observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                     const tab = document.getElementById('svg-editor-tab');
                     if (tab && tab.classList.contains('active')) {
-                        console.log('SVG Editor tab became active, resizing canvas...');
-                        setTimeout(resizeCanvas, 50);
+                        console.log('SVG Editor tab became active, handling activation...');
+                        setTimeout(() => this.handleTabActivated(), 50);
                     }
                 }
             });
@@ -108,12 +133,45 @@ class SVGEditor {
         }
     }
 
+    handleTabActivated() {
+        const container = this.canvas.parentElement;
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                this.canvas.width = rect.width;
+                this.canvas.height = rect.height;
+            }
+        }
+        if (this.svgData) {
+            this.resetView();
+        } else {
+            this.redraw();
+        }
+    }
+
     setupEventListeners() {
         // Mouse events for pan, zoom, and selection
         this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
         this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
         this.canvas.addEventListener('wheel', (e) => this.handleWheel(e));
+
+        // Right-click cancels a pending break point in Continuation Line mode
+        this.canvas.addEventListener('contextmenu', (e) => {
+            if (this.currentMode === 'reconstruct-spline' && this.pendingReconstructPoint) {
+                e.preventDefault();
+                this.pendingReconstructPoint = null;
+                this.redraw();
+            }
+        });
+
+        // Escape cancels a pending break point in Continuation Line mode
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.pendingReconstructPoint) {
+                this.pendingReconstructPoint = null;
+                this.redraw();
+            }
+        });
 
         // Mode buttons
         document.querySelectorAll('[data-svg-mode]').forEach(btn => {
@@ -157,11 +215,35 @@ class SVGEditor {
         });
 
         // Save button
-        document.getElementById('svg-save-btn').addEventListener('click', () => {
-            this.exportModifiedSVG();
+        const saveBtn = document.getElementById('svg-save-btn');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                this.exportModifiedSVG();
+            });
+        }
+
+        // macOS-style Segmented Radio for background mode
+        const bgRadios = document.querySelectorAll('input[name="svg-bg-mode"]');
+        const bgDesc = document.getElementById('svg-bg-desc');
+        const bgCheckbox = document.getElementById('svg-bg-checkbox');
+        const optNone = document.getElementById('svg-bg-opt-none');
+        const optInclude = document.getElementById('svg-bg-opt-include');
+
+        bgRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                const isWithBg = e.target.value === 'true';
+                if (optNone) optNone.classList.toggle('active', !isWithBg);
+                if (optInclude) optInclude.classList.toggle('active', isWithBg);
+                if (bgCheckbox) bgCheckbox.checked = isWithBg;
+                if (bgDesc) {
+                    bgDesc.textContent = isWithBg
+                        ? 'Include the original image as background in the exported SVG'
+                        : 'Export clean vector paths with transparent background';
+                }
+            });
         });
 
-        // Download ZIP button
+        // Download ZIP button (if present)
         const zipBtn = document.getElementById('svg-download-zip-btn');
         if (zipBtn) {
             zipBtn.addEventListener('click', () => {
@@ -189,7 +271,21 @@ class SVGEditor {
     }
 
     setMode(mode) {
+        const enteringSpline = mode === 'reconstruct-spline' && this.currentMode !== 'reconstruct-spline';
         this.currentMode = mode;
+
+        // Leaving spline-continuation mode drops any half-picked break point
+        if (mode !== 'reconstruct-spline') {
+            this.pendingReconstructPoint = null;
+        }
+
+        // Freshly entering the mode: start over at the outer face and recompute
+        // the outer/inner split from the primary path's current points.
+        if (enteringSpline) {
+            this.reconstructPhase = 'outer';
+            const primaryPath = this.paths.find(p => this.isPrimaryProfilePath(p));
+            this.reconstructZones = this.computeProfileZones(primaryPath);
+        }
 
         // Update UI
         document.querySelectorAll('[data-svg-mode]').forEach(btn => {
@@ -200,7 +296,8 @@ class SVGEditor {
         const cursors = {
             'view': 'grab',
             'select': 'crosshair',
-            'delete': 'not-allowed'
+            'delete': 'not-allowed',
+            'reconstruct-spline': 'crosshair'
         };
         this.canvas.style.cursor = cursors[mode] || 'default';
 
@@ -265,9 +362,10 @@ class SVGEditor {
             // Enable save button
             document.getElementById('svg-save-btn').disabled = false;
 
-            // Enable ZIP download button if URL is available
-            if (this.zipDownloadUrl) {
-                document.getElementById('svg-download-zip-btn').disabled = false;
+            // Enable ZIP download button if element exists and URL is available
+            const zipBtn = document.getElementById('svg-download-zip-btn');
+            if (zipBtn && this.zipDownloadUrl) {
+                zipBtn.disabled = false;
             }
 
             // Save initial state
@@ -282,7 +380,11 @@ class SVGEditor {
 
         } catch (error) {
             console.error('Failed to load SVG:', error);
-            alert('Errore nel caricamento dell\'SVG: ' + error.message);
+            if (window.app) {
+                window.app.showNotification('Error loading SVG: ' + error.message, 'error');
+            } else {
+                alert('Error loading SVG: ' + error.message);
+            }
         }
     }
 
@@ -439,6 +541,16 @@ class SVGEditor {
 
             this.images.push(imageData);
         });
+
+        this.originalPathCount = this.paths.length;
+
+        // Remember the symmetry line's pristine geometry (before any continuation-
+        // driven extension) so that extension can always be recomputed fresh from
+        // it, rather than compounding onto whatever it currently looks like.
+        const symmetryPath = this.paths.find(p => p.category === 'Symmetry' || /symmetry/i.test(p.layerId));
+        this.symmetryBasePoints = symmetryPath
+            ? symmetryPath.points.map(p => ({ ...p }))
+            : null;
 
         console.log('Extracted:', {
             paths: this.paths.length,
@@ -732,6 +844,51 @@ class SVGEditor {
             if (clickedPoint) {
                 this.deletePoint(clickedPoint);
             }
+        } else if (this.currentMode === 'reconstruct-spline') {
+            // Continuation line: click the break point, then (optionally) a second,
+            // farther-back point on the same fragment to sample more of its curvature.
+            // Only the primary (un-mirrored) profile side is interactive here, and
+            // only its current phase's face (outer first, then inner) is clickable -
+            // see reconstructPhase/reconstructZones.
+            const clickedPoint = this.findPointAt(
+                mouseX, mouseY,
+                p => this.isPrimaryProfilePath(p),
+                (p, i) => this.isPointInActiveReconstructZone(i)
+            );
+
+            if (!clickedPoint || !this.isAnchorPoint(clickedPoint.point)) {
+                return;
+            }
+
+            if (!this.pendingReconstructPoint) {
+                this.pendingReconstructPoint = clickedPoint;
+                this.redraw();
+            } else {
+                const breakPoint = this.pendingReconstructPoint;
+                const referencePoint = clickedPoint;
+                this.pendingReconstructPoint = null;
+
+                if (referencePoint.pathId === breakPoint.pathId && referencePoint.pointIndex === breakPoint.pointIndex) {
+                    // Same point clicked twice - ignore and let the user retry
+                    this.redraw();
+                    return;
+                }
+
+                // The outer face's continuation mirrors automatically (that's the
+                // whole point of doing outer first); the inner/fracture face never
+                // does - it's unique to this specific sherd.
+                const wasOuterPhase = this.reconstructPhase === 'outer';
+                this.addProjectionContinuation(breakPoint, referencePoint, { mirror: wasOuterPhase });
+
+                if (wasOuterPhase && this.reconstructZones && this.reconstructZones.innerIndices.size > 0) {
+                    this.reconstructPhase = 'inner';
+                    const msg = 'Now click the break point on the inner (fracture-section) face — it will not be mirrored.';
+                    if (window.app) window.app.showNotification(msg, 'info');
+                    this.redraw();
+                } else {
+                    this.reconstructPhase = 'outer';
+                }
+            }
         }
     }
 
@@ -780,9 +937,17 @@ class SVGEditor {
             this.lastMouseY = mouseY;
 
             this.redraw();
-        } else if (this.currentMode === 'select' || this.currentMode === 'delete' || this.currentMode === 'add') {
-            // Highlight hovered point
-            const hoveredPoint = this.findPointAt(mouseX, mouseY);
+        } else if (this.currentMode === 'select' || this.currentMode === 'delete' || this.currentMode === 'add' ||
+                   this.currentMode === 'reconstruct-spline') {
+            // Highlight hovered point (Continuation Line mode only considers the
+            // primary profile side's current phase, matching what's clickable there)
+            const hoverFilter = this.currentMode === 'reconstruct-spline'
+                ? (p => this.isPrimaryProfilePath(p))
+                : null;
+            const hoverPointFilter = this.currentMode === 'reconstruct-spline'
+                ? ((p, i) => this.isPointInActiveReconstructZone(i))
+                : null;
+            const hoveredPoint = this.findPointAt(mouseX, mouseY, hoverFilter, hoverPointFilter);
 
             if (hoveredPoint !== this.hoveredPoint) {
                 this.hoveredPoint = hoveredPoint;
@@ -796,6 +961,8 @@ class SVGEditor {
                     this.canvas.style.cursor = 'crosshair';
                 } else if (this.currentMode === 'delete') {
                     this.canvas.style.cursor = hoveredPoint ? 'crosshair' : 'default';
+                } else if (this.currentMode === 'reconstruct-spline') {
+                    this.canvas.style.cursor = 'crosshair';
                 }
 
                 this.redraw();
@@ -874,15 +1041,28 @@ class SVGEditor {
             return;
         }
 
+        const container = this.canvas.parentElement;
+        if (container) {
+            const rect = container.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                this.canvas.width = rect.width;
+                this.canvas.height = rect.height;
+            }
+        }
+
         console.log('Resetting view for SVG:', this.svgData.width, 'x', this.svgData.height);
         console.log('Canvas size:', this.canvas.width, 'x', this.canvas.height);
 
         // Fit SVG to canvas
         const padding = 50;
-        const scaleX = (this.canvas.width - padding * 2) / this.svgData.width;
-        const scaleY = (this.canvas.height - padding * 2) / this.svgData.height;
+        const availWidth = Math.max(100, this.canvas.width - padding * 2);
+        const availHeight = Math.max(100, this.canvas.height - padding * 2);
 
-        this.scale = Math.min(scaleX, scaleY);
+        const scaleX = availWidth / Math.max(1, this.svgData.width);
+        const scaleY = availHeight / Math.max(1, this.svgData.height);
+
+        // Scale must ALWAYS be positive to prevent vertically inverting the SVG!
+        this.scale = Math.max(0.001, Math.min(scaleX, scaleY));
         this.offsetX = (this.canvas.width - this.svgData.width * this.scale) / 2;
         this.offsetY = (this.canvas.height - this.svgData.height * this.scale) / 2;
 
@@ -891,15 +1071,93 @@ class SVGEditor {
         this.redraw();
     }
 
-    findPointAt(mouseX, mouseY) {
-        // Find point near mouse position
-        const threshold = this.pointSize + 2;
+    // The un-mirrored "Profile" path - the traced/measured side archaeologists draw
+    // continuation lines from; "Profile_Mirrored" is only its computed reflection.
+    isPrimaryProfilePath(path) {
+        return path.category === 'Profile' && !/mirrored/i.test(path.layerId);
+    }
+
+    // Splits a closed primary-profile path into its "outer" face (the one the
+    // backend's vectorizer mirrors to build the other half of the vessel) and its
+    // "inner" face (the fracture-section line, unique to this fragment, that gets
+    // discarded before mirroring). Mirrors the same heuristic the Python side uses
+    // in extract_left_side_of_profile(): cut the closed loop at its topmost and
+    // bottommost points, giving two arcs, and call whichever sits farther from the
+    // symmetry axis "outer". Returns null for an open path (nothing to split - the
+    // whole thing is a single face, same as before this two-phase flow existed).
+    computeProfileZones(path) {
+        if (!path || !this.isPathClosed(path)) return null;
+
+        const realCount = path.points.length - 1; // exclude the synthetic Z point
+        const anchorIdx = [];
+        for (let i = 0; i < realCount; i++) {
+            if (this.isAnchorPoint(path.points[i])) anchorIdx.push(i);
+        }
+        if (anchorIdx.length < 4) return null;
+
+        let topPos = 0, bottomPos = 0;
+        for (let k = 1; k < anchorIdx.length; k++) {
+            if (path.points[anchorIdx[k]].y < path.points[anchorIdx[topPos]].y) topPos = k;
+            if (path.points[anchorIdx[k]].y > path.points[anchorIdx[bottomPos]].y) bottomPos = k;
+        }
+        if (topPos === bottomPos) return null;
+
+        const n = anchorIdx.length;
+        const arcA = [];
+        for (let k = topPos; ; k = (k + 1) % n) {
+            arcA.push(anchorIdx[k]);
+            if (k === bottomPos) break;
+        }
+        const arcB = [];
+        for (let k = topPos; ; k = (k - 1 + n) % n) {
+            arcB.push(anchorIdx[k]);
+            if (k === bottomPos) break;
+        }
+
+        const avgX = arc => arc.reduce((sum, idx) => sum + path.points[idx].x, 0) / arc.length;
+        const axisX = this.getSymmetryAxisX();
+
+        let outerArc;
+        if (axisX !== null) {
+            // Outer = the arc that sits, on average, farther from the symmetry axis.
+            outerArc = Math.abs(avgX(arcA) - axisX) >= Math.abs(avgX(arcB) - axisX) ? arcA : arcB;
+        } else {
+            // No axis to compare against - fall back to the vectorizer's own
+            // convention (the face with the smaller average X is the outer one).
+            outerArc = avgX(arcA) <= avgX(arcB) ? arcA : arcB;
+        }
+        const innerArc = outerArc === arcA ? arcB : arcA;
+
+        return {
+            outerIndices: new Set(outerArc),
+            innerIndices: new Set(innerArc)
+        };
+    }
+
+    // Whether point index `i` of the primary profile path is clickable in the
+    // current Continuation Line phase. With no outer/inner split (open path)
+    // every point of the primary path counts as one single phase.
+    isPointInActiveReconstructZone(i) {
+        if (!this.reconstructZones) return true;
+        const zone = this.reconstructPhase === 'outer'
+            ? this.reconstructZones.outerIndices
+            : this.reconstructZones.innerIndices;
+        return zone.has(i);
+    }
+
+    findPointAt(mouseX, mouseY, pathFilter = null, pointFilter = null) {
+        // Find point near mouse position. In Continuation Line mode the clickable
+        // points are enlarged a bit to make the (otherwise small) anchor points
+        // easier to hit.
+        const threshold = this.pointSize + 2 + (this.currentMode === 'reconstruct-spline' ? 6 : 0);
 
         for (const path of this.paths) {
             const layerVisible = this.layerVisibility[path.layerId] !== false;
             if (!path.visible || !layerVisible) continue;
+            if (pathFilter && !pathFilter(path)) continue;
 
             for (let i = 0; i < path.points.length; i++) {
+                if (pointFilter && !pointFilter(path, i)) continue;
                 const point = path.points[i];
                 const screenX = point.x * this.scale + this.offsetX;
                 const screenY = point.y * this.scale + this.offsetY;
@@ -938,6 +1196,343 @@ class SVGEditor {
         }
 
         return null;
+    }
+
+    isAnchorPoint(point) {
+        // Excludes bezier/quadratic control points (C1, C2, Q1) - only "on curve" points
+        return point.cmd !== 'C1' && point.cmd !== 'C2' && point.cmd !== 'Q1';
+    }
+
+    // A closed path's parsed points end with a synthetic 'Z' point duplicating the
+    // path's start position, just to close the loop for rendering.
+    isPathClosed(path) {
+        const pts = path.points;
+        return pts.length > 0 && pts[pts.length - 1].cmd === 'Z';
+    }
+
+    // Walks away from fromIndex, in the given step direction, collecting up to
+    // `count` anchor points (skipping bezier control points), nearest first. On a
+    // closed path this wraps around through the Z seam instead of stopping at the
+    // array bounds - e.g. stepping backward from index 0 continues from the last
+    // real point rather than finding "no neighbor" and looking the wrong way.
+    collectAnchors(path, fromIndex, step, count) {
+        const result = [];
+        const closed = this.isPathClosed(path);
+        // On a closed path, exclude the synthetic Z point from the walk - it only
+        // duplicates the start position, not a distinct sample of the curve.
+        const realCount = closed ? path.points.length - 1 : path.points.length;
+
+        let i = fromIndex;
+        for (let steps = 0; steps < realCount && result.length < count; steps++) {
+            i += step;
+            if (closed) {
+                i = ((i % realCount) + realCount) % realCount;
+            } else if (i < 0 || i >= path.points.length) {
+                break;
+            }
+            if (i === fromIndex) break; // wrapped all the way around
+            if (this.isAnchorPoint(path.points[i])) result.push(path.points[i]);
+        }
+        return result;
+    }
+
+    // Which step direction (+1/-1) leads from fromIndex toward toIndex - the short
+    // way around on a closed path, a plain comparison on an open one.
+    stepDirectionBetween(path, fromIndex, toIndex) {
+        if (!this.isPathClosed(path)) {
+            return toIndex > fromIndex ? 1 : -1;
+        }
+        const realCount = path.points.length - 1;
+        const forwardDist = ((toIndex - fromIndex) % realCount + realCount) % realCount;
+        const backwardDist = ((fromIndex - toIndex) % realCount + realCount) % realCount;
+        return forwardDist <= backwardDist ? 1 : -1;
+    }
+
+    // The 1 or 2 anchor points leading up to a break point, on whichever side of
+    // the fragment actually has neighbors (the break sits at one end of it).
+    getExtrapolationNeighbors(pointInfo) {
+        let neighbors = this.collectAnchors(pointInfo.path, pointInfo.pointIndex, -1, 2);
+        if (neighbors.length === 0) {
+            neighbors = this.collectAnchors(pointInfo.path, pointInfo.pointIndex, 1, 2);
+        }
+        return neighbors;
+    }
+
+    vecNorm(v) {
+        const len = Math.hypot(v.x, v.y) || 1;
+        return { x: v.x / len, y: v.y / len };
+    }
+
+    rotateVec(v, angle) {
+        const cos = Math.cos(angle), sin = Math.sin(angle);
+        return { x: v.x * cos - v.y * sin, y: v.x * sin + v.y * cos };
+    }
+
+    lerpPoint(p, q, t) {
+        return { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t };
+    }
+
+    // De Casteljau split of a cubic bezier at parameter t into two cubic beziers
+    // (each 4 control points) that together retrace the original curve.
+    splitCubicBezier(p0, p1, p2, p3, t) {
+        const a0 = this.lerpPoint(p0, p1, t);
+        const a1 = this.lerpPoint(p1, p2, t);
+        const a2 = this.lerpPoint(p2, p3, t);
+        const b0 = this.lerpPoint(a0, a1, t);
+        const b1 = this.lerpPoint(a1, a2, t);
+        const c0 = this.lerpPoint(b0, b1, t);
+        return { left: [p0, a0, b0, c0], right: [c0, b1, a2, p3] };
+    }
+
+    // Circle through 3 points (null if they're collinear) - same construction
+    // used in the standalone curve_extend_demo.html sandbox.
+    circleThrough3Points(A, B, C) {
+        const D = 2 * (A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y));
+        if (Math.abs(D) < 1e-6) return null;
+        const a2 = A.x * A.x + A.y * A.y;
+        const b2 = B.x * B.x + B.y * B.y;
+        const c2 = C.x * C.x + C.y * C.y;
+        const cx = (a2 * (B.y - C.y) + b2 * (C.y - A.y) + c2 * (A.y - B.y)) / D;
+        const cy = (a2 * (C.x - B.x) + b2 * (A.x - C.x) + c2 * (B.x - A.x)) / D;
+        return { cx, cy, r: Math.hypot(A.x - cx, A.y - cy) };
+    }
+
+    normalizeAngle(a) {
+        return ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    }
+
+    // Standard circular-arc-to-cubic-bezier approximation: starting at `p`, heading
+    // in unit direction `dir`, sweeping a constant-curvature arc of the given
+    // curvature (radians turned per unit length, signed) for `length` units.
+    // Returns [end, control1, control2]. curvature ~= 0 degenerates to a straight run.
+    buildArcBezier(p, dir, curvature, length) {
+        const theta = curvature * length;
+
+        if (Math.abs(theta) < 1e-6) {
+            return [
+                { x: p.x + dir.x * length, y: p.y + dir.y * length },
+                { x: p.x + dir.x * length / 3, y: p.y + dir.y * length / 3 },
+                { x: p.x + dir.x * length * 2 / 3, y: p.y + dir.y * length * 2 / 3 }
+            ];
+        }
+
+        const radius = 1 / curvature; // signed - which side of `dir` the center falls on
+        const r = Math.abs(radius);  // true geometric radius - an actual point ON the
+                                      // circle needs this, not the signed value (using
+                                      // the signed one there flips it 180° around the
+                                      // circle whenever curvature is negative)
+        // Center lies to the left of `dir` for positive curvature (matches the
+        // right-handed rotation used by rotateVec).
+        const perp = this.rotateVec(dir, Math.PI / 2);
+        const center = { x: p.x + perp.x * radius, y: p.y + perp.y * radius };
+
+        const rel0 = { x: p.x - center.x, y: p.y - center.y };
+        const phi0 = Math.atan2(rel0.y, rel0.x);
+        const phi1 = phi0 + theta;
+        const end = { x: center.x + r * Math.cos(phi1), y: center.y + r * Math.sin(phi1) };
+
+        const dirAtEnd = this.rotateVec(dir, theta);
+        const k = radius * (4 / 3) * Math.tan(theta / 4);
+        const c1 = { x: p.x + dir.x * k, y: p.y + dir.y * k };
+        const c2 = { x: end.x - dirAtEnd.x * k, y: end.y - dirAtEnd.y * k };
+
+        return [end, c1, c2];
+    }
+
+    // A break point projected forward into empty space, using exactly the same
+    // construction as the standalone curve_extend_demo.html sandbox: fit the
+    // unique circle through 3 real points, then extend along that same circle
+    // beyond the last of them (capped to a quarter turn, so it can never sweep
+    // back around toward where it came from). The start is trimmed off so it
+    // reads as a detached hypothesis, not a segment physically joined to the
+    // fragment.
+    //
+    // The 3 points are, in order away-from-break -> break: a further neighbor,
+    // the reference point, and the break point itself. By default the further
+    // neighbor and the reference point are just the two points right behind the
+    // break - but that stretch can be the fracture's own jagged edge, not the
+    // vessel's real profile. Passing `referenceInfo` (a second point the user
+    // picked farther back on the same fragment, presumably past the damaged
+    // stretch) uses that instead, so the fitted circle passes through clean
+    // data and the actual break point, and is trusted directly - no separate
+    // curvature estimate to transport and no way for it to compound into a
+    // wild swing.
+    addProjectionContinuation(pointInfo, referenceInfo = null, options = {}) {
+        const { mirror = true } = options;
+        const C = pointInfo.point; // the break point
+
+        let A, B;
+        if (referenceInfo) {
+            B = referenceInfo.point;
+            const step = this.stepDirectionBetween(referenceInfo.path, pointInfo.pointIndex, referenceInfo.pointIndex);
+            [A] = this.collectAnchors(referenceInfo.path, referenceInfo.pointIndex, step, 1);
+        } else {
+            const neighbors = this.getExtrapolationNeighbors(pointInfo);
+            B = neighbors[0];
+            A = neighbors[1];
+        }
+
+        if (!A || !B) {
+            const msg = 'Selected point has no neighboring points to determine how the profile was trending.';
+            if (window.app) window.app.showNotification(msg, 'warning'); else alert(msg);
+            return;
+        }
+
+        const baseStep = Math.hypot(C.x - B.x, C.y - B.y) || 1;
+        const circle = this.circleThrough3Points(A, B, C);
+
+        let end, c1, c2;
+        if (circle) {
+            const angleA = Math.atan2(A.y - circle.cy, A.x - circle.cx);
+            const angleB = this.normalizeAngle(Math.atan2(B.y - circle.cy, B.x - circle.cx) - angleA);
+            const angleC = this.normalizeAngle(Math.atan2(C.y - circle.cy, C.x - circle.cx) - angleA);
+            const forward = angleB < angleC; // does the A->B->C sweep increase angle?
+
+            const radiusAngleAtC = Math.atan2(C.y - circle.cy, C.x - circle.cx);
+            const tangentForward = { x: -Math.sin(radiusAngleAtC), y: Math.cos(radiusAngleAtC) };
+            const dir = forward ? tangentForward : { x: -tangentForward.x, y: -tangentForward.y };
+            const curvature = (forward ? 1 : -1) / circle.r;
+
+            // Cap the swept angle to a quarter turn so the projection can never
+            // curl back around toward the clean data it came from.
+            const maxAngle = Math.PI / 2;
+            const projectLength = Math.min(baseStep * 2.5, maxAngle * circle.r);
+
+            [end, c1, c2] = this.buildArcBezier(C, dir, curvature, projectLength);
+        } else {
+            // A, B, C collinear - nothing to curve, continue straight.
+            const dir = this.vecNorm({ x: C.x - B.x, y: C.y - B.y });
+            [end, c1, c2] = this.buildArcBezier(C, dir, 0, baseStep * 2.5);
+        }
+
+        const GAP_FRACTION = 0.25;
+        const [q0, q1, q2, q3] = this.splitCubicBezier(C, c1, c2, end, GAP_FRACTION).right;
+
+        const d = `M ${q0.x} ${q0.y} C ${q1.x} ${q1.y} ${q2.x} ${q2.y} ${q3.x} ${q3.y}`;
+
+        this.saveState();
+        const newPath = this.createReconstructionPath(d);
+
+        // For a symmetric vessel, the same break normally exists on both sides -
+        // mirror the freshly projected line across the axis so one click fixes both.
+        // Only the outer face is mirrored though; the inner/fracture face is
+        // unique to this sherd (mirror=false skips this for that phase).
+        let mirrored = false;
+        if (mirror) {
+            const axisX = this.getSymmetryAxisX();
+            if (axisX !== null) {
+                this.createReconstructionPath(this.mirrorPathData(newPath, axisX));
+                mirrored = true;
+            }
+        }
+
+        this.syncSymmetryLineExtension();
+
+        const msg = mirrored
+            ? 'Continuation projected and mirrored to the other side — adjust nodes in Select mode.'
+            : 'Continuation projected — adjust its nodes in Select mode.';
+        if (window.app) window.app.showNotification(msg, 'success');
+    }
+
+    // X coordinate of the vessel's (assumed-vertical) symmetry axis, or null if
+    // this SVG has no Symmetry Line layer.
+    getSymmetryAxisX() {
+        const symmetryPath = this.paths.find(
+            p => p.category === 'Symmetry' || /symmetry/i.test(p.layerId)
+        );
+        if (!symmetryPath || symmetryPath.points.length === 0) return null;
+        return symmetryPath.points.reduce((sum, p) => sum + p.x, 0) / symmetryPath.points.length;
+    }
+
+    // Keeps the Symmetry Line in sync with however far down the continuation
+    // lines currently reach: if any of them now extends below the line's own
+    // pristine bottom, the line grows a short, gapped extra segment down to that
+    // same depth (mirroring the "detached hypothesis" look of the continuation
+    // lines themselves); otherwise it's kept at its pristine length. Always
+    // rebuilt fresh from the pristine base rather than grown incrementally, so
+    // deleting/undoing continuation lines shrinks it back correctly too.
+    syncSymmetryLineExtension() {
+        if (!this.symmetryBasePoints || this.symmetryBasePoints.length === 0) return;
+
+        const symmetryPath = this.paths.find(
+            p => p.category === 'Symmetry' || /symmetry/i.test(p.layerId)
+        );
+        if (!symmetryPath) return;
+
+        const reconstructionPaths = this.layerCategories['Reconstruction'] || [];
+        let lowestY = -Infinity;
+        for (const rp of reconstructionPaths) {
+            for (const pt of rp.points) {
+                if (pt.y > lowestY) lowestY = pt.y;
+            }
+        }
+
+        const baseBottomY = Math.max(...this.symmetryBasePoints.map(p => p.y));
+        const axisX = this.symmetryBasePoints[0].x;
+
+        if (lowestY <= baseBottomY) {
+            symmetryPath.points = this.symmetryBasePoints.map(p => ({ ...p }));
+        } else {
+            const gap = (lowestY - baseBottomY) * 0.25;
+            symmetryPath.points = [
+                ...this.symmetryBasePoints.map(p => ({ ...p })),
+                { x: axisX, y: baseBottomY + gap, cmd: 'M' },
+                { x: axisX, y: lowestY, cmd: 'L' }
+            ];
+        }
+        this.rebuildPathData(symmetryPath);
+    }
+
+    // The 'd' string of `path` reflected across the vertical line x = axisX.
+    mirrorPathData(path, axisX) {
+        const mirroredPoints = path.points.map(p => ({ ...p, x: 2 * axisX - p.x }));
+        const tempPath = { points: mirroredPoints };
+        this.rebuildPathData(tempPath);
+        return tempPath.currentD;
+    }
+
+    // Adds a new path that exists only in memory (this.paths) until export time,
+    // when exportModifiedSVG() materializes it into the SVG DOM. Keeping it out of
+    // this.svgData.element means undo (which only restores this.paths) never has
+    // to reverse a DOM mutation.
+    createReconstructionPath(d) {
+        const layerId = 'layer_Reconstruction';
+        const category = 'Reconstruction';
+
+        if (this.layerVisibility[layerId] === undefined) {
+            this.layerVisibility[layerId] = true;
+            this.layers.push({ id: layerId, name: 'Reconstruction', category, visible: true });
+        }
+        if (!this.layerCategories[category]) {
+            this.layerCategories[category] = [];
+        }
+
+        const profilePath = this.paths.find(p => p.category === 'Profile') || this.paths[0];
+        const style = profilePath
+            ? { ...profilePath.style }
+            : { stroke: '#000000', strokeWidth: 1.5, fill: 'none' };
+
+        const pathData = {
+            id: `path-${this.paths.length}`,
+            layerId,
+            layerName: 'Reconstruction',
+            category,
+            element: null,
+            originalD: d,
+            currentD: d,
+            points: this.parsePathData(d),
+            style,
+            visible: true
+        };
+
+        this.paths.push(pathData);
+        this.layerCategories[category].push(pathData);
+
+        this.updateLayersList();
+        this.updateStats();
+        this.redraw();
+
+        return pathData;
     }
 
     deletePoint(pointInfo) {
@@ -1470,6 +2065,11 @@ class SVGEditor {
 
             console.log('Drawing path:', path.id, 'with', path.points.length, 'points');
 
+            // In Continuation Line mode, dim everything except the one interactive
+            // (primary, un-mirrored) profile side so it's obvious where to click.
+            const dimForSplineMode = this.currentMode === 'reconstruct-spline' && !this.isPrimaryProfilePath(path);
+            this.ctx.globalAlpha = dimForSplineMode ? 0.25 : 1;
+
             this.ctx.beginPath();
 
             let i = 0;
@@ -1521,6 +2121,7 @@ class SVGEditor {
             this.ctx.lineWidth = path.strokeWidth * this.scale;
             this.ctx.stroke();
         }
+        this.ctx.globalAlpha = 1;
 
         // Draw points if enabled
         if (this.showPoints) {
@@ -1620,14 +2221,25 @@ class SVGEditor {
             this.ctx.setLineDash([]);
 
             // Second pass: Draw the points themselves
+            const inSplineMode = this.currentMode === 'reconstruct-spline';
+
             for (const path of this.paths) {
                 const layerVisible = this.layerVisibility[path.layerId] !== false;
                 if (!path.visible || !layerVisible) continue;
+
+                const isPrimary = this.isPrimaryProfilePath(path);
 
                 for (let i = 0; i < path.points.length; i++) {
                     const point = path.points[i];
                     const x = point.x * this.scale + this.offsetX;
                     const y = point.y * this.scale + this.offsetY;
+                    const isControlPoint = point.cmd === 'C1' || point.cmd === 'C2' || point.cmd === 'Q1';
+                    // Clickable here = primary path AND in the current outer/inner
+                    // phase's face - other paths, and the primary path's other
+                    // face, are dimmed and left at normal size.
+                    const isClickableHere = inSplineMode && isPrimary && this.isPointInActiveReconstructZone(i);
+                    this.ctx.globalAlpha = (inSplineMode && !isClickableHere) ? 0.25 : 1;
+                    const radius = (isClickableHere && !isControlPoint) ? this.pointSize * 0.9 : this.pointSize / 2;
 
                     // Check if selected
                     const isSelected = this.selectedPoints.some(
@@ -1639,12 +2251,19 @@ class SVGEditor {
                         this.hoveredPoint.pathId === path.id &&
                         this.hoveredPoint.pointIndex === i;
 
+                    // Check if this is the break point awaiting its reference point
+                    const isPendingBreakPoint = this.pendingReconstructPoint &&
+                        this.pendingReconstructPoint.pathId === path.id &&
+                        this.pendingReconstructPoint.pointIndex === i;
+
                     // Draw point
                     this.ctx.beginPath();
-                    this.ctx.arc(x, y, this.pointSize / 2, 0, Math.PI * 2);
+                    this.ctx.arc(x, y, radius, 0, Math.PI * 2);
 
                     // Different colors for control points
-                    if (point.cmd === 'C1' || point.cmd === 'C2' || point.cmd === 'Q1') {
+                    if (isPendingBreakPoint) {
+                        this.ctx.fillStyle = '#22c55e';  // Green for the pending break point
+                    } else if (isControlPoint) {
                         this.ctx.fillStyle = '#9333ea';  // Purple for control points
                     } else if (isSelected) {
                         this.ctx.fillStyle = '#ef4444';  // Red for selected
@@ -1664,6 +2283,7 @@ class SVGEditor {
                     }
                 }
             }
+            this.ctx.globalAlpha = 1;
         }
 
         this.ctx.restore();
@@ -1694,11 +2314,97 @@ class SVGEditor {
         this.ctx.restore();
     }
 
+    toggleCategoryCollapse(category) {
+        if (!this.collapsedCategories) {
+            this.collapsedCategories = new Set();
+        }
+        if (this.collapsedCategories.has(category)) {
+            this.collapsedCategories.delete(category);
+        } else {
+            this.collapsedCategories.add(category);
+        }
+        this.updateLayersList();
+    }
+
+    getCategoryMeta(category) {
+        const meta = {
+            'Profile': {
+                icon: '<i class="bi bi-bezier2"></i>',
+                color: 'var(--teal)',
+                bg: 'rgba(13, 148, 136, 0.1)',
+                border: 'rgba(13, 148, 136, 0.25)'
+            },
+            'Profile Mirrored': {
+                icon: '<i class="bi bi-symmetry-vertical"></i>',
+                color: '#0891b2',
+                bg: 'rgba(8, 145, 178, 0.1)',
+                border: 'rgba(8, 145, 178, 0.25)'
+            },
+            'Symmetry': {
+                icon: '<i class="bi bi-symmetry-vertical"></i>',
+                color: 'var(--primary)',
+                bg: 'rgba(194, 65, 12, 0.1)',
+                border: 'rgba(194, 65, 12, 0.25)'
+            },
+            'Symmetry Line': {
+                icon: '<i class="bi bi-border-middle"></i>',
+                color: 'var(--primary)',
+                bg: 'rgba(194, 65, 12, 0.1)',
+                border: 'rgba(194, 65, 12, 0.25)'
+            },
+            'Diameter': {
+                icon: '<i class="bi bi-arrows-expand"></i>',
+                color: '#d97706',
+                bg: 'rgba(217, 119, 6, 0.1)',
+                border: 'rgba(217, 119, 6, 0.25)'
+            },
+            'Reconstruction': {
+                icon: '<i class="bi bi-bezier"></i>',
+                color: '#16a34a',
+                bg: 'rgba(22, 163, 74, 0.1)',
+                border: 'rgba(22, 163, 74, 0.25)'
+            },
+            'Images': {
+                icon: '<i class="bi bi-images"></i>',
+                color: '#4f46e5',
+                bg: 'rgba(79, 70, 229, 0.1)',
+                border: 'rgba(79, 70, 229, 0.25)'
+            },
+            'Ungrouped': {
+                icon: '<i class="bi bi-file-earmark"></i>',
+                color: 'var(--text-dim)',
+                bg: 'rgba(120, 113, 108, 0.1)',
+                border: 'rgba(120, 113, 108, 0.25)'
+            }
+        };
+        return meta[category] || {
+            icon: '<i class="bi bi-folder2"></i>',
+            color: 'var(--text-dim)',
+            bg: 'rgba(120, 113, 108, 0.1)',
+            border: 'rgba(120, 113, 108, 0.25)'
+        };
+    }
+
+    getCategoryIcon(category) {
+        return this.getCategoryMeta(category).icon;
+    }
+
     updateLayersList() {
         const list = document.getElementById('svg-layers-list');
+        if (!list) return;
+
+        if (!this.collapsedCategories) {
+            this.collapsedCategories = new Set();
+        }
 
         if (Object.keys(this.layerCategories).length === 0 && this.images.length === 0) {
-            list.innerHTML = '<p class="empty-message">No layers loaded</p>';
+            list.innerHTML = `
+                <div class="empty-layers-state">
+                    <i class="bi bi-layers"></i>
+                    <p>No layers loaded yet</p>
+                    <span class="empty-layers-hint">Export an SVG from Segmentation to edit layers</span>
+                </div>
+            `;
             return;
         }
 
@@ -1706,13 +2412,22 @@ class SVGEditor {
 
         // Add image layers section if there are any
         if (this.images.length > 0) {
+            const isImageCollapsed = this.collapsedCategories.has('__images__');
+            const imgMeta = this.getCategoryMeta('Images');
             const imageSection = document.createElement('div');
-            imageSection.className = 'layer-category';
+            imageSection.className = `layer-category ${isImageCollapsed ? 'collapsed' : ''}`;
             imageSection.innerHTML = `
-                <div class="layer-category-header" onclick="this.parentElement.classList.toggle('collapsed')">
-                    <span class="category-icon">▼</span>
-                    <strong>📷 Images</strong>
-                    <span class="category-count">(${this.images.length})</span>
+                <div class="layer-category-header" onclick="window.svgEditor.toggleCategoryCollapse('__images__')">
+                    <div class="category-header-info">
+                        <span class="category-icon-pill" style="color: ${imgMeta.color}; background: ${imgMeta.bg}; border-color: ${imgMeta.border};">
+                            ${imgMeta.icon}
+                        </span>
+                        <span class="category-name">Images</span>
+                    </div>
+                    <div class="category-header-aside">
+                        <span class="category-count-badge">${this.images.length}</span>
+                        <span class="category-chevron"><i class="bi bi-chevron-down"></i></span>
+                    </div>
                 </div>
                 <div class="layer-category-content"></div>
             `;
@@ -1720,26 +2435,37 @@ class SVGEditor {
             const imageContent = imageSection.querySelector('.layer-category-content');
 
             this.images.forEach(img => {
+                const isVisible = img.visible !== false;
                 const item = document.createElement('div');
-                item.className = 'segment-item image-layer';
+                item.className = `layer-item image-layer-item ${isVisible ? '' : 'layer-item-hidden'}`;
+                const opacityPercent = Math.round((img.opacity != null ? img.opacity : 1) * 100);
+                
                 item.innerHTML = `
-                    <div class="segment-info">
-                        <div class="segment-name">📷 ${img.name}</div>
-                        <div class="segment-category">${Math.round(img.width)}x${Math.round(img.height)}px</div>
+                    <div class="layer-item-info">
+                        <div class="layer-item-title" title="${img.name}">
+                            <i class="bi bi-image" style="color: #4f46e5; margin-right: 4px;"></i>
+                            ${img.name}
+                        </div>
+                        <div class="layer-item-meta">
+                            <span class="meta-part">${Math.round(img.width)}×${Math.round(img.height)}px</span>
+                            <span class="meta-dot">•</span>
+                            <span class="meta-part">${opacityPercent}% opacity</span>
+                        </div>
                     </div>
-                    <div class="segment-actions">
-                        <label title="Visibilità">
-                            <input type="checkbox" ${img.visible ? 'checked' : ''} 
-                                   onchange="window.svgEditor.toggleImage('${img.id}', this.checked)">
-                        </label>
-                        <button class="btn-icon" title="Opacità" 
+                    <div class="layer-item-actions">
+                        <button type="button" class="layer-action-btn layer-vis-btn ${isVisible ? 'is-active' : ''}" 
+                                title="${isVisible ? 'Hide image' : 'Show image'}"
+                                onclick="window.svgEditor.toggleImage('${img.id}', ${!isVisible})">
+                            <i class="bi ${isVisible ? 'bi-eye-fill' : 'bi-eye-slash'}"></i>
+                        </button>
+                        <button type="button" class="layer-action-btn" title="Adjust opacity (${opacityPercent}%)" 
                                 onclick="window.svgEditor.adjustImageOpacity('${img.id}')">
-                            ◐
+                            <i class="bi bi-circle-half"></i>
                         </button>
                         ${img.isUserAdded ? `
-                        <button class="btn-icon btn-danger-icon" title="Rimuovi" 
+                        <button type="button" class="layer-action-btn layer-btn-danger" title="Remove" 
                                 onclick="window.svgEditor.removeImage('${img.id}')">
-                            🗑️
+                            <i class="bi bi-trash3"></i>
                         </button>
                         ` : ''}
                     </div>
@@ -1759,14 +2485,23 @@ class SVGEditor {
 
             // Get unique layers in this category
             const layersInCategory = [...new Set(paths.map(p => p.layerId))];
+            const isCollapsed = this.collapsedCategories.has(category);
+            const catMeta = this.getCategoryMeta(category);
 
             const section = document.createElement('div');
-            section.className = 'layer-category';
+            section.className = `layer-category ${isCollapsed ? 'collapsed' : ''}`;
             section.innerHTML = `
-                <div class="layer-category-header" onclick="this.parentElement.classList.toggle('collapsed')">
-                    <span class="category-icon">▼</span>
-                    <strong>${this.getCategoryIcon(category)} ${category}</strong>
-                    <span class="category-count">(${layersInCategory.length})</span>
+                <div class="layer-category-header" onclick="window.svgEditor.toggleCategoryCollapse('${category}')">
+                    <div class="category-header-info">
+                        <span class="category-icon-pill" style="color: ${catMeta.color}; background: ${catMeta.bg}; border-color: ${catMeta.border};">
+                            ${catMeta.icon}
+                        </span>
+                        <span class="category-name">${category}</span>
+                    </div>
+                    <div class="category-header-aside">
+                        <span class="category-count-badge">${layersInCategory.length}</span>
+                        <span class="category-chevron"><i class="bi bi-chevron-down"></i></span>
+                    </div>
                 </div>
                 <div class="layer-category-content"></div>
             `;
@@ -1780,17 +2515,22 @@ class SVGEditor {
                 const isVisible = this.layerVisibility[layerId] !== false;
 
                 const item = document.createElement('div');
-                item.className = 'segment-item';
+                item.className = `layer-item ${isVisible ? '' : 'layer-item-hidden'}`;
                 item.innerHTML = `
-                    <div class="segment-info">
-                        <div class="segment-name">${layerName}</div>
-                        <div class="segment-category">${layerPaths.length} path(s), ${totalPoints} points</div>
+                    <div class="layer-item-info">
+                        <div class="layer-item-title" title="${layerName}">${layerName}</div>
+                        <div class="layer-item-meta">
+                            <span class="meta-part"><i class="bi bi-bezier2"></i> ${layerPaths.length} path${layerPaths.length > 1 ? 's' : ''}</span>
+                            <span class="meta-dot">•</span>
+                            <span class="meta-part">${totalPoints} pts</span>
+                        </div>
                     </div>
-                    <div class="segment-actions">
-                        <label title="Visibilità">
-                            <input type="checkbox" ${isVisible ? 'checked' : ''} 
-                                   onchange="window.svgEditor.toggleLayer('${layerId}', this.checked)">
-                        </label>
+                    <div class="layer-item-actions">
+                        <button type="button" class="layer-action-btn layer-vis-btn ${isVisible ? 'is-active' : ''}" 
+                                title="${isVisible ? 'Hide layer' : 'Show layer'}"
+                                onclick="window.svgEditor.toggleLayer('${layerId}', ${!isVisible})">
+                            <i class="bi ${isVisible ? 'bi-eye-fill' : 'bi-eye-slash'}"></i>
+                        </button>
                     </div>
                 `;
                 content.appendChild(item);
@@ -1798,19 +2538,6 @@ class SVGEditor {
 
             list.appendChild(section);
         });
-    }
-
-    getCategoryIcon(category) {
-        const icons = {
-            'Profile': '🏺',
-            'Profile Mirrored': '🪞',
-            'Symmetry': '⚖️',
-            'Symmetry Line': '⚖️',
-            'Diameter': '⬌',
-            'Ungrouped': '📄',
-            'Other': '📋'
-        };
-        return icons[category] || '📋';
     }
 
     toggleLayer(layerId, visible) {
@@ -1824,6 +2551,7 @@ class SVGEditor {
         });
 
         this.redraw();
+        this.updateLayersList();
     }
 
     toggleImage(imageId, visible) {
@@ -1833,11 +2561,21 @@ class SVGEditor {
             this.imageVisibility[imageId] = visible;
             this.saveState();
             this.redraw();
+            this.updateLayersList();
         }
     }
 
-    removeImage(imageId) {
-        if (!confirm('Vuoi davvero rimuovere questa immagine?')) return;
+    async removeImage(imageId) {
+        const confirmFn = window.showConfirmDialog || showConfirmDialog;
+        const confirmed = await confirmFn({
+            title: 'Remove Image',
+            subtitle: 'Are you sure you want to remove this image from the editor?',
+            confirmText: 'Remove',
+            cancelText: 'Cancel',
+            confirmClass: 'btn-danger',
+            icon: 'bi-trash3-fill'
+        });
+        if (!confirmed) return;
 
         const index = this.images.findIndex(img => img.id === imageId);
         if (index !== -1) {
@@ -1849,7 +2587,7 @@ class SVGEditor {
             this.redraw();
 
             if (window.app) {
-                window.app.showNotification('Immagine rimossa!', 'success');
+                window.app.showNotification('Image removed!', 'success');
             }
         }
     }
@@ -1858,15 +2596,73 @@ class SVGEditor {
         const image = this.images.find(img => img.id === imageId);
         if (!image) return;
 
-        const newOpacity = prompt(`Opacità per ${image.name} (0.0 - 1.0):`, image.opacity);
-        if (newOpacity !== null) {
-            const opacity = parseFloat(newOpacity);
-            if (!isNaN(opacity) && opacity >= 0 && opacity <= 1) {
-                image.opacity = opacity;
-                this.saveState();
-                this.redraw();
-            }
+        const modal = document.getElementById('image-opacity-modal');
+        const overlay = document.getElementById('image-opacity-overlay');
+        const closeBtn = document.getElementById('image-opacity-close-btn');
+        const cancelBtn = document.getElementById('image-opacity-cancel-btn');
+        const applyBtn = document.getElementById('image-opacity-apply-btn');
+        const slider = document.getElementById('image-opacity-slider');
+        const badge = document.getElementById('image-opacity-badge');
+        const subtitle = document.getElementById('image-opacity-subtitle');
+
+        if (!modal || !slider) return;
+
+        const initialOpacity = image.opacity != null ? image.opacity : 0.7;
+        const initialPercent = Math.round(initialOpacity * 100);
+
+        if (subtitle) {
+            subtitle.textContent = `Set display opacity for "${image.name}"`;
         }
+        slider.value = initialPercent;
+        if (badge) {
+            badge.textContent = `${initialPercent}%`;
+        }
+
+        const updateLive = (val) => {
+            const num = Math.min(100, Math.max(0, parseInt(val, 10) || 0));
+            if (badge) badge.textContent = `${num}%`;
+            image.opacity = num / 100;
+            this.redraw();
+        };
+
+        const onInput = (e) => {
+            updateLive(e.target.value);
+        };
+
+        const cleanup = () => {
+            slider.removeEventListener('input', onInput);
+            if (overlay) overlay.removeEventListener('click', onCancel);
+            if (closeBtn) closeBtn.removeEventListener('click', onCancel);
+            if (cancelBtn) cancelBtn.removeEventListener('click', onCancel);
+            if (applyBtn) applyBtn.removeEventListener('click', onApply);
+            modal.style.display = 'none';
+        };
+
+        const onCancel = () => {
+            image.opacity = initialOpacity;
+            this.redraw();
+            cleanup();
+        };
+
+        const onApply = () => {
+            const finalPercent = Math.min(100, Math.max(0, parseInt(slider.value, 10) || 0));
+            image.opacity = finalPercent / 100;
+            this.saveState();
+            this.redraw();
+            this.updateLayersList();
+            cleanup();
+            if (window.app) {
+                window.app.showNotification(`Opacity for "${image.name}" set to ${finalPercent}%`, 'success');
+            }
+        };
+
+        slider.addEventListener('input', onInput);
+        if (overlay) overlay.addEventListener('click', onCancel);
+        if (closeBtn) closeBtn.addEventListener('click', onCancel);
+        if (cancelBtn) cancelBtn.addEventListener('click', onCancel);
+        if (applyBtn) applyBtn.addEventListener('click', onApply);
+
+        modal.style.display = 'flex';
     }
 
     addImageFromUrl(imageUrl, imageName) {
@@ -1922,7 +2718,11 @@ class SVGEditor {
 
     addImageFromFile(file) {
         if (!file.type.startsWith('image/')) {
-            alert('Per favore seleziona un file immagine valido.');
+            if (window.app) {
+                window.app.showNotification('Please select a valid image file.', 'error');
+            } else {
+                alert('Please select a valid image file.');
+            }
             return;
         }
 
@@ -1962,7 +2762,7 @@ class SVGEditor {
                 this.redraw();
 
                 if (window.app) {
-                    window.app.showNotification(`Immagine "${imageName}" aggiunta!`, 'success');
+                    window.app.showNotification(`Image "${imageName}" added!`, 'success');
                 }
             };
 
@@ -1994,16 +2794,27 @@ class SVGEditor {
                 <button class="btn btn-danger btn-small" 
                         onclick="window.svgEditor.deleteSelectedPoints()" 
                         style="margin-top: 8px; width: 100%;">
-                    <span>🗑️</span> Delete Selected
+                    <i class="bi bi-trash"></i> Delete Selected
                 </button>
             `;
         }
     }
 
-    deleteSelectedPoints() {
+    async deleteSelectedPoints() {
         if (this.selectedPoints.length === 0) return;
 
-        if (!confirm(`Eliminare ${this.selectedPoints.length} punti selezionati?`)) {
+        const confirmFn = window.showConfirmDialog || showConfirmDialog;
+        const count = this.selectedPoints.length;
+        const confirmed = await confirmFn({
+            title: 'Delete Points',
+            subtitle: `Delete ${count} selected point${count === 1 ? '' : 's'}?`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            confirmClass: 'btn-danger',
+            icon: 'bi-trash3-fill'
+        });
+
+        if (!confirmed) {
             return;
         }
 
@@ -2040,8 +2851,10 @@ class SVGEditor {
         if (!this.svgData) return;
 
         try {
-            // Get the include background checkbox state
-            const includeBackground = document.getElementById('svg-bg-checkbox').checked;
+            // Get the include background state (radio button or fallback checkbox)
+            const bgRadio = document.querySelector('input[name="svg-bg-mode"]:checked');
+            const bgCheckbox = document.getElementById('svg-bg-checkbox');
+            const includeBackground = bgRadio ? (bgRadio.value === 'true') : (bgCheckbox ? bgCheckbox.checked : false);
 
             // Clone the original SVG element
             const svgClone = this.svgData.element.cloneNode(true);
@@ -2054,6 +2867,36 @@ class SVGEditor {
                 if (pathData && pathData.currentD) {
                     pathEl.setAttribute('d', pathData.currentD);
                 }
+            });
+
+            // Materialize any paths added after the SVG was loaded (e.g. continuation/
+            // reconstruction lines) - these live only in this.paths and were never
+            // written into this.svgData.element, so build their <path>/<g> elements here.
+            const svgNS = 'http://www.w3.org/2000/svg';
+            const newGroups = {};
+
+            this.paths.slice(this.originalPathCount).forEach(pathData => {
+                if (!pathData.currentD) return;
+                if (this.layerVisibility[pathData.layerId] === false) return;
+
+                let group = newGroups[pathData.layerId];
+                if (!group) {
+                    group = svgClone.querySelector(`g[id="${pathData.layerId}"]`);
+                    if (!group) {
+                        group = document.createElementNS(svgNS, 'g');
+                        group.setAttribute('id', pathData.layerId);
+                        svgClone.appendChild(group);
+                    }
+                    newGroups[pathData.layerId] = group;
+                }
+
+                const pathEl = document.createElementNS(svgNS, 'path');
+                pathEl.setAttribute('id', pathData.id);
+                pathEl.setAttribute('d', pathData.currentD);
+                pathEl.setAttribute('stroke', pathData.style.stroke);
+                pathEl.setAttribute('stroke-width', pathData.style.strokeWidth);
+                pathEl.setAttribute('fill', pathData.style.fill);
+                group.appendChild(pathEl);
             });
 
             // Update all image elements with modified positions
@@ -2106,16 +2949,20 @@ class SVGEditor {
             if (data.success) {
                 // Show success message with the actual save path
                 const fileName = data.output_path ? data.output_path.split(/[/\\]/).pop() : 'file';
-                const message = `✓ SVG saved: ${fileName}`;
+                const message = `SVG saved: ${fileName}`;
                 if (window.app) {
                     window.app.showNotification(message, 'success');
                 }
                 console.log('Modified SVG saved to:', data.output_path);
 
-                // Mark current image as vectorized in ImageGrid
+                // Mark current image as vectorized in ImageGrid and TabManager
                 if (window.ImageGrid && this.sessionId) {
                     await window.ImageGrid.markAsVectorized(this.sessionId);
                     console.log('✓ Image marked as vectorized in thumbnails');
+                }
+                const currentImgName = window.app?.currentImageFilename || this.currentImageName || (window.ImageGrid?.images && window.ImageGrid?.currentIndex >= 0 && window.ImageGrid.images[window.ImageGrid.currentIndex]?.filename);
+                if (window.tabManager && currentImgName) {
+                    window.tabManager.markImageAsVectorized(currentImgName);
                 }
 
                 // NO automatic ZIP download - just save the SVG file
@@ -2125,13 +2972,21 @@ class SVGEditor {
 
         } catch (error) {
             console.error('Export error:', error);
-            alert('Errore durante l\'esportazione: ' + error.message);
+            if (window.app) {
+                window.app.showNotification('Error during export: ' + error.message, 'error');
+            } else {
+                alert('Error during export: ' + error.message);
+            }
         }
     }
 
     downloadCompleteZip() {
         if (!this.zipDownloadUrl) {
-            alert('ZIP file non disponibile. Esporta prima i segmenti dalla tab Segmentation.');
+            if (window.app) {
+                window.app.showNotification('ZIP file not available. Please export segments from the Segmentation tab first.', 'warning');
+            } else {
+                alert('ZIP file not available. Please export segments from the Segmentation tab first.');
+            }
             return;
         }
 
@@ -2141,7 +2996,7 @@ class SVGEditor {
         window.location.href = this.zipDownloadUrl;
 
         if (window.app) {
-            window.app.showNotification('Download ZIP completo avviato!', 'success');
+            window.app.showNotification('Complete ZIP download started!', 'success');
         }
     }
 
@@ -2172,7 +3027,11 @@ class SVGEditor {
 
         if (!svgElement) {
             console.error('Failed to parse test SVG');
-            alert('Errore nel parsing del test SVG');
+            if (window.app) {
+                window.app.showNotification('Error parsing test SVG', 'error');
+            } else {
+                alert('Error parsing test SVG');
+            }
             return;
         }
 
@@ -2215,8 +3074,11 @@ class SVGEditor {
         // Enable save button
         document.getElementById('svg-save-btn').disabled = false;
 
-        // ZIP download button stays disabled for test SVG (no ZIP available)
-        document.getElementById('svg-download-zip-btn').disabled = true;
+        // ZIP download button stays disabled for test SVG (if present)
+        const zipBtn = document.getElementById('svg-download-zip-btn');
+        if (zipBtn) {
+            zipBtn.disabled = true;
+        }
 
         // Save initial state
         this.saveState();

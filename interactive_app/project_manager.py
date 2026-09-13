@@ -104,6 +104,17 @@ class ProjectManager:
                 if metadata_file.exists():
                     try:
                         metadata = self._load_metadata(project_dir)
+                        if 'workflow_status' not in metadata:
+                            metadata['workflow_status'] = {}
+                        
+                        actual_uploads = self.count_files(project_dir.name, 'uploads')
+                        if metadata['workflow_status'].get('images_uploaded') != actual_uploads:
+                            metadata['workflow_status']['images_uploaded'] = actual_uploads
+                            try:
+                                self._save_metadata(project_dir, metadata)
+                            except Exception:
+                                pass
+                        
                         projects.append(metadata)
                     except Exception as e:
                         print(f"Error loading project {project_dir.name}: {e}")
@@ -129,7 +140,19 @@ class ProjectManager:
             return None
         
         try:
-            return self._load_metadata(project_path)
+            metadata = self._load_metadata(project_path)
+            if 'workflow_status' not in metadata:
+                metadata['workflow_status'] = {}
+            
+            actual_uploads = self.count_files(project_id, 'uploads')
+            if metadata['workflow_status'].get('images_uploaded') != actual_uploads:
+                metadata['workflow_status']['images_uploaded'] = actual_uploads
+                try:
+                    self._save_metadata(project_path, metadata)
+                except Exception:
+                    pass
+            
+            return metadata
         except Exception as e:
             print(f"Error loading project {project_id}: {e}")
             return None
