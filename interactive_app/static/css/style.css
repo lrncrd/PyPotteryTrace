@@ -4044,3 +4044,109 @@ textarea {
     animation: spin 0.9s linear infinite;
     display: inline-block;
 }
+
+/* ==========================================================================
+   SVG Editor Context Menu
+   ========================================================================== */
+.svg-context-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 200px;
+    background: var(--bg-card, #ffffff);
+    border: 1px solid var(--border, #e8e3d8);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    user-select: none;
+    font-family: inherit;
+    animation: svgMenuFadeIn 0.12s ease-out;
+}
+
+@keyframes svgMenuFadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.svg-context-menu-header {
+    padding: 6px 10px 4px 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted, #78716c);
+    border-bottom: 1px solid var(--border-light, #e8e3d8);
+    margin-bottom: 4px;
+}
+
+.svg-context-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-main, #1c1917);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+    border: none;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+}
+
+.svg-context-menu-item:hover {
+    background: var(--bg-surface, #f5efe6);
+    color: var(--primary, #c2410c);
+}
+
+.svg-context-menu-item .menu-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.svg-context-menu-item .menu-left i {
+    font-size: 0.95rem;
+    width: 16px;
+    text-align: center;
+}
+
+.svg-context-menu-item .menu-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-muted, #78716c);
+    background: rgba(0, 0, 0, 0.05);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 12px;
+}
+
+.svg-context-menu-item.danger {
+    color: var(--danger-color, #e11d48);
+}
+
+.svg-context-menu-item.danger:hover {
+    background: #fff1f2;
+    color: #be123c;
+}
+
+.svg-context-menu-item.danger .menu-badge {
+    color: #be123c;
+    background: #ffe4e6;
+}
+
+.svg-context-menu-divider {
+    height: 1px;
+    background: var(--border-light, #e8e3d8);
+    margin: 4px 0;
+}

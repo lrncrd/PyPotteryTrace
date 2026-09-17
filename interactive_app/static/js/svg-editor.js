@@ -47,11 +47,16 @@ class SVGEditor {
         this.lastMouseX = 0;
         this.lastMouseY = 0;
 
-        // Selection
+        // Selection & Dragging
         this.selectedPoints = [];
         this.hoveredPoint = null;
-        this.draggedPoint = null; // Point being dragged
+        this.draggedPoint = null; // Legacy point being dragged
         this.draggedImage = null; // Image layer being dragged
+        this.dragPointState = null; // { active: bool, startX, startY, clickedPoint, isShift, wasAlreadySelected, targets }
+        this.isSelectingBox = false; // Whether marquee box selection is in progress
+        this.selectionBox = null; // { startX, startY, currentX, currentY, isShift, initialSelected: [] }
+        this.isSpacePressed = false; // Spacebar held for panning
+        this.contextMenuElement = null; // DOM element for custom context menu
         this.pendingReconstructPoint = null; // Break point picked in Continuation Line mode, awaiting its reference point
 
         // Continuation Line mode walks the primary profile in two phases: 'outer'
@@ -156,20 +161,119 @@ class SVGEditor {
         this.canvas.addEventListener('mouseup', (e) => this.handleMouseUp(e));
         this.canvas.addEventListener('wheel', (e) => this.handleWheel(e));
 
-        // Right-click cancels a pending break point in Continuation Line mode
+        // Context menu handler (right click)
         this.canvas.addEventListener('contextmenu', (e) => {
             if (this.currentMode === 'reconstruct-spline' && this.pendingReconstructPoint) {
                 e.preventDefault();
                 this.pendingReconstructPoint = null;
                 this.redraw();
+                return;
+            }
+            this.handleContextMenu(e);
+        });
+
+        // Dismiss context menu on click outside
+        document.addEventListener('pointerdown', (e) => {
+            if (this.contextMenuElement && !this.contextMenuElement.contains(e.target)) {
+                this.closeContextMenu();
             }
         });
 
-        // Escape cancels a pending break point in Continuation Line mode
+        window.addEventListener('resize', () => {
+            this.closeContextMenu();
+        });
+
+        // Global keyboard shortcuts for SVG Editor
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this.pendingReconstructPoint) {
-                this.pendingReconstructPoint = null;
-                this.redraw();
+            // Ignore if focus is in an input or textarea
+            if (e.target && (e.target.matches('input, textarea, select') || e.target.isContentEditable)) {
+                return;
+            }
+
+            // Only process when SVG editor tab is active
+            const svgTab = document.getElementById('svg-editor-tab');
+            if (svgTab && !svgTab.classList.contains('active')) {
+                return;
+            }
+
+            // Spacebar for panning
+            if (e.code === 'Space' && !e.repeat) {
+                this.isSpacePressed = true;
+                this.canvas.style.cursor = 'grab';
+            }
+
+            // Escape
+            if (e.key === 'Escape') {
+                if (this.contextMenuElement) {
+                    this.closeContextMenu();
+                    return;
+                }
+                if (this.pendingReconstructPoint) {
+                    this.pendingReconstructPoint = null;
+                    this.redraw();
+                    return;
+                }
+                if (this.selectedPoints.length > 0) {
+                    this.selectedPoints = [];
+                    this.updateSelectionInfo();
+                    this.redraw();
+                    return;
+                }
+            }
+
+            // Delete / Backspace: delete selected points
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (this.selectedPoints.length > 0) {
+                    e.preventDefault();
+                    this.deletePointsDirectly();
+                    return;
+                }
+            }
+
+            // Ctrl+Z / Cmd+Z: Undo
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+                e.preventDefault();
+                this.undo();
+                return;
+            }
+
+            // Ctrl+A / Cmd+A: Select all points
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+                if (this.currentMode === 'select') {
+                    e.preventDefault();
+                    this.selectAllPoints();
+                    return;
+                }
+            }
+
+            // Arrow keys: nudge selected points
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                if (this.selectedPoints.length > 0 && this.currentMode === 'select') {
+                    e.preventDefault();
+                    const step = e.shiftKey ? 10 : 1;
+                    let dx = 0, dy = 0;
+                    if (e.key === 'ArrowUp') dy = -step;
+                    else if (e.key === 'ArrowDown') dy = step;
+                    else if (e.key === 'ArrowLeft') dx = -step;
+                    else if (e.key === 'ArrowRight') dx = step;
+                    this.nudgeSelectedPoints(dx, dy);
+                    return;
+                }
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') {
+                this.isSpacePressed = false;
+                if (!this.isDragging) {
+                    const cursors = {
+                        'view': 'grab',
+                        'select': 'crosshair',
+                        'delete': 'not-allowed',
+                        'reconstruct-spline': 'crosshair'
+                    };
+                    this.canvas.style.cursor = cursors[this.currentMode] || 'default';
+                }
             }
         });
 
@@ -271,6 +375,11 @@ class SVGEditor {
     }
 
     setMode(mode) {
+        this.closeContextMenu();
+        this.isSelectingBox = false;
+        this.selectionBox = null;
+        this.dragPointState = null;
+
         const enteringSpline = mode === 'reconstruct-spline' && this.currentMode !== 'reconstruct-spline';
         this.currentMode = mode;
 
@@ -745,12 +854,14 @@ class SVGEditor {
     }
 
     handleMouseDown(e) {
+        this.closeContextMenu();
+
         const rect = this.canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // Middle mouse button (pan) - Works in ANY mode
-        if (e.button === 1) {
+        // Middle mouse button OR Space+click (pan) - Works in ANY mode
+        if (e.button === 1 || (this.isSpacePressed && e.button === 0)) {
             e.preventDefault();
             this.isDragging = true;
             this.lastMouseX = mouseX;
@@ -758,6 +869,8 @@ class SVGEditor {
             this.canvas.style.cursor = 'grabbing';
             return;
         }
+
+        if (e.button !== 0) return; // Only process left clicks here
 
         if (this.currentMode === 'view') {
             // Check if clicking on an image first
@@ -772,8 +885,6 @@ class SVGEditor {
                     this.lastMouseY = mouseY;
                     this.canvas.style.cursor = 'grabbing';
                 } else if (!e.shiftKey) {
-                    // Click directly on image to drag it (no Shift needed)
-                    // Use Shift to pan the view instead
                     // Direct click on image = drag image
                     this.draggedImage = clickedImage;
                     this.lastMouseX = mouseX;
@@ -799,35 +910,44 @@ class SVGEditor {
             const clickedPoint = this.findPointAt(mouseX, mouseY);
 
             if (clickedPoint) {
-                // If Ctrl+click, start dragging the point
-                if (e.ctrlKey || e.metaKey) {
-                    this.draggedPoint = clickedPoint;
-                    this.lastMouseX = mouseX;
-                    this.lastMouseY = mouseY;
-                    this.canvas.style.cursor = 'move';
-                    this.saveState(); // Save state before dragging
-                } else {
-                    // Toggle selection
-                    const isSelected = this.selectedPoints.some(
-                        p => p.pathId === clickedPoint.pathId && p.pointIndex === clickedPoint.pointIndex
-                    );
+                const isAlreadySelected = this.selectedPoints.some(
+                    p => p.pathId === clickedPoint.pathId && p.pointIndex === clickedPoint.pointIndex
+                );
 
-                    if (isSelected) {
-                        // Deselect
-                        this.selectedPoints = this.selectedPoints.filter(
-                            p => !(p.pathId === clickedPoint.pathId && p.pointIndex === clickedPoint.pointIndex)
-                        );
-                    } else {
-                        // Select (allow multi-selection with Shift)
-                        if (!e.shiftKey) {
-                            this.selectedPoints = [];
-                        }
+                if (!isAlreadySelected) {
+                    if (e.shiftKey) {
                         this.selectedPoints.push(clickedPoint);
+                    } else {
+                        this.selectedPoints = [clickedPoint];
                     }
-
                     this.updateSelectionInfo();
                     this.redraw();
                 }
+
+                // Prepare drag state for selected points
+                this.dragPointState = {
+                    active: false,
+                    startX: mouseX,
+                    startY: mouseY,
+                    clickedPoint: clickedPoint,
+                    isShift: e.shiftKey,
+                    wasAlreadySelected: isAlreadySelected,
+                    targets: this.getPointsAndAttachedHandlesToMove(this.selectedPoints)
+                };
+
+                this.lastMouseX = mouseX;
+                this.lastMouseY = mouseY;
+            } else {
+                // Click on empty space: start marquee box selection
+                this.isSelectingBox = true;
+                this.selectionBox = {
+                    startX: mouseX,
+                    startY: mouseY,
+                    currentX: mouseX,
+                    currentY: mouseY,
+                    isShift: e.shiftKey,
+                    initialSelected: e.shiftKey ? [...this.selectedPoints] : []
+                };
             }
         } else if (this.currentMode === 'add') {
             // Add point mode - click on path to insert a new point
@@ -845,11 +965,6 @@ class SVGEditor {
                 this.deletePoint(clickedPoint);
             }
         } else if (this.currentMode === 'reconstruct-spline') {
-            // Continuation line: click the break point, then (optionally) a second,
-            // farther-back point on the same fragment to sample more of its curvature.
-            // Only the primary (un-mirrored) profile side is interactive here, and
-            // only its current phase's face (outer first, then inner) is clickable -
-            // see reconstructPhase/reconstructZones.
             const clickedPoint = this.findPointAt(
                 mouseX, mouseY,
                 p => this.isPrimaryProfilePath(p),
@@ -869,14 +984,10 @@ class SVGEditor {
                 this.pendingReconstructPoint = null;
 
                 if (referencePoint.pathId === breakPoint.pathId && referencePoint.pointIndex === breakPoint.pointIndex) {
-                    // Same point clicked twice - ignore and let the user retry
                     this.redraw();
                     return;
                 }
 
-                // The outer face's continuation mirrors automatically (that's the
-                // whole point of doing outer first); the inner/fracture face never
-                // does - it's unique to this specific sherd.
                 const wasOuterPhase = this.reconstructPhase === 'outer';
                 this.addProjectionContinuation(breakPoint, referencePoint, { mirror: wasOuterPhase });
 
@@ -897,15 +1008,85 @@ class SVGEditor {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        if (this.draggedPoint) {
-            // Dragging a point
+        if (this.dragPointState) {
+            const dist = Math.hypot(mouseX - this.dragPointState.startX, mouseY - this.dragPointState.startY);
+            if (!this.dragPointState.active && dist > 3) {
+                this.dragPointState.active = true;
+                this.saveState();
+                this.canvas.style.cursor = 'move';
+            }
+
+            if (this.dragPointState.active) {
+                const dx = (mouseX - this.lastMouseX) / this.scale;
+                const dy = (mouseY - this.lastMouseY) / this.scale;
+
+                for (const item of this.dragPointState.targets.items) {
+                    item.point.x += dx;
+                    item.point.y += dy;
+                }
+
+                for (const path of this.dragPointState.targets.paths) {
+                    this.rebuildPathData(path);
+                }
+
+                this.lastMouseX = mouseX;
+                this.lastMouseY = mouseY;
+                this.redraw();
+                return;
+            }
+        } else if (this.isSelectingBox && this.selectionBox) {
+            this.selectionBox.currentX = mouseX;
+            this.selectionBox.currentY = mouseY;
+
+            const minX = Math.min(this.selectionBox.startX, mouseX);
+            const maxX = Math.max(this.selectionBox.startX, mouseX);
+            const minY = Math.min(this.selectionBox.startY, mouseY);
+            const maxY = Math.max(this.selectionBox.startY, mouseY);
+
+            // Find all points inside bounding box
+            const enclosedPoints = [];
+            for (const path of this.paths) {
+                const layerVisible = this.layerVisibility[path.layerId] !== false;
+                if (!path.visible || !layerVisible) continue;
+
+                for (let i = 0; i < path.points.length; i++) {
+                    const point = path.points[i];
+                    const sx = point.x * this.scale + this.offsetX;
+                    const sy = point.y * this.scale + this.offsetY;
+
+                    if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) {
+                        enclosedPoints.push({
+                            pathId: path.id,
+                            pointIndex: i,
+                            point: point,
+                            path: path
+                        });
+                    }
+                }
+            }
+
+            if (this.selectionBox.isShift) {
+                const combined = [...this.selectionBox.initialSelected];
+                for (const pt of enclosedPoints) {
+                    if (!combined.some(p => p.pathId === pt.pathId && p.pointIndex === pt.pointIndex)) {
+                        combined.push(pt);
+                    }
+                }
+                this.selectedPoints = combined;
+            } else {
+                this.selectedPoints = enclosedPoints;
+            }
+
+            this.updateSelectionInfo();
+            this.redraw();
+            return;
+        } else if (this.draggedPoint) {
             const dx = (mouseX - this.lastMouseX) / this.scale;
             const dy = (mouseY - this.lastMouseY) / this.scale;
 
             this.draggedPoint.point.x += dx;
             this.draggedPoint.point.y += dy;
 
-            // Rebuild path data
             this.rebuildPathData(this.draggedPoint.path);
 
             this.lastMouseX = mouseX;
@@ -913,7 +1094,6 @@ class SVGEditor {
 
             this.redraw();
         } else if (this.draggedImage) {
-            // Dragging an image
             const dx = (mouseX - this.lastMouseX) / this.scale;
             const dy = (mouseY - this.lastMouseY) / this.scale;
 
@@ -924,9 +1104,7 @@ class SVGEditor {
             this.lastMouseY = mouseY;
 
             this.redraw();
-            this.redraw();
         } else if (this.isDragging) {
-            // Panning view (Works in View mode OR via middle click in any mode)
             const dx = mouseX - this.lastMouseX;
             const dy = mouseY - this.lastMouseY;
 
@@ -939,8 +1117,6 @@ class SVGEditor {
             this.redraw();
         } else if (this.currentMode === 'select' || this.currentMode === 'delete' || this.currentMode === 'add' ||
                    this.currentMode === 'reconstruct-spline') {
-            // Highlight hovered point (Continuation Line mode only considers the
-            // primary profile side's current phase, matching what's clickable there)
             const hoverFilter = this.currentMode === 'reconstruct-spline'
                 ? (p => this.isPrimaryProfilePath(p))
                 : null;
@@ -952,11 +1128,14 @@ class SVGEditor {
             if (hoveredPoint !== this.hoveredPoint) {
                 this.hoveredPoint = hoveredPoint;
 
-                // Change cursor if Ctrl is pressed and hovering a point
-                if (this.currentMode === 'select' && hoveredPoint && (e.ctrlKey || e.metaKey)) {
-                    this.canvas.style.cursor = 'move';
-                } else if (this.currentMode === 'select') {
-                    this.canvas.style.cursor = 'pointer';
+                if (this.currentMode === 'select') {
+                    if (hoveredPoint) {
+                        this.canvas.style.cursor = 'move';
+                    } else if (this.isSpacePressed) {
+                        this.canvas.style.cursor = 'grab';
+                    } else {
+                        this.canvas.style.cursor = 'crosshair';
+                    }
                 } else if (this.currentMode === 'add') {
                     this.canvas.style.cursor = 'crosshair';
                 } else if (this.currentMode === 'delete') {
@@ -968,7 +1147,6 @@ class SVGEditor {
                 this.redraw();
             }
         } else if (this.currentMode === 'view') {
-            // Check if hovering over an image
             const hoveredImage = this.findImageAt(mouseX, mouseY);
             if (hoveredImage && e.shiftKey) {
                 this.canvas.style.cursor = 'move';
@@ -979,19 +1157,280 @@ class SVGEditor {
     }
 
     handleMouseUp(e) {
-        if (this.draggedPoint) {
-            // Finished dragging a point
+        if (this.dragPointState) {
+            if (this.dragPointState.active) {
+                this.updateStats();
+                document.getElementById('svg-undo-btn').disabled = false;
+            } else {
+                // Click on point without dragging
+                if (this.dragPointState.isShift && this.dragPointState.wasAlreadySelected) {
+                    const cp = this.dragPointState.clickedPoint;
+                    this.selectedPoints = this.selectedPoints.filter(
+                        p => !(p.pathId === cp.pathId && p.pointIndex === cp.pointIndex)
+                    );
+                    this.updateSelectionInfo();
+                }
+            }
+            this.dragPointState = null;
+            this.canvas.style.cursor = this.hoveredPoint ? 'move' : (this.currentMode === 'select' ? 'crosshair' : 'default');
+            this.redraw();
+        } else if (this.isSelectingBox && this.selectionBox) {
+            const dist = Math.hypot(
+                this.selectionBox.currentX - this.selectionBox.startX,
+                this.selectionBox.currentY - this.selectionBox.startY
+            );
+            if (dist < 4 && !this.selectionBox.isShift) {
+                // Click on empty space: deselect all
+                this.selectedPoints = [];
+                this.updateSelectionInfo();
+            }
+            this.isSelectingBox = false;
+            this.selectionBox = null;
+            this.updateStats();
+            this.canvas.style.cursor = this.currentMode === 'select' ? 'crosshair' : 'default';
+            this.redraw();
+        } else if (this.draggedPoint) {
             this.draggedPoint = null;
             this.canvas.style.cursor = 'pointer';
             this.updateStats();
         } else if (this.draggedImage) {
-            // Finished dragging an image
             this.draggedImage = null;
             this.canvas.style.cursor = 'grab';
         } else if (this.isDragging) {
             this.isDragging = false;
-            this.canvas.style.cursor = 'grab';
+            this.canvas.style.cursor = this.isSpacePressed ? 'grab' : (this.currentMode === 'view' ? 'grab' : (this.currentMode === 'select' ? 'crosshair' : 'default'));
         }
+    }
+
+    // Helper to find all selected points plus attached curve handles for smooth dragging
+    getPointsAndAttachedHandlesToMove(pointsToMove) {
+        const moveMap = new Map();
+        const affectedPaths = new Set();
+
+        for (const ptInfo of pointsToMove) {
+            const key = `${ptInfo.pathId}:${ptInfo.pointIndex}`;
+            moveMap.set(key, ptInfo);
+            affectedPaths.add(ptInfo.path);
+
+            const path = ptInfo.path;
+            const pt = ptInfo.point;
+            const idx = ptInfo.pointIndex;
+
+            // If pt is an anchor point, translate its incoming and outgoing handles too
+            if (this.isAnchorPoint(pt)) {
+                // Incoming handle
+                if (idx > 0 && path.points[idx - 1]) {
+                    const prevPt = path.points[idx - 1];
+                    if (prevPt.cmd === 'C2' || prevPt.cmd === 'Q1') {
+                        const prevKey = `${ptInfo.pathId}:${idx - 1}`;
+                        if (!moveMap.has(prevKey)) {
+                            moveMap.set(prevKey, {
+                                pathId: ptInfo.pathId,
+                                pointIndex: idx - 1,
+                                point: prevPt,
+                                path: path
+                            });
+                        }
+                    }
+                }
+
+                // Outgoing handle
+                if (idx + 1 < path.points.length && path.points[idx + 1]) {
+                    const nextPt = path.points[idx + 1];
+                    if (nextPt.cmd === 'C1' || nextPt.cmd === 'Q1') {
+                        const nextKey = `${ptInfo.pathId}:${idx + 1}`;
+                        if (!moveMap.has(nextKey)) {
+                            moveMap.set(nextKey, {
+                                pathId: ptInfo.pathId,
+                                pointIndex: idx + 1,
+                                point: nextPt,
+                                path: path
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        return {
+            items: Array.from(moveMap.values()),
+            paths: Array.from(affectedPaths)
+        };
+    }
+
+    // Right-click context menu handling
+    handleContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const rect = this.canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        const clickedPoint = this.findPointAt(mouseX, mouseY);
+        if (clickedPoint) {
+            const isAlreadySelected = this.selectedPoints.some(
+                p => p.pathId === clickedPoint.pathId && p.pointIndex === clickedPoint.pointIndex
+            );
+            if (!isAlreadySelected) {
+                this.selectedPoints = [clickedPoint];
+                this.updateSelectionInfo();
+                this.updateStats();
+                this.redraw();
+            }
+        }
+
+        this.showContextMenu(e.clientX, e.clientY, clickedPoint);
+    }
+
+    showContextMenu(clientX, clientY, clickedPoint) {
+        this.closeContextMenu();
+
+        const count = this.selectedPoints.length;
+        const hasSelection = count > 0;
+        const canUndo = this.historyIndex > 0;
+
+        const menu = document.createElement('div');
+        menu.className = 'svg-context-menu';
+        menu.id = 'svg-context-menu';
+
+        let html = '';
+
+        if (hasSelection) {
+            const headerText = count === 1
+                ? `Point ${this.selectedPoints[0].point.cmd} (P${this.selectedPoints[0].pointIndex})`
+                : `${count} Points Selected`;
+            html += `<div class="svg-context-menu-header">${headerText}</div>`;
+
+            const deleteLabel = count === 1 ? 'Delete Point' : `Delete Points (${count})`;
+            html += `
+                <button class="svg-context-menu-item danger" data-action="delete">
+                    <span class="menu-left"><i class="bi bi-trash3"></i><span>${deleteLabel}</span></span>
+                    <span class="menu-badge">Del</span>
+                </button>
+                <button class="svg-context-menu-item" data-action="deselect">
+                    <span class="menu-left"><i class="bi bi-x-circle"></i><span>Deselect All</span></span>
+                    <span class="menu-badge">Esc</span>
+                </button>
+            `;
+
+            if (count === 1) {
+                const pt = this.selectedPoints[0].point;
+                html += `
+                    <div class="svg-context-menu-divider"></div>
+                    <div style="padding: 4px 10px; font-size: 0.75rem; color: var(--text-muted); line-height: 1.4;">
+                        X: ${Math.round(pt.x * 10) / 10}, Y: ${Math.round(pt.y * 10) / 10}
+                    </div>
+                `;
+            }
+        } else {
+            html += `<div class="svg-context-menu-header">Canvas</div>`;
+            html += `
+                <button class="svg-context-menu-item" data-action="select-all">
+                    <span class="menu-left"><i class="bi bi-check-all"></i><span>Select All Points</span></span>
+                    <span class="menu-badge">Ctrl+A</span>
+                </button>
+                <button class="svg-context-menu-item" data-action="reset-view">
+                    <span class="menu-left"><i class="bi bi-aspect-ratio"></i><span>Reset View</span></span>
+                    <span class="menu-badge">R</span>
+                </button>
+            `;
+        }
+
+        if (canUndo) {
+            html += `
+                <div class="svg-context-menu-divider"></div>
+                <button class="svg-context-menu-item" data-action="undo">
+                    <span class="menu-left"><i class="bi bi-arrow-counterclockwise"></i><span>Undo</span></span>
+                    <span class="menu-badge">Ctrl+Z</span>
+                </button>
+            `;
+        }
+
+        menu.innerHTML = html;
+        document.body.appendChild(menu);
+        this.contextMenuElement = menu;
+
+        // Viewport bounds clamping
+        const menuRect = menu.getBoundingClientRect();
+        let posX = clientX;
+        let posY = clientY;
+
+        if (posX + menuRect.width > window.innerWidth - 8) {
+            posX = window.innerWidth - menuRect.width - 8;
+        }
+        if (posY + menuRect.height > window.innerHeight - 8) {
+            posY = window.innerHeight - menuRect.height - 8;
+        }
+        if (posX < 8) posX = 8;
+        if (posY < 8) posY = 8;
+
+        menu.style.left = `${posX}px`;
+        menu.style.top = `${posY}px`;
+
+        menu.addEventListener('click', (e) => {
+            const item = e.target.closest('[data-action]');
+            if (!item) return;
+            const action = item.dataset.action;
+            this.closeContextMenu();
+
+            if (action === 'delete') {
+                this.deletePointsDirectly();
+            } else if (action === 'deselect') {
+                this.selectedPoints = [];
+                this.updateSelectionInfo();
+                this.redraw();
+            } else if (action === 'select-all') {
+                this.selectAllPoints();
+            } else if (action === 'reset-view') {
+                this.resetView();
+            } else if (action === 'undo') {
+                this.undo();
+            }
+        });
+    }
+
+    closeContextMenu() {
+        if (this.contextMenuElement) {
+            this.contextMenuElement.remove();
+            this.contextMenuElement = null;
+        }
+    }
+
+    // Select all visible points
+    selectAllPoints() {
+        this.selectedPoints = [];
+        for (const path of this.paths) {
+            const layerVisible = this.layerVisibility[path.layerId] !== false;
+            if (!path.visible || !layerVisible) continue;
+            for (let i = 0; i < path.points.length; i++) {
+                this.selectedPoints.push({
+                    pathId: path.id,
+                    pointIndex: i,
+                    point: path.points[i],
+                    path: path
+                });
+            }
+        }
+        this.updateStats();
+        this.updateSelectionInfo();
+        this.redraw();
+    }
+
+    // Nudge selected points with keyboard arrow keys
+    nudgeSelectedPoints(dx, dy) {
+        if (this.selectedPoints.length === 0) return;
+        this.saveState();
+        const { items, paths } = this.getPointsAndAttachedHandlesToMove(this.selectedPoints);
+        for (const item of items) {
+            item.point.x += dx;
+            item.point.y += dy;
+        }
+        for (const path of paths) {
+            this.rebuildPathData(path);
+        }
+        this.redraw();
+        document.getElementById('svg-undo-btn').disabled = false;
     }
 
     handleWheel(e) {
@@ -1959,7 +2398,7 @@ class SVGEditor {
         const state = {
             paths: this.paths.map(p => ({
                 ...p,
-                points: [...p.points]
+                points: p.points.map(pt => ({ ...pt }))
             })),
             images: this.images.map(img => ({
                 ...img,
@@ -1993,7 +2432,7 @@ class SVGEditor {
         // Restore state
         this.paths = state.paths.map(p => ({
             ...p,
-            points: [...p.points]
+            points: p.points.map(pt => ({ ...pt }))
         }));
 
         if (state.images) {
@@ -2287,6 +2726,23 @@ class SVGEditor {
         }
 
         this.ctx.restore();
+
+        // Draw marquee selection box on screen
+        if (this.isSelectingBox && this.selectionBox) {
+            const sx = Math.min(this.selectionBox.startX, this.selectionBox.currentX);
+            const sy = Math.min(this.selectionBox.startY, this.selectionBox.currentY);
+            const sw = Math.abs(this.selectionBox.currentX - this.selectionBox.startX);
+            const sh = Math.abs(this.selectionBox.currentY - this.selectionBox.startY);
+
+            this.ctx.save();
+            this.ctx.fillStyle = 'rgba(194, 65, 12, 0.12)';
+            this.ctx.strokeStyle = '#c2410c';
+            this.ctx.lineWidth = 1.5;
+            this.ctx.setLineDash([4, 4]);
+            this.ctx.fillRect(sx, sy, sw, sh);
+            this.ctx.strokeRect(sx, sy, sw, sh);
+            this.ctx.restore();
+        }
 
         console.log('Redraw complete');
     }
@@ -2818,29 +3274,85 @@ class SVGEditor {
             return;
         }
 
+        this.deletePointsDirectly();
+    }
+
+    deletePointsDirectly(pointsToDelete = null) {
+        const points = pointsToDelete || this.selectedPoints;
+        if (!points || points.length === 0) return;
+
         this.saveState();
+        const count = points.length;
 
-        // Sort by pathId and pointIndex (descending) to delete from end to start
-        const sorted = [...this.selectedPoints].sort((a, b) => {
-            if (a.pathId !== b.pathId) return b.pathId.localeCompare(a.pathId);
-            return b.pointIndex - a.pointIndex;
-        });
-
-        // Delete points
-        sorted.forEach(pointInfo => {
-            const path = this.paths.find(p => p.id === pointInfo.pathId);
-            if (path && pointInfo.pointIndex < path.points.length) {
-                path.points.splice(pointInfo.pointIndex, 1);
-                this.rebuildPathData(path);
+        // Group target points by pathId
+        const byPath = new Map();
+        for (const ptInfo of points) {
+            if (!byPath.has(ptInfo.pathId)) {
+                byPath.set(ptInfo.pathId, new Set());
             }
-        });
+            byPath.get(ptInfo.pathId).add(ptInfo.pointIndex);
+        }
+
+        for (const [pathId, indexSet] of byPath.entries()) {
+            const path = this.paths.find(p => p.id === pathId);
+            if (!path) continue;
+
+            // Collect all indices to remove, including associated control points
+            const indicesToRemove = new Set(indexSet);
+
+            for (const idx of indexSet) {
+                const pt = path.points[idx];
+                if (!pt) continue;
+
+                // If deleting an anchor point C, remove its incoming C1 and C2 control points
+                if (pt.cmd === 'C') {
+                    if (idx - 1 >= 0 && path.points[idx - 1] && path.points[idx - 1].cmd === 'C2') indicesToRemove.add(idx - 1);
+                    if (idx - 2 >= 0 && path.points[idx - 2] && path.points[idx - 2].cmd === 'C1') indicesToRemove.add(idx - 2);
+                } else if (pt.cmd === 'Q') {
+                    if (idx - 1 >= 0 && path.points[idx - 1] && path.points[idx - 1].cmd === 'Q1') indicesToRemove.add(idx - 1);
+                }
+            }
+
+            // Convert to array and sort descending
+            const sortedIndices = Array.from(indicesToRemove).sort((a, b) => b - a);
+
+            for (const idx of sortedIndices) {
+                if (idx < path.points.length) {
+                    path.points.splice(idx, 1);
+                }
+            }
+
+            // If start point was removed and path still has points, ensure the first remaining anchor is 'M'
+            if (path.points.length > 0) {
+                let firstAnchorIdx = -1;
+                for (let i = 0; i < path.points.length; i++) {
+                    if (this.isAnchorPoint(path.points[i])) {
+                        firstAnchorIdx = i;
+                        break;
+                    }
+                }
+                if (firstAnchorIdx > 0) {
+                    // Remove leading control points before the first anchor
+                    path.points.splice(0, firstAnchorIdx);
+                }
+                if (path.points.length > 0) {
+                    path.points[0].cmd = 'M';
+                }
+            }
+
+            this.rebuildPathData(path);
+        }
 
         this.selectedPoints = [];
         this.updateStats();
         this.updateSelectionInfo();
         this.redraw();
-
         document.getElementById('svg-undo-btn').disabled = false;
+        this.closeContextMenu();
+
+        if (window.app && typeof window.app.showNotification === 'function') {
+            window.app.showNotification(`Deleted ${count} point${count === 1 ? '' : 's'} (Ctrl+Z to undo)`, 'info');
+        }
     }
 
     getTotalPoints() {
