@@ -65,11 +65,11 @@ def check_dependencies():
     
     return True
 
-def open_browser():
+def open_browser(port):
     """Open browser after a short delay to ensure server is ready."""
     time.sleep(2)  # Wait 2 seconds for server to start
     print("\n🌐 Opening browser...")
-    webbrowser.open('http://localhost:5004')
+    webbrowser.open(f'http://localhost:{port}')
 
 def main():
     """Main launcher function."""
@@ -95,32 +95,34 @@ def main():
         print("  pip install git+https://github.com/facebookresearch/segment-anything-2.git")
         sys.exit(1)
     
+    # Change to interactive_app directory and run
+    import os
+    import sys
+    os.chdir(interactive_dir)
+
+    port = int(os.environ.get('PORT', os.environ.get('PYPOTTERY_PORT', 5004)))
+
     print("\n" + "=" * 60)
     print("All dependencies satisfied!")
     print("=" * 60)
     print("\nStarting PyPotteryTrace Interactive...")
     print("\nThe application will be available at:")
-    print("  http://localhost:5004")
+    print(f"  http://localhost:{port}")
     print("\nPress Ctrl+C to stop the server")
     print("=" * 60)
     print()
-    
-    # Change to interactive_app directory and run
-    import os
-    import sys
-    os.chdir(interactive_dir)
-    
+
     # Add interactive_app to Python path so imports work
     sys.path.insert(0, str(interactive_dir))
-    
+
     # Start browser in a separate thread
-    browser_thread = threading.Thread(target=open_browser, daemon=True)
+    browser_thread = threading.Thread(target=open_browser, args=(port,), daemon=True)
     browser_thread.start()
-    
+
     # Import and run the Flask app
     try:
         from main import app
-        app.run(debug=False, host='0.0.0.0', port=5004)
+        app.run(debug=False, host='0.0.0.0', port=port, use_reloader=False)
     except KeyboardInterrupt:
         print("\n\nServer stopped by user")
     except Exception as e:

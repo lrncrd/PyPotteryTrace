@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ version }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v={{ version }}&t=20260919">
 </head>
 
 <body>
@@ -33,35 +33,68 @@
         </div>
     </div>
 
-    <!-- Info Modal -->
+    <!-- Info Modal (macOS Minimal Centered Sheet) -->
     <div id="info-modal" class="info-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="info-modal-title">
-        <div class="info-modal-content">
-            <button class="info-modal-close" id="info-modal-close" aria-label="Close modal"><i class="bi bi-x-lg"></i></button>
-            <div class="info-header-icon">
-                <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="info-logo">
-            </div>
-            <h2 class="info-title" id="info-modal-title">PyPotteryTrace</h2>
-            <div class="info-version-wrapper">
-                <span class="version-badge">v{{ version }}</span>
-            </div>
-            <p class="info-author">Created by <strong>Lorenzo Cardarelli</strong></p>
-
-            <div class="info-description">
-                <p>Interactive vectorization and segmentation of archaeological pottery drawings using Segment Anything Model 2 (SAM2) to produce publication-grade SVG vector profiles and illustrations.</p>
+        <div class="info-modal-content mac-window" style="max-width: 500px;">
+            <!-- Titlebar without traffic lights, minimal close on top-right -->
+            <div class="mac-titlebar">
+                <span class="mac-window-title" id="info-modal-title">About PyPotteryTrace</span>
+                <button id="info-modal-close" class="btn-close modal-close-btn" aria-label="Close modal"></button>
             </div>
 
-            <div class="disclosure-section">
-                <div class="disclosure-header">
-                    <i class="bi bi-shield-check"></i>
-                    <h4>SCIENTIFIC ATTRIBUTION REQUIREMENT</h4>
+            <div class="mac-v-body">
+                <!-- Logo (free-standing, 125px) -->
+                <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="modal-logo-free">
+
+                <!-- Title -->
+                <h2 class="mac-v-title">
+                    PyPottery<span class="brand-accent">Trace</span>
+                </h2>
+
+                <!-- Clean Meta Line -->
+                <div class="mac-v-meta">
+                    Version {{ version }} • By <strong class="text-dark">Lorenzo Cardarelli</strong>
                 </div>
-                <p>PyPottery is developed for scientific archaeological research. When publishing drawings, plates, or vectors generated using PyPotteryTrace, please cite the software and provide methodological attribution in your publications.</p>
-            </div>
 
-            <div class="info-actions">
-                <a href="https://github.com/lrncrd/PyPotteryTrace" target="_blank" class="info-github-link">
-                    <i class="bi bi-github"></i> View on GitHub
-                </a>
+                <!-- Description -->
+                <p class="mac-v-desc">
+                    Interactive vectorization and segmentation of archaeological pottery drawings using Segment Anything Model 2 (SAM2).
+                </p>
+
+                <!-- Hardware Chip Pill -->
+                <div>
+                    <div class="mac-v-chip" id="modalHardwareChip">
+                        <span id="systemCPU"><i class="bi bi-cpu me-1"></i> Detecting...</span>
+                        <span class="chip-sep">•</span>
+                        <span id="systemGPU" class="chip-active"><i class="bi bi-gpu-card me-1"></i> Detecting...</span>
+                    </div>
+                </div>
+
+                <!-- Minimal Citation Callout -->
+                <div class="mac-citation-strip">
+                    <div class="mac-citation-header">
+                        <span class="mac-citation-tag"><i class="bi bi-quote"></i> Citation</span>
+                        <button type="button" class="mac-copy-link" onclick="copyCitation('citation-text', this)">
+                            <i class="bi bi-clipboard"></i> Copy
+                        </button>
+                    </div>
+                    <p class="mac-citation-quote" id="citation-text">
+                        "This research utilized PyPotteryTrace (version {{ version }}) for interactive segmentation-assisted ceramic vectorization. PyPotteryTrace is developed by Lorenzo Cardarelli (https://github.com/lrncrd/PyPotteryTrace)."
+                    </p>
+                </div>
+
+                <!-- Apple-style Pill Action Buttons -->
+                <div class="mac-v-actions">
+                    <a href="https://lrncrd.github.io/PyPottery/pypotterytrace/usage.html" target="_blank" class="mac-pill">
+                        <i class="bi bi-book"></i> Documentation
+                    </a>
+                    <a href="https://github.com/lrncrd/PyPotteryTrace" target="_blank" class="mac-pill">
+                        <i class="bi bi-github"></i> GitHub
+                    </a>
+                    <a href="https://ko-fi.com/lrncrd" target="_blank" class="mac-pill">
+                        <i class="bi bi-cup-hot"></i> Support
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -146,10 +179,7 @@
                 <div class="logo-section">
                     <img src="{{ url_for('static', filename='LogoTrace.png') }}" alt="PyPotteryTrace Logo" class="logo">
                     <div class="header-title-group">
-                        <h1>PyPotteryTrace <span class="version-badge">v{{ version }}</span></h1>
-                        <div class="header-subtitle">
-                            AI-powered semantic segmentation and vectorization of archaeological pottery drawings
-                        </div>
+                        <h1 class="header-brand-title">PyPottery<span class="brand-accent">Trace</span> <span class="version-badge">v{{ version }}</span></h1>
                     </div>
                 </div>
 
@@ -163,9 +193,9 @@
                 <!-- Header Actions -->
                 <div class="header-actions">
                     <!-- Pixel Help Assistant -->
-                    <a href="https://pypottery.readthedocs.io/en/latest/" target="_blank" id="pixel-help-btn" class="pixel-assistant-container" title="Need help? Read documentation">
-                        <div class="pixel-speech-bubble" id="pixel-speech-bubble">Need help? <i class="bi bi-arrow-right-short"></i></div>
-                        <svg width="48" height="48" viewBox="30 45 180 140" aria-hidden="true">
+                    <a href="https://lrncrd.github.io/PyPottery/pypotterytrace/usage.html" target="_blank" id="pixel-help-btn" class="pixel-assistant-container" title="Need help? Read documentation">
+                        <div class="pixel-speech-bubble" id="pixel-speech-bubble">Need help?</div>
+                        <svg width="45" height="45" viewBox="30 45 180 140" aria-hidden="true">
                             <g id="pixel-monitor-header">
                                 <rect x="40" y="50" width="160" height="130" rx="15" ry="15" fill="#d0d0d0" stroke="#444" stroke-width="3" />
                                 <rect x="55" y="65" width="130" height="90" rx="5" ry="5" fill="#a0a0a0" stroke="#444" stroke-width="2" />
@@ -184,11 +214,11 @@
                     </a>
 
                     <!-- User Guide & About Buttons -->
-                    <button id="guide-btn" class="icon-btn" title="User Guide" aria-label="User Guide" onclick="document.getElementById('help-modal').style.display='flex'">
-                        <i class="bi bi-book"></i>
+                    <button id="guide-btn" class="header-info-btn" title="User Guide" aria-label="User Guide" onclick="document.getElementById('help-modal').style.display='flex'">
+                        <i class="bi bi-book me-1"></i> Guide
                     </button>
-                    <button id="info-btn" class="icon-btn" title="About PyPotteryTrace" aria-label="About PyPotteryTrace">
-                        <i class="bi bi-info-circle"></i>
+                    <button id="info-btn" class="header-info-btn" title="About PyPotteryTrace" aria-label="About PyPotteryTrace">
+                        <i class="bi bi-info-circle me-1"></i> Info
                     </button>
                 </div>
             </div>
@@ -1846,7 +1876,70 @@
         const infoModal = document.getElementById('info-modal');
         const infoClose = document.getElementById('info-modal-close');
 
+        window.copyCitation = function (elementId = 'citation-text', btnElement) {
+            const textEl = document.getElementById(elementId);
+            if (!textEl) return;
+            const text = (textEl.innerText || textEl.textContent).replace(/^"|"$/g, '').trim();
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = btnElement || (window.event && window.event.target ? window.event.target.closest('.mac-copy-link') : null) || document.querySelector('.mac-copy-link');
+                if (btn) {
+                    const orig = btn.innerHTML;
+                    btn.innerHTML = '<i class="bi bi-check2"></i> Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(() => {
+                        btn.innerHTML = orig;
+                        btn.classList.remove('copied');
+                    }, 2000);
+                }
+            }).catch(err => {
+                console.error('Failed to copy citation:', err);
+            });
+        };
+
+        async function loadSystemInfo() {
+            const cpuEl = document.getElementById('systemCPU');
+            const gpuEl = document.getElementById('systemGPU');
+            if (!cpuEl || !gpuEl) return;
+
+            try {
+                const response = await fetch('/api/system-info');
+                const data = await response.json();
+
+                if (response.ok) {
+                    const cores = (data.cpu && data.cpu.cores) || data.cpu_count || 1;
+                    const platform = (data.cpu && data.cpu.platform) || data.platform || '';
+                    cpuEl.innerHTML = `<i class="bi bi-cpu me-1"></i> ${cores} Cores${platform ? ` (${platform})` : ''}`;
+
+                    const cuda = (data.gpu && data.gpu.cuda_available) || data.cuda_available;
+                    const gpuNames = (data.gpu && data.gpu.gpu_names) || (data.cuda_device_name ? [data.cuda_device_name] : []);
+                    const mps = (data.mps && data.mps.mps_available) || data.mps_available;
+
+                    if (cuda) {
+                        const name = gpuNames.length > 0 ? gpuNames[0] : 'NVIDIA CUDA';
+                        gpuEl.innerHTML = `<i class="bi bi-gpu-card me-1"></i> ${name} (CUDA)`;
+                        gpuEl.className = 'chip-active';
+                    } else if (mps) {
+                        gpuEl.innerHTML = `<i class="bi bi-gpu-card me-1"></i> Apple Silicon (MPS)`;
+                        gpuEl.className = 'chip-active';
+                    } else {
+                        gpuEl.innerHTML = `<i class="bi bi-gpu-card me-1"></i> CPU Only`;
+                        gpuEl.className = 'chip-cpu-only';
+                    }
+                } else {
+                    cpuEl.innerHTML = '<i class="bi bi-cpu me-1"></i> Available';
+                    gpuEl.innerHTML = '<i class="bi bi-gpu-card me-1"></i> CPU Only';
+                    gpuEl.className = 'chip-cpu-only';
+                }
+            } catch (error) {
+                console.error('Error loading system info:', error);
+                cpuEl.innerHTML = '<i class="bi bi-cpu me-1"></i> Available';
+                gpuEl.innerHTML = '<i class="bi bi-gpu-card me-1"></i> CPU Only';
+                gpuEl.className = 'chip-cpu-only';
+            }
+        }
+
         function openInfoModal() {
+            loadSystemInfo();
             infoModal.style.display = 'flex';
             infoModal.offsetHeight;
             infoModal.classList.add('active');
@@ -1866,6 +1959,14 @@
                 if (e.target === infoModal) closeInfoModal();
             });
         }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (infoModal && infoModal.classList.contains('active')) {
+                    closeInfoModal();
+                }
+            }
+        });
 
         // Help Modal Close on click outside
         const helpModal = document.getElementById('help-modal');
