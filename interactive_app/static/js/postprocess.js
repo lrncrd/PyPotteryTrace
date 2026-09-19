@@ -177,6 +177,74 @@ class PostProcessingManager {
             }
         });
 
+        // Stepper buttons for input-with-unit (increment / decrement by 0.1)
+        document.querySelectorAll('.input-with-unit').forEach(container => {
+            const input = container.querySelector('input[type="number"]');
+            const upBtn = container.querySelector('.stepper-up');
+            const downBtn = container.querySelector('.stepper-down');
+            if (!input || !upBtn || !downBtn) return;
+
+            const stepValue = (direction) => {
+                const step = parseFloat(input.getAttribute('step')) || 0.1;
+                const min = input.hasAttribute('min') ? parseFloat(input.getAttribute('min')) : 0.1;
+                const max = input.hasAttribute('max') ? parseFloat(input.getAttribute('max')) : 10;
+                let current = parseFloat(input.value);
+                if (isNaN(current)) current = min;
+
+                const stepStr = step.toString();
+                const precision = stepStr.includes('.') ? stepStr.split('.')[1].length : 1;
+
+                let next = current + direction * step;
+                next = parseFloat(next.toFixed(precision));
+
+                if (next < min) next = min;
+                if (next > max) next = max;
+
+                input.value = next.toFixed(precision);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+            };
+
+            const setupRepeat = (btn, dir) => {
+                let timer = null;
+                let interval = null;
+
+                const start = (e) => {
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    stepValue(dir);
+                    timer = setTimeout(() => {
+                        interval = setInterval(() => stepValue(dir), 75);
+                    }, 300);
+                };
+
+                const stop = () => {
+                    if (timer) { clearTimeout(timer); timer = null; }
+                    if (interval) { clearInterval(interval); interval = null; }
+                };
+
+                btn.addEventListener('mousedown', start);
+                btn.addEventListener('mouseup', stop);
+                btn.addEventListener('mouseleave', stop);
+                btn.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        stepValue(dir);
+                    }
+                });
+            };
+
+            setupRepeat(upBtn, 1);
+            setupRepeat(downBtn, -1);
+
+            input.addEventListener('wheel', (e) => {
+                if (document.activeElement === input) {
+                    e.preventDefault();
+                    stepValue(e.deltaY < 0 ? 1 : -1);
+                }
+            }, { passive: false });
+        });
+
         // Reset stroke defaults button
         const resetStrokesBtn = document.getElementById('postprocess-reset-strokes-btn');
         if (resetStrokesBtn) {

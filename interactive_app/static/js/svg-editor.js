@@ -58,6 +58,10 @@ class SVGEditor {
         this.isSpacePressed = false; // Spacebar held for panning
         this.contextMenuElement = null; // DOM element for custom context menu
         this.pendingReconstructPoint = null; // Break point picked in Continuation Line mode, awaiting its reference point
+        this.drawingLineStart = null; // Start point for Internal Details straight line drawing
+        this.drawingLineCurrent = null; // Current end point preview for Internal Details
+        this.isDrawingLine = false; // Whether line drag is actively in progress
+        this.lineDragMoved = false; // Whether drag moved enough to qualify as drag-and-release
 
         // Continuation Line mode walks the primary profile in two phases: 'outer'
         // (the face that gets mirrored) first, then 'inner' (the fracture-section
@@ -79,6 +83,7 @@ class SVGEditor {
 
         // Settings
         this.pointSize = 8;
+        this.continuationLength = 100;
         this.showPoints = true;
         this.showLabels = true;
         this.currentMode = 'view';  // 'view', 'select', 'delete'
@@ -169,6 +174,15 @@ class SVGEditor {
                 this.redraw();
                 return;
             }
+            if (this.currentMode === 'internal-details' && this.drawingLineStart) {
+                e.preventDefault();
+                this.drawingLineStart = null;
+                this.drawingLineCurrent = null;
+                this.isDrawingLine = false;
+                this.lineDragMoved = false;
+                this.redraw();
+                return;
+            }
             this.handleContextMenu(e);
         });
 
@@ -210,6 +224,14 @@ class SVGEditor {
                 }
                 if (this.pendingReconstructPoint) {
                     this.pendingReconstructPoint = null;
+                    this.redraw();
+                    return;
+                }
+                if (this.drawingLineStart) {
+                    this.drawingLineStart = null;
+                    this.drawingLineCurrent = null;
+                    this.isDrawingLine = false;
+                    this.lineDragMoved = false;
                     this.redraw();
                     return;
                 }
@@ -260,9 +282,32 @@ class SVGEditor {
                     return;
                 }
             }
+
+            // Shift pressed during point drag: snap to 90 degrees immediately
+            if (e.key === 'Shift' && this.dragPointState && this.dragPointState.active) {
+                this.updatePointDrag(this.lastMouseX, this.lastMouseY, true);
+            }
+
+            // Shift pressed during line drawing: snap to 90 degrees immediately
+            if (e.key === 'Shift' && this.currentMode === 'internal-details' && this.drawingLineStart && this.lastMouseX !== undefined) {
+                const mouseSvg = this.screenToSvg(this.lastMouseX, this.lastMouseY);
+                this.drawingLineCurrent = this.constrainTo90(this.drawingLineStart, mouseSvg);
+                this.redraw();
+            }
         });
 
         document.addEventListener('keyup', (e) => {
+            // Shift released during point drag: release 90-degree constraint immediately
+            if (e.key === 'Shift' && this.dragPointState && this.dragPointState.active) {
+                this.updatePointDrag(this.lastMouseX, this.lastMouseY, false);
+            }
+
+            // Shift released during line drawing: release 90-degree constraint immediately
+            if (e.key === 'Shift' && this.currentMode === 'internal-details' && this.drawingLineStart && this.lastMouseX !== undefined) {
+                this.drawingLineCurrent = this.screenToSvg(this.lastMouseX, this.lastMouseY);
+                this.redraw();
+            }
+
             if (e.code === 'Space') {
                 this.isSpacePressed = false;
                 if (!this.isDragging) {
@@ -270,7 +315,8 @@ class SVGEditor {
                         'view': 'grab',
                         'select': 'crosshair',
                         'delete': 'not-allowed',
-                        'reconstruct-spline': 'crosshair'
+                        'reconstruct-spline': 'crosshair',
+                        'internal-details': 'crosshair'
                     };
                     this.canvas.style.cursor = cursors[this.currentMode] || 'default';
                 }
@@ -290,6 +336,15 @@ class SVGEditor {
             document.getElementById('svg-point-size-value').textContent = this.pointSize;
             this.redraw();
         });
+
+        const continuationSlider = document.getElementById('svg-continuation-length-slider');
+        if (continuationSlider) {
+            continuationSlider.addEventListener('input', (e) => {
+                this.continuationLength = parseInt(e.target.value, 10);
+                const valElem = document.getElementById('svg-continuation-length-value');
+                if (valElem) valElem.textContent = this.continuationLength;
+            });
+        }
 
         document.getElementById('svg-show-points').addEventListener('change', (e) => {
             this.showPoints = e.target.checked;
@@ -388,6 +443,14 @@ class SVGEditor {
             this.pendingReconstructPoint = null;
         }
 
+        // Leaving internal-details mode drops any pending line
+        if (mode !== 'internal-details') {
+            this.drawingLineStart = null;
+            this.drawingLineCurrent = null;
+            this.isDrawingLine = false;
+            this.lineDragMoved = false;
+        }
+
         // Freshly entering the mode: start over at the outer face and recompute
         // the outer/inner split from the primary path's current points.
         if (enteringSpline) {
@@ -406,7 +469,8 @@ class SVGEditor {
             'view': 'grab',
             'select': 'crosshair',
             'delete': 'not-allowed',
-            'reconstruct-spline': 'crosshair'
+            'reconstruct-spline': 'crosshair',
+            'internal-details': 'crosshair'
         };
         this.canvas.style.cursor = cursors[mode] || 'default';
 
@@ -925,6 +989,12 @@ class SVGEditor {
                 }
 
                 // Prepare drag state for selected points
+                const targets = this.getPointsAndAttachedHandlesToMove(this.selectedPoints);
+                for (const item of targets.items) {
+                    item.origX = item.point.x;
+                    item.origY = item.point.y;
+                }
+
                 this.dragPointState = {
                     active: false,
                     startX: mouseX,
@@ -932,7 +1002,7 @@ class SVGEditor {
                     clickedPoint: clickedPoint,
                     isShift: e.shiftKey,
                     wasAlreadySelected: isAlreadySelected,
-                    targets: this.getPointsAndAttachedHandlesToMove(this.selectedPoints)
+                    targets: targets
                 };
 
                 this.lastMouseX = mouseX;
@@ -1000,6 +1070,39 @@ class SVGEditor {
                     this.reconstructPhase = 'outer';
                 }
             }
+        } else if (this.currentMode === 'internal-details') {
+            const snapped = this.findPointAt(mouseX, mouseY);
+            const pt = (snapped && this.isAnchorPoint(snapped.point))
+                ? { x: snapped.point.x, y: snapped.point.y }
+                : this.screenToSvg(mouseX, mouseY);
+
+            if (!this.drawingLineStart) {
+                // First click / drag start
+                this.drawingLineStart = pt;
+                this.drawingLineCurrent = pt;
+                this.isDrawingLine = true;
+                this.lineDragMoved = false;
+                this.redraw();
+            } else {
+                // Second click of click-then-click mode
+                let endPt = pt;
+                if (e.shiftKey) {
+                    endPt = this.constrainTo90(this.drawingLineStart, endPt);
+                }
+                const screenDist = Math.hypot(
+                    (endPt.x - this.drawingLineStart.x) * this.scale,
+                    (endPt.y - this.drawingLineStart.y) * this.scale
+                );
+                if (screenDist > 3) {
+                    this.commitInternalDetailLine(this.drawingLineStart, endPt);
+                } else {
+                    this.drawingLineStart = null;
+                    this.drawingLineCurrent = null;
+                    this.isDrawingLine = false;
+                    this.lineDragMoved = false;
+                    this.redraw();
+                }
+            }
         }
     }
 
@@ -1017,21 +1120,9 @@ class SVGEditor {
             }
 
             if (this.dragPointState.active) {
-                const dx = (mouseX - this.lastMouseX) / this.scale;
-                const dy = (mouseY - this.lastMouseY) / this.scale;
-
-                for (const item of this.dragPointState.targets.items) {
-                    item.point.x += dx;
-                    item.point.y += dy;
-                }
-
-                for (const path of this.dragPointState.targets.paths) {
-                    this.rebuildPathData(path);
-                }
-
                 this.lastMouseX = mouseX;
                 this.lastMouseY = mouseY;
-                this.redraw();
+                this.updatePointDrag(mouseX, mouseY, e.shiftKey);
                 return;
             }
         } else if (this.isSelectingBox && this.selectionBox) {
@@ -1146,6 +1237,41 @@ class SVGEditor {
 
                 this.redraw();
             }
+        } else if (this.currentMode === 'internal-details') {
+            this.lastMouseX = mouseX;
+            this.lastMouseY = mouseY;
+
+            if (this.drawingLineStart) {
+                const snapped = (!e.shiftKey) ? this.findPointAt(mouseX, mouseY) : null;
+                let currentPt = (snapped && this.isAnchorPoint(snapped.point))
+                    ? { x: snapped.point.x, y: snapped.point.y }
+                    : this.screenToSvg(mouseX, mouseY);
+
+                if (e.shiftKey) {
+                    currentPt = this.constrainTo90(this.drawingLineStart, currentPt);
+                }
+
+                this.drawingLineCurrent = currentPt;
+
+                if (this.isDrawingLine) {
+                    const dragDist = Math.hypot(
+                        (currentPt.x - this.drawingLineStart.x) * this.scale,
+                        (currentPt.y - this.drawingLineStart.y) * this.scale
+                    );
+                    if (dragDist > 3) {
+                        this.lineDragMoved = true;
+                    }
+                }
+
+                this.redraw();
+            } else {
+                const hoveredPoint = this.findPointAt(mouseX, mouseY);
+                if (hoveredPoint !== this.hoveredPoint) {
+                    this.hoveredPoint = hoveredPoint;
+                    this.redraw();
+                }
+                this.canvas.style.cursor = 'crosshair';
+            }
         } else if (this.currentMode === 'view') {
             const hoveredImage = this.findImageAt(mouseX, mouseY);
             if (hoveredImage && e.shiftKey) {
@@ -1157,6 +1283,27 @@ class SVGEditor {
     }
 
     handleMouseUp(e) {
+        if (this.currentMode === 'internal-details') {
+            if (this.isDrawingLine && this.lineDragMoved && this.drawingLineStart && this.drawingLineCurrent) {
+                const screenDist = Math.hypot(
+                    (this.drawingLineCurrent.x - this.drawingLineStart.x) * this.scale,
+                    (this.drawingLineCurrent.y - this.drawingLineStart.y) * this.scale
+                );
+                if (screenDist > 3) {
+                    this.commitInternalDetailLine(this.drawingLineStart, this.drawingLineCurrent);
+                } else {
+                    this.drawingLineStart = null;
+                    this.drawingLineCurrent = null;
+                    this.isDrawingLine = false;
+                    this.lineDragMoved = false;
+                    this.redraw();
+                }
+            } else if (this.isDrawingLine && !this.lineDragMoved) {
+                this.isDrawingLine = false;
+            }
+            return;
+        }
+
         if (this.dragPointState) {
             if (this.dragPointState.active) {
                 this.updateStats();
@@ -1198,8 +1345,131 @@ class SVGEditor {
             this.canvas.style.cursor = 'grab';
         } else if (this.isDragging) {
             this.isDragging = false;
-            this.canvas.style.cursor = this.isSpacePressed ? 'grab' : (this.currentMode === 'view' ? 'grab' : (this.currentMode === 'select' ? 'crosshair' : 'default'));
+            const cursors = {
+                'view': 'grab',
+                'select': 'crosshair',
+                'delete': 'not-allowed',
+                'reconstruct-spline': 'crosshair',
+                'internal-details': 'crosshair'
+            };
+            this.canvas.style.cursor = this.isSpacePressed ? 'grab' : (cursors[this.currentMode] || 'default');
         }
+    }
+
+    // Updates point positions during drag, with optional 90° constraint (horizontal / vertical) when Shift is held
+    updatePointDrag(mouseX, mouseY, isShift) {
+        if (!this.dragPointState || !this.dragPointState.active) return;
+
+        let totalDx = (mouseX - this.dragPointState.startX) / this.scale;
+        let totalDy = (mouseY - this.dragPointState.startY) / this.scale;
+
+        // Shift key: constrain movement to 90 degrees (horizontal or vertical, whichever has larger displacement)
+        if (isShift) {
+            if (Math.abs(totalDx) >= Math.abs(totalDy)) {
+                totalDy = 0;
+            } else {
+                totalDx = 0;
+            }
+        }
+
+        for (const item of this.dragPointState.targets.items) {
+            item.point.x = item.origX + totalDx;
+            item.point.y = item.origY + totalDy;
+        }
+
+        for (const path of this.dragPointState.targets.paths) {
+            this.rebuildPathData(path);
+        }
+
+        this.redraw();
+    }
+
+    // Convert screen coordinates (canvas pixels) to SVG coordinate space
+    screenToSvg(screenX, screenY) {
+        return {
+            x: (screenX - this.offsetX) / this.scale,
+            y: (screenY - this.offsetY) / this.scale
+        };
+    }
+
+    // Convert SVG coordinates to screen coordinates (canvas pixels)
+    svgToScreen(svgX, svgY) {
+        return {
+            x: svgX * this.scale + this.offsetX,
+            y: svgY * this.scale + this.offsetY
+        };
+    }
+
+    // Constrains p2 relative to p1 to 90 degrees (strictly horizontal or vertical)
+    constrainTo90(p1, p2) {
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        if (Math.abs(dx) >= Math.abs(dy)) {
+            return { x: p2.x, y: p1.y };
+        } else {
+            return { x: p1.x, y: p2.y };
+        }
+    }
+
+    // Commits a newly drawn straight internal detail line
+    commitInternalDetailLine(p1, p2) {
+        this.saveState();
+        const d = `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} L ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+        this.createDetailPath(d);
+        this.drawingLineStart = null;
+        this.drawingLineCurrent = null;
+        this.isDrawingLine = false;
+        this.lineDragMoved = false;
+
+        const msg = 'Internal detail line added — adjust nodes in Select mode.';
+        if (window.app) window.app.showNotification(msg, 'success');
+        this.redraw();
+    }
+
+    // Creates an internal detail path in memory (layer_Detail / category Detail)
+    createDetailPath(d) {
+        const layerId = 'layer_Detail';
+        const category = 'Detail';
+
+        const existingLayer = this.layers.find(l => l.id === layerId);
+        if (!existingLayer) {
+            this.layers.push({ id: layerId, name: 'Internal Details', category, visible: true });
+        }
+        if (this.layerVisibility[layerId] === undefined) {
+            this.layerVisibility[layerId] = true;
+        }
+        if (!this.layerCategories[category]) {
+            this.layerCategories[category] = [];
+        }
+
+        const stroke = '#000000';
+        const strokeWidth = 0.8;
+        const fill = 'none';
+
+        const pathData = {
+            id: `path-${this.paths.length}`,
+            layerId,
+            layerName: 'Internal Details',
+            category,
+            element: null,
+            originalD: d,
+            currentD: d,
+            points: this.parsePathData(d),
+            stroke,
+            strokeWidth,
+            fill,
+            style: { stroke, strokeWidth, fill },
+            visible: true
+        };
+
+        this.paths.push(pathData);
+        this.layerCategories[category].push(pathData);
+
+        this.updateLayersList();
+        this.updateStats();
+        this.redraw();
+
+        return pathData;
     }
 
     // Helper to find all selected points plus attached curve handles for smooth dragging
@@ -1588,7 +1858,7 @@ class SVGEditor {
         // Find point near mouse position. In Continuation Line mode the clickable
         // points are enlarged a bit to make the (otherwise small) anchor points
         // easier to hit.
-        const threshold = this.pointSize + 2 + (this.currentMode === 'reconstruct-spline' ? 6 : 0);
+        const threshold = this.pointSize + 2 + ((this.currentMode === 'reconstruct-spline' || this.currentMode === 'internal-details') ? 6 : 0);
 
         for (const path of this.paths) {
             const layerVisible = this.layerVisibility[path.layerId] !== false;
@@ -1797,7 +2067,7 @@ class SVGEditor {
     // curvature estimate to transport and no way for it to compound into a
     // wild swing.
     addProjectionContinuation(pointInfo, referenceInfo = null, options = {}) {
-        const { mirror = true } = options;
+        const { mirror = true, length = (this.continuationLength || 100) } = options;
         const C = pointInfo.point; // the break point
 
         let A, B;
@@ -1817,7 +2087,6 @@ class SVGEditor {
             return;
         }
 
-        const baseStep = Math.hypot(C.x - B.x, C.y - B.y) || 1;
         const circle = this.circleThrough3Points(A, B, C);
 
         let end, c1, c2;
@@ -1835,13 +2104,13 @@ class SVGEditor {
             // Cap the swept angle to a quarter turn so the projection can never
             // curl back around toward the clean data it came from.
             const maxAngle = Math.PI / 2;
-            const projectLength = Math.min(baseStep * 2.5, maxAngle * circle.r);
+            const projectLength = Math.min(length, maxAngle * circle.r);
 
             [end, c1, c2] = this.buildArcBezier(C, dir, curvature, projectLength);
         } else {
             // A, B, C collinear - nothing to curve, continue straight.
             const dir = this.vecNorm({ x: C.x - B.x, y: C.y - B.y });
-            [end, c1, c2] = this.buildArcBezier(C, dir, 0, baseStep * 2.5);
+            [end, c1, c2] = this.buildArcBezier(C, dir, 0, length);
         }
 
         const GAP_FRACTION = 0.25;
@@ -2556,8 +2825,8 @@ class SVGEditor {
                 }
             }
 
-            this.ctx.strokeStyle = path.stroke;
-            this.ctx.lineWidth = path.strokeWidth * this.scale;
+            this.ctx.strokeStyle = path.stroke || (path.style && path.style.stroke) || '#000000';
+            this.ctx.lineWidth = (path.strokeWidth || (path.style && path.style.strokeWidth) || 1) * this.scale;
             this.ctx.stroke();
         }
         this.ctx.globalAlpha = 1;
@@ -2744,6 +3013,77 @@ class SVGEditor {
             this.ctx.restore();
         }
 
+        // Draw rubber-band preview line for Internal Details tool
+        if (this.currentMode === 'internal-details' && this.drawingLineStart && this.drawingLineCurrent) {
+            const sx1 = this.drawingLineStart.x * this.scale + this.offsetX;
+            const sy1 = this.drawingLineStart.y * this.scale + this.offsetY;
+            const sx2 = this.drawingLineCurrent.x * this.scale + this.offsetX;
+            const sy2 = this.drawingLineCurrent.y * this.scale + this.offsetY;
+
+            this.ctx.save();
+
+            // Rubber-band dashed line
+            this.ctx.beginPath();
+            this.ctx.moveTo(sx1, sy1);
+            this.ctx.lineTo(sx2, sy2);
+            this.ctx.strokeStyle = '#9333ea'; // Distinct purple
+            this.ctx.lineWidth = 1.5;
+            this.ctx.setLineDash([5, 4]);
+            this.ctx.stroke();
+
+            // Start handle
+            this.ctx.setLineDash([]);
+            this.ctx.fillStyle = '#22c55e'; // Green start dot
+            this.ctx.beginPath();
+            this.ctx.arc(sx1, sy1, 4, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 1.5;
+            this.ctx.stroke();
+
+            // End handle
+            this.ctx.fillStyle = '#9333ea'; // Purple end dot
+            this.ctx.beginPath();
+            this.ctx.arc(sx2, sy2, 4, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.strokeStyle = '#ffffff';
+            this.ctx.lineWidth = 1.5;
+            this.ctx.stroke();
+
+            // Tooltip with length and orientation
+            const dx = this.drawingLineCurrent.x - this.drawingLineStart.x;
+            const dy = this.drawingLineCurrent.y - this.drawingLineStart.y;
+            const len = Math.hypot(dx, dy);
+
+            if (len > 1) {
+                let statusText = `${len.toFixed(1)} px`;
+                if (Math.abs(dy) < 0.001) statusText += ' [Horizontal]';
+                else if (Math.abs(dx) < 0.001) statusText += ' [Vertical]';
+
+                const midX = (sx1 + sx2) / 2;
+                const midY = (sy1 + sy2) / 2 - 12;
+
+                this.ctx.font = '11px sans-serif';
+                const textWidth = this.ctx.measureText(statusText).width;
+
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+                this.ctx.beginPath();
+                if (typeof this.ctx.roundRect === 'function') {
+                    this.ctx.roundRect(midX - textWidth / 2 - 6, midY - 11, textWidth + 12, 18, 3);
+                } else {
+                    this.ctx.rect(midX - textWidth / 2 - 6, midY - 11, textWidth + 12, 18);
+                }
+                this.ctx.fill();
+
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                this.ctx.fillText(statusText, midX, midY - 2);
+            }
+
+            this.ctx.restore();
+        }
+
         console.log('Redraw complete');
     }
 
@@ -2819,6 +3159,18 @@ class SVGEditor {
                 color: '#16a34a',
                 bg: 'rgba(22, 163, 74, 0.1)',
                 border: 'rgba(22, 163, 74, 0.25)'
+            },
+            'Detail': {
+                icon: '<i class="bi bi-slash-lg"></i>',
+                color: '#9333ea',
+                bg: 'rgba(147, 51, 234, 0.1)',
+                border: 'rgba(147, 51, 234, 0.25)'
+            },
+            'Internal Details': {
+                icon: '<i class="bi bi-slash-lg"></i>',
+                color: '#9333ea',
+                bg: 'rgba(147, 51, 234, 0.1)',
+                border: 'rgba(147, 51, 234, 0.25)'
             },
             'Images': {
                 icon: '<i class="bi bi-images"></i>',

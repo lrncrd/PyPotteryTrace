@@ -656,6 +656,11 @@
                                 <span>Continuation Line</span>
                                 <span class="mode-desc">Outer face, then inner face</span>
                             </button>
+                            <button class="mode-btn" data-svg-mode="internal-details" id="svg-internal-details-mode-btn" title="Click & drag or click two points to draw a straight line (e.g. marked rim, ridges). Hold Shift to constrain to 90° (horizontal / vertical).">
+                                <span class="mode-icon"><i class="bi bi-slash-lg"></i></span>
+                                <span>Internal Details</span>
+                                <span class="mode-desc">Straight lines (Shift: 90°)</span>
+                            </button>
                         </div>
                     </div>
 
@@ -664,6 +669,10 @@
                         <div class="form-group">
                             <label>Point Size: <span id="svg-point-size-value">8</span>px</label>
                             <input type="range" id="svg-point-size-slider" min="4" max="16" step="1" value="8" class="slider">
+                        </div>
+                        <div class="form-group">
+                            <label>Continuation Length: <span id="svg-continuation-length-value">100</span>px</label>
+                            <input type="range" id="svg-continuation-length-slider" min="20" max="400" step="5" value="100" class="slider" title="Fixed length in pixels for projected continuation lines">
                         </div>
                         <div class="form-group">
                             <label>
@@ -717,6 +726,7 @@
 
                             <p style="margin-top: 8px;"><strong>Select Mode:</strong></p>
                             <p>• Click & Drag on point: Move point(s)<br>
+                                • Shift + Drag: Constrain movement to 90° (H / V)<br>
                                 • Click & Drag on empty: Box selection (Marquee)<br>
                                 • Right-Click: Context menu (Delete, Select All, etc.)<br>
                                 • Shift + Click: Multi-select points<br>
@@ -735,7 +745,13 @@
                             <p style="margin-top: 8px;"><strong>Continuation Line Mode:</strong></p>
                             <p>• Phase 1 — outer face (enlarged points): click the break point, then a second point further back on the same fragment (its curvature is sampled between them). This one mirrors automatically.<br>
                                 • Phase 2 — inner/fracture face: same two clicks, but this line is never mirrored.<br>
+                                • Length can be adjusted in Settings (default: 100px)<br>
                                 • Esc / right-click: Cancel the pending break point</p>
+
+                            <p style="margin-top: 8px;"><strong>Internal Details Mode:</strong></p>
+                            <p>• Click & drag or click two points: Insert straight detail line (e.g. marked rim)<br>
+                                • Shift: Constrain line to 90° (horizontal / vertical)<br>
+                                • Esc / right-click: Cancel pending line</p>
                         </div>
                     </div>
                 </aside>
@@ -970,6 +986,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-profile" min="0.2" max="10" step="0.1" value="1.0">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="stroke-item">
@@ -977,6 +1001,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-application" min="0.2" max="10" step="0.1" value="1.0">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="stroke-item">
@@ -984,6 +1016,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-handle" min="0.2" max="10" step="0.1" value="1.0">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="stroke-item">
@@ -991,6 +1031,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-decoration" min="0.2" max="10" step="0.1" value="0.8">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="stroke-item">
@@ -998,6 +1046,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-runningelement" min="0.2" max="10" step="0.1" value="1.0">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="stroke-item">
@@ -1005,6 +1061,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-detail" min="0.2" max="10" step="0.1" value="0.8">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="stroke-item">
@@ -1012,6 +1076,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-reconstruction" min="0.2" max="10" step="0.1" value="1.0">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1023,6 +1095,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-symmetry" min="0.1" max="5" step="0.1" value="0.5">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="stroke-item">
@@ -1030,6 +1110,14 @@
                                         <div class="input-with-unit">
                                             <input type="number" id="postprocess-stroke-diameter" min="0.1" max="5" step="0.1" value="0.5">
                                             <span>px</span>
+                                            <div class="stepper-btns">
+                                                <button type="button" class="stepper-btn stepper-up" tabindex="-1" title="Increase by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 5L5 1L9 5"/></svg>
+                                                </button>
+                                                <button type="button" class="stepper-btn stepper-down" tabindex="-1" title="Decrease by 0.1 px">
+                                                    <svg viewBox="0 0 10 6" width="7" height="4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 1L5 5L9 1"/></svg>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
