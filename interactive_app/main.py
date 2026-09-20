@@ -48,7 +48,15 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 CORS(app)
 
 # Global state for SAM2 handler
-sam2_handler = SAM2Handler(model_size='small')  # Initialize immediately
+# The default model is loaded at startup only if its checkpoint is already on disk. A missing
+# checkpoint is downloaded from the page (with confirmation and a progress bar) instead of
+# blocking startup, when the server would not answer yet.
+sam2_handler = None
+try:
+    if SAM2Handler.get_model_info('small')['exists']:
+        sam2_handler = SAM2Handler(model_size='small')
+except Exception as e:
+    print(f"SAM2 default model not loaded at startup: {e}")
 vectorization_handler = VectorizationHandler()
 ml_export_handler = MLExportHandler()
 
@@ -257,6 +265,27 @@ def get_system_info():
     return jsonify(info)
 
 
+class ModelNotLoadedError(RuntimeError):
+    """Raised when a segmentation request arrives before a SAM2 model is available."""
+
+
+def require_sam2():
+    if sam2_handler is None:
+        raise ModelNotLoadedError('No SAM 2 model is loaded. Select a model in the Setup tab (it is downloaded on first use).')
+    return sam2_handler
+
+
+@app.errorhandler(ModelNotLoadedError)
+def handle_model_not_loaded(e):
+    return jsonify({'error': str(e), 'model_not_loaded': True}), 503
+
+
+@app.route('/api/current_model')
+def current_model():
+    """Size of the SAM2 model loaded in the backend (None if none is loaded yet)."""
+    return jsonify({'success': True, 'model_size': sam2_handler.model_size if sam2_handler else None})
+
+
 @app.route('/api/load_model', methods=['POST'])
 def load_model():
     """Load or change SAM2 model."""
@@ -270,8 +299,9 @@ def load_model():
         return jsonify({'error': 'Invalid model size'}), 400
     
     try:
-        # Reinitialize SAM2 handler with new model
-        sam2_handler = SAM2Handler(model_size=model_size)
+        # Reinitialize SAM2 handler with new model (nothing to do if it is already the loaded one)
+        if sam2_handler is None or sam2_handler.model_size != model_size:
+            sam2_handler = SAM2Handler(model_size=model_size)
         
         # ML training data is always enabled for persistence
         app.config['SAVE_TRAINING_DATA'] = True
@@ -1446,7 +1476,7 @@ def upload_image():
     
     # Initialize SAM2 for this image
     try:
-        image_embedding = sam2_handler.set_image(str(file_path))
+        image_embedding = require_sam2().set_image(str(file_path))
         
         # Store session data
         sessions_data[session_id] = {
@@ -1465,6 +1495,8 @@ def upload_image():
             'image_url': f'/api/image/{session_id}'
         })
         
+    except ModelNotLoadedError:
+        raise
     except Exception as e:
         return jsonify({'error': f'Failed to process image: {str(e)}'}), 500
 
@@ -1496,7 +1528,7 @@ def segment():
             points = data.get('points', [])
             labels = data.get('labels', [])
             
-            mask = sam2_handler.segment_with_points(
+            mask = require_sam2().segment_with_points(
                 points=points,
                 labels=labels
             )
@@ -1505,7 +1537,7 @@ def segment():
             # Box prompt: {x1, y1, x2, y2}
             box = data.get('box')
             
-            mask = sam2_handler.segment_with_box(
+            mask = require_sam2().segment_with_box(
                 box=box
             )
         else:
@@ -1521,6 +1553,8 @@ def segment():
             'mask_id': len(sessions_data[session_id]['segments'])
         })
         
+    except ModelNotLoadedError:
+        raise
     except Exception as e:
         return jsonify({'error': f'Segmentation failed: {str(e)}'}), 500
 
@@ -2540,8 +2574,9 @@ def postprocess_export():
                 base_name = Path(clean_filename).stem
                 svg_content = file_data['content']
                 
-                # Extract category from SVG layers
-                category = extract_svg_category(svg_content)
+                # Same category the client used for the PNG/JPG of this drawing, so that the
+                # three formats end up in the same subfolder; fall back to the SVG layers.
+                category = file_data.get('category') or extract_svg_category(svg_content)
                 print(f"  📄 {filename} → Clean: {clean_filename} → Category: {category}")
                 
                 # Skip if category is filtered
@@ -2653,14 +2688,21 @@ def postprocess_export():
                 'download_url': f'/api/download/{session_id}/postprocess_export.zip'
             })
         else:
-            # Return individual files (not implemented for simplicity)
-            # In a real scenario, you'd need to handle individual file downloads
+            # No ZIP requested: keep the files in the project's exports folder
+            project_id = data.get('project_id')
+            exports_root = project_manager.get_project_path(project_id, 'exports') if project_id else None
+            if exports_root is None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return jsonify({'error': 'Without a ZIP archive the files are saved in the project exports folder: open a project first.'}), 400
+            target_dir = exports_root / f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copytree(output_dir, target_dir)
             shutil.rmtree(temp_dir)
             return jsonify({
                 'success': True,
                 'total_files': total_files,
                 'formats': [k for k, v in formats.items() if v],
-                'message': 'Files processed successfully'
+                'output_dir': str(target_dir),
+                'message': 'Files saved in the project exports folder'
             })
         
     except Exception as e:
@@ -3127,7 +3169,7 @@ def get_project_annotations(project_id, image_name):
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/projects/<project_id>/export', methods=['POST'])
+@app.route('/api/projects/<project_id>/export', methods=['GET', 'POST'])
 def export_project(project_id):
     """Export project as ZIP archive."""
     try:

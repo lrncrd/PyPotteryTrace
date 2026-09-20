@@ -258,6 +258,9 @@
                         <button class="btn btn-secondary" id="refresh-projects-btn">
                             <i class="bi bi-arrow-clockwise"></i> Refresh
                         </button>
+                        <button class="btn btn-secondary" id="import-project-btn" title="Import a project from a ZIP file exported by PyPotteryTrace">
+                            <i class="bi bi-box-arrow-in-down"></i> Import
+                        </button>
                         <button class="btn btn-primary" id="new-project-btn">
                             <i class="bi bi-plus-lg"></i> New Project
                         </button>
@@ -1916,8 +1919,9 @@
                         gpuEl.innerHTML = `<i class="bi bi-gpu-card me-1"></i> ${name} (CUDA)`;
                         gpuEl.className = 'chip-active';
                     } else if (mps) {
-                        gpuEl.innerHTML = `<i class="bi bi-gpu-card me-1"></i> Apple Silicon (MPS)`;
-                        gpuEl.className = 'chip-active';
+                        // SAM 2 is loaded on 'cuda' or 'cpu' only (see sam2_handler.py): MPS is detected but not used
+                        gpuEl.innerHTML = `<i class="bi bi-gpu-card me-1"></i> Apple Silicon (running on CPU)`;
+                        gpuEl.className = 'chip-cpu-only';
                     } else {
                         gpuEl.innerHTML = `<i class="bi bi-gpu-card me-1"></i> CPU Only`;
                         gpuEl.className = 'chip-cpu-only';
@@ -1987,6 +1991,21 @@
             if (checkedRadio) {
                 currentSelectedModel = checkedRadio.value;
             }
+
+            // Sync with the backend: show the model it has loaded, or (first launch, no checkpoint
+            // on disk yet) offer to download the default one, once the splash screen is gone.
+            fetch('/api/current_model')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.model_size) {
+                        const radio = document.querySelector(`input[name="model"][value="${data.model_size}"]`);
+                        if (radio) radio.checked = true;
+                        currentSelectedModel = data.model_size;
+                    } else {
+                        setTimeout(() => checkAndDownloadModel(currentSelectedModel), 1500);
+                    }
+                })
+                .catch(err => console.warn('Could not read the loaded model:', err));
         });
     </script>
 

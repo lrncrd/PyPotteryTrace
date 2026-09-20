@@ -42,6 +42,12 @@ const ProjectManager = {
             newBtn.addEventListener('click', () => this.showCreateModal());
         }
 
+        // Import project button
+        const importBtn = document.getElementById('import-project-btn');
+        if (importBtn) {
+            importBtn.addEventListener('click', () => this.showImportProjectDialog());
+        }
+
         // Create project button (in modal)
         const createBtn = document.getElementById('create-project-btn');
         if (createBtn) {
@@ -867,6 +873,9 @@ const ProjectManager = {
                 </div>
                 
                 <div class="project-card-actions" onclick="event.stopPropagation()">
+                    <button class="btn btn-sm btn-secondary" title="Download the whole project as a ZIP file" onclick="ProjectManager.exportProject('${project.project_id}')">
+                        <i class="bi bi-box-arrow-up"></i> Export
+                    </button>
                     <button class="btn btn-sm btn-danger" onclick="ProjectManager.deleteProject('${project.project_id}')">
                         <i class="bi bi-trash"></i> Delete
                     </button>
@@ -880,30 +889,27 @@ const ProjectManager = {
      */
     showImportProjectDialog() {
         const modal = document.createElement('div');
-        modal.className = 'modal';
+        modal.className = 'project-modal';
+        modal.id = 'import-project-modal';
         modal.innerHTML = `
-            <div class="modal-content">
+            <div class="modal-overlay" onclick="document.getElementById('import-project-modal').remove()"></div>
+            <div class="modal-dialog">
                 <div class="modal-header">
-                    <h2>Import Project</h2>
-                    <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+                    <h3><i class="bi bi-box-arrow-in-down"></i> Import Project</h3>
+                    <button class="modal-close" aria-label="Close modal" onclick="document.getElementById('import-project-modal').remove()"><i class="bi bi-x-lg"></i></button>
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
-                        <label for="import-file">Select Project ZIP File</label>
-                        <input type="file" id="import-file" class="form-control" 
-                               accept=".zip" required>
+                        <label for="import-file">Project ZIP file</label>
+                        <input type="file" id="import-file" class="form-control" accept=".zip" required>
                     </div>
-                    <p class="text-muted" style="font-size: 0.875rem;">
-                        Select a ZIP file containing a previously exported project.
+                    <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0;">
+                        Choose a ZIP file created with the <strong>Export</strong> button of a project card. The project is added as a new one.
                     </p>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="this.closest('.modal').remove()">
-                        Cancel
-                    </button>
-                    <button class="btn btn-primary" onclick="ProjectManager.importProject()">
-                        Import
-                    </button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('import-project-modal').remove()">Cancel</button>
+                    <button class="btn btn-primary" onclick="ProjectManager.importProject()"><i class="bi bi-check-lg"></i> Import</button>
                 </div>
             </div>
         `;
@@ -919,7 +925,7 @@ const ProjectManager = {
         const file = fileInput.files[0];
 
         if (!file) {
-            alert('Please select a file to import');
+            this.showNotification('Please select a file to import', 'error');
             return;
         }
 
@@ -938,19 +944,34 @@ const ProjectManager = {
 
             if (data.success) {
                 // Close modal
-                document.querySelector('.modal').remove();
+                const importModal = document.getElementById('import-project-modal');
+                if (importModal) importModal.remove();
+                await this.loadProjectsList();
 
                 // Load the imported project
                 await this.loadProject(data.project_id);
 
                 this.showNotification('Project imported successfully!', 'success');
             } else {
-                alert(`Error: ${data.error}`);
+                this.showNotification(`Error: ${data.error}`, 'error');
             }
         } catch (error) {
             console.error('Error importing project:', error);
-            alert('Failed to import project');
+            this.showNotification('Failed to import project', 'error');
         }
+    },
+
+    /**
+     * Download a project as a ZIP file (importable with the Import button)
+     */
+    exportProject(projectId) {
+        const link = document.createElement('a');
+        link.href = `/api/projects/${encodeURIComponent(projectId)}/export`;
+        link.setAttribute('download', '');
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        this.showNotification('Preparing the project ZIP...', 'info');
     },
 
     /**

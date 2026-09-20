@@ -1621,6 +1621,7 @@ class PostProcessingManager {
                 svg_files: svgFilesArray,
                 png_files: pngFilesArray,
                 jpg_files: jpgFilesArray,
+                project_id: this.currentProjectId,
                 settings: settings
             };
 
@@ -1712,6 +1713,7 @@ class PostProcessingManager {
         const formatsList = (result.formats || []).map(f => f.toUpperCase()).join(', ');
         const fileCount = result.total_files || 0;
         const organizeByCategory = document.getElementById('postprocess-organize-by-category')?.checked;
+        const savedToFolder = !result.download_url && result.output_dir;
 
         if (window.showConfirmDialog) {
             window.showConfirmDialog({
@@ -1722,13 +1724,15 @@ class PostProcessingManager {
                 iconBg: 'var(--teal-soft, #ccfbf1)',
                 detailsLabel: 'Export Summary:',
                 details: [
-                    'Download has started automatically',
+                    savedToFolder ? 'Files saved in the project exports folder' : 'Download has started automatically',
                     `Converted format(s): ${formatsList}`,
                     organizeByCategory ? 'Organized by category in subfolders' : 'Saved in a unified package'
                 ],
                 detailIcon: 'bi-check2-circle',
                 detailIconColor: 'var(--teal, #0d9488)',
-                note: 'Your ZIP archive has been sent to your browser download folder.',
+                note: savedToFolder
+                    ? `Saved in: ${result.output_dir}`
+                    : 'Your ZIP archive has been sent to your browser download folder.',
                 noteType: 'success',
                 confirmText: 'OK',
                 cancelText: '',
@@ -1737,7 +1741,7 @@ class PostProcessingManager {
         }
 
         if (window.app && window.app.showNotification) {
-            window.app.showNotification(`Export complete! Downloaded ${fileCount} file(s) (${formatsList})`, 'success');
+            window.app.showNotification(`Export complete! ${savedToFolder ? 'Saved' : 'Downloaded'} ${fileCount} file(s) (${formatsList})`, 'success');
         }
     }
 
