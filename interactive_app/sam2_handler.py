@@ -54,10 +54,10 @@ class SAM2Handler:
     
     # Approximate model sizes in MB
     MODEL_SIZES = {
-        'tiny': 40,
-        'small': 180,
-        'base': 230,
-        'large': 900
+        'tiny': 156,
+        'small': 184,
+        'base': 323,
+        'large': 898
     }
     
     @staticmethod

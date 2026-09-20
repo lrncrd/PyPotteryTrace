@@ -366,28 +366,28 @@
                                 <input type="radio" id="model-tiny" name="model" value="tiny">
                                 <label for="model-tiny">
                                     <strong><i class="bi bi-lightning-charge"></i> Tiny</strong>
-                                    <span class="model-desc">~40MB • Very Fast • Good accuracy</span>
+                                    <span class="model-desc">~156MB • Very Fast • Good accuracy</span>
                                 </label>
                             </div>
                             <div class="model-option">
                                 <input type="radio" id="model-small" name="model" value="small" checked>
                                 <label for="model-small">
                                     <strong><i class="bi bi-star-fill" style="color: var(--primary);"></i> Small (Recommended)</strong>
-                                    <span class="model-desc">~180MB • Fast • High accuracy</span>
+                                    <span class="model-desc">~184MB • Fast • High accuracy</span>
                                 </label>
                             </div>
                             <div class="model-option">
                                 <input type="radio" id="model-base" name="model" value="base">
                                 <label for="model-base">
                                     <strong><i class="bi bi-bullseye"></i> Base+</strong>
-                                    <span class="model-desc">~230MB • Medium • Excellent accuracy</span>
+                                    <span class="model-desc">~323MB • Medium • Excellent accuracy</span>
                                 </label>
                             </div>
                             <div class="model-option">
                                 <input type="radio" id="model-large" name="model" value="large">
                                 <label for="model-large">
                                     <strong><i class="bi bi-rocket-takeoff"></i> Large</strong>
-                                    <span class="model-desc">~900MB • Slower • Highest precision</span>
+                                    <span class="model-desc">~898MB • Slower • Highest precision</span>
                                 </label>
                             </div>
                         </div>
@@ -1358,10 +1358,10 @@
                         <h4>Choose SAM2 Model</h4>
                         <p>Select model size based on your hardware and requirements:</p>
                         <ul>
-                            <li><strong>Tiny:</strong> Fastest, good for quick tests (~40MB)</li>
-                            <li><strong>Small:</strong> Recommended for most workflows (~180MB)</li>
-                            <li><strong>Base+:</strong> Higher precision, moderate speed (~230MB)</li>
-                            <li><strong>Large:</strong> Highest precision, best for complex profiles (~900MB)</li>
+                            <li><strong>Tiny:</strong> Fastest, good for quick tests (~156MB)</li>
+                            <li><strong>Small:</strong> Recommended for most workflows (~184MB)</li>
+                            <li><strong>Base+:</strong> Higher precision, moderate speed (~323MB)</li>
+                            <li><strong>Large:</strong> Highest precision, best for complex profiles (~898MB)</li>
                         </ul>
                     </div>
                 </div>
@@ -1804,7 +1804,7 @@
                 }
 
                 // Model does not exist locally: ask user confirmation via custom modal
-                const sizeMb = checkData.size_mb || (modelSize === 'tiny' ? 40 : modelSize === 'small' ? 180 : modelSize === 'base' ? 230 : 900);
+                const sizeMb = checkData.size_mb || (modelSize === 'tiny' ? 156 : modelSize === 'small' ? 184 : modelSize === 'base' ? 323 : 898);
                 const confirmed = await askDownloadConfirmation(modelSize, sizeMb);
 
                 if (!confirmed) {
