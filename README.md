@@ -4,7 +4,7 @@
 
 <img src="interactive_app/static/LogoTrace.png" width="250"/>
 
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/lrncrd/PyPotteryTrace)
 [![Status](https://img.shields.io/badge/Stage-Alpha-orange)](https://github.com/lrncrd/PyPotteryTrace)
@@ -64,19 +64,19 @@ python app.py
 # Then open http://127.0.0.1:5004 in your browser
 ```
 
-SAM2 model weights (tiny ~108MB, small ~180MB default, base_plus ~319MB) are downloaded from the interface on first use. For CUDA-specific PyTorch builds and other platform notes, see the [Installation guide](https://lrncrd.github.io/PyPottery/pypotterytrace/installation.html). Installer scripts are also provided: `PyPotteryTrace_WIN.bat` and `PyPotteryTrace_UNIX.sh`.
+SAM2 model weights (tiny ~156MB, small ~184MB default, base_plus ~323MB, large ~898MB) are downloaded from the interface on first use. For CUDA-specific PyTorch builds and other platform notes, see the [Getting Started guide](https://lrncrd.github.io/PyPottery/pypotterytrace/index.html). Installer scripts are also provided: `PyPotteryTrace_WIN.bat` and `PyPotteryTrace_UNIX.sh`.
 
 ## 📋 System Requirements
 
-- **Python**: 3.9+ (3.10 or 3.11 recommended)
+- **Python**: 3.12 (tested)
 - **Operating System**: Windows/macOS/Linux
-- **GPU** (recommended): CUDA-capable GPU for SAM2; CPU works but is slower
+- **GPU** (recommended): NVIDIA GPU with CUDA for SAM2; the CPU works but is slower (Apple Silicon runs on the CPU)
 - **Git**: only if you install SAM2 from source
 
 ## 🎯 Usage
 
 1. **Upload** a pottery drawing (JPG, PNG, TIFF, BMP)
-2. **Segment** elements: click inside to add an area, right-click to remove one, then confirm
+2. **Segment** elements: click inside to add an area (Positive) or exclude one (Negative), then confirm with **Add Segment**
 3. **Assign a category** to each element (Profile, Running_Element, Decoration, ...)
 4. **Set the rotation center** on the vertical axis of the vessel (needed for Profile and Running_Element mirroring)
 5. **Vectorize** all elements, tuning simplification and smoothing if needed
