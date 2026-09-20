@@ -76,13 +76,13 @@ class VectorizationHandler:
             'description': 'Mirrored profile (around rotation center)'
         },
         'Symmetry_Line': {
-            'color': '#999999',
+            'color': '#000000',
             'stroke_width': 0.5,
             'fill': 'none',
             'description': 'Symmetry line (vertical axis of rotation)'
         },
         'Diameter': {
-            'color': '#666666',
+            'color': '#000000',
             'stroke_width': 0.8,
             'fill': 'none',
             'description': 'Diameter line (horizontal)'
@@ -1143,7 +1143,7 @@ class VectorizationHandler:
         dwg = svgwrite.Drawing(output_path, size=(f'{width}px', f'{height}px'), profile='full')
         
         # Create group for symmetry line (vertical)
-        symmetry_group = dwg.g(id='symmetry_line', stroke='#999999', stroke_width=0.5, fill='none')
+        symmetry_group = dwg.g(id='symmetry_line', stroke='#000000', stroke_width=0.5, fill='none')
         
         # Draw vertical line as PATH (not <line>) so it can be extracted by _extract_paths_from_svg
         path_data = f"M {center_x},{y_top} L {center_x},{y_bottom}"
@@ -1180,7 +1180,7 @@ class VectorizationHandler:
         dwg = svgwrite.Drawing(output_path, size=(f'{width}px', f'{height}px'), profile='full')
         
         # Create group for diameter line (horizontal)
-        diameter_group = dwg.g(id='diameter_line', stroke='#666666', stroke_width=0.8, fill='none')
+        diameter_group = dwg.g(id='diameter_line', stroke='#000000', stroke_width=0.8, fill='none')
         
         # Draw horizontal line as PATH (not <line>) so it can be extracted by _extract_paths_from_svg
         path_data = f"M {x_left},{center_y} L {x_right},{center_y}"

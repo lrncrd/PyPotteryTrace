@@ -741,7 +741,7 @@ def generate_svg_preview():
                             'name': 'Symmetry Line',
                             'category': 'Symmetry_Line',
                             'paths': vectorization_handler._extract_paths_from_svg(str(symmetry_svg_path)),
-                            'style': {'color': '#999999', 'stroke_width': 0.5, 'fill': 'none'},
+                            'style': {'color': '#000000', 'stroke_width': 0.5, 'fill': 'none'},
                             'svg_file': str(symmetry_svg_path)
                         })
                         
@@ -941,7 +941,7 @@ def generate_svg_preview():
                                     'name': 'Symmetry Line',
                                     'category': 'Symmetry_Line',
                                     'paths': vectorization_handler._extract_paths_from_svg(str(symmetry_svg_path)),
-                                    'style': {'color': '#999999', 'stroke_width': 0.5, 'fill': 'none'},
+                                    'style': {'color': '#000000', 'stroke_width': 0.5, 'fill': 'none'},
                                     'svg_file': str(symmetry_svg_path)
                                 })
                                 
@@ -1198,7 +1198,7 @@ def generate_svg_preview():
                 'name': 'Diameter Line',
                 'category': 'Diameter',
                 'paths': vectorization_handler._extract_paths_from_svg(str(diameter_svg_path)),
-                'style': {'color': '#666666', 'stroke_width': 0.8, 'fill': 'none'},
+                'style': {'color': '#000000', 'stroke_width': 0.8, 'fill': 'none'},
                 'svg_file': str(diameter_svg_path)
             })
             

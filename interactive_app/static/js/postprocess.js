@@ -620,25 +620,14 @@ class PostProcessingManager {
                     // Apply to group
                     g.setAttribute('stroke-width', strokeWidth);
 
-                    // Apply black color to main elements (not construction lines)
-                    if (category !== 'Symmetry_Line' && category !== 'Diameter') {
-                        g.setAttribute('stroke', '#000000');
-                    } else {
-                        // Keep gray for construction lines
-                        if (category === 'Symmetry_Line') {
-                            g.setAttribute('stroke', '#999999');
-                        } else if (category === 'Diameter') {
-                            g.setAttribute('stroke', '#666666');
-                        }
-                    }
+                    // Every category is black, symmetry and diameter lines included
+                    g.setAttribute('stroke', '#000000');
 
                     // Also apply to all path elements inside
                     const paths = g.querySelectorAll('path, polyline, line, circle, rect');
                     paths.forEach(path => {
                         path.setAttribute('stroke-width', strokeWidth);
-                        if (category !== 'Symmetry_Line' && category !== 'Diameter') {
-                            path.setAttribute('stroke', '#000000');
-                        }
+                        path.setAttribute('stroke', '#000000');
                     });
 
                     console.log(`  ✓ Applied width ${strokeWidth} to layer: ${layerId} (${category})`);

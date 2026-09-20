@@ -2148,9 +2148,12 @@ body {
     margin-bottom: 12px;
 }
 
-.project-card-actions {
+.project-card-actions,
+.project-actions {
     display: flex;
     justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 /* Empty State */
@@ -4091,6 +4094,15 @@ textarea {
     border: 1px solid var(--border);
     overflow: hidden;
     margin-top: 8px;
+}
+
+/* Status line under a progress bar (Generate SVG, Post-Processing export) */
+.progress-status-text {
+    margin-top: 4px;
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    text-align: center;
 }
 
 .progress-fill {
