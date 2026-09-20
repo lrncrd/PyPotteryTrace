@@ -1055,7 +1055,13 @@ class PyPotteryTraceApp {
 
     handleKeyboardShortcut(e) {
         // Check if user is typing in an input
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+            return;
+        }
+
+        // These shortcuts belong to the Segmentation tab (the SVG Editor has its own)
+        const segmentationTab = document.getElementById('segmentation-tab');
+        if (segmentationTab && !segmentationTab.classList.contains('active')) {
             return;
         }
 
@@ -1083,7 +1089,7 @@ class PyPotteryTraceApp {
             case 'z':
                 if (e.ctrlKey || e.metaKey) {
                     e.preventDefault();
-                    // Implement undo
+                    if (window.segmentationManager) window.segmentationManager.undoLast();
                 }
                 break;
         }

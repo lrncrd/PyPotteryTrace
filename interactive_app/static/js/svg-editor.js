@@ -268,6 +268,17 @@ class SVGEditor {
                 }
             }
 
+            // Tool shortcuts: V view, S select, A add point, D delete mode
+            if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+                const modeByKey = { v: 'view', s: 'select', a: 'add', d: 'delete' };
+                const mode = modeByKey[e.key.toLowerCase()];
+                if (mode) {
+                    e.preventDefault();
+                    this.setMode(mode);
+                    return;
+                }
+            }
+
             // Arrow keys: nudge selected points
             if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
                 if (this.selectedPoints.length > 0 && this.currentMode === 'select') {

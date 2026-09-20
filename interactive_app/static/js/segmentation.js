@@ -30,6 +30,7 @@ class SegmentationManager {
         this.setupPolygonControls();
         this.setupEditMaskButton();
         this.setupPolygonEditControls();
+        this.setupUndoButton();
     }
     
     setupEditMaskButton() {
@@ -41,6 +42,41 @@ class SegmentationManager {
         }
     }
     
+    setupUndoButton() {
+        const undoBtn = document.getElementById('undo-btn');
+        if (undoBtn) {
+            undoBtn.addEventListener('click', () => this.undoLast());
+        }
+    }
+
+    // Undo the last thing placed for the mask being built: the last polygon vertex
+    // (Manual Polygon mode) or the last positive/negative point (Point mode).
+    undoLast() {
+        if (this.isEditingPolygon) return;
+
+        if (window.app && window.app.currentMode === 'polygon' && !this.isPolygonClosed && this.polygonVertices.length > 0) {
+            this.removeLastPolygonPoint();
+            return;
+        }
+
+        if (this.points.length === 0) return;
+        this.points.pop();
+        this.labels.pop();
+
+        if (this.points.length === 0) {
+            if (window.app) window.app.clearPreview();
+        } else {
+            if (window.canvasManager) window.canvasManager.redraw();
+            this.segmentWithPoints();
+        }
+        this.updateUndoButton();
+    }
+
+    updateUndoButton() {
+        const undoBtn = document.getElementById('undo-btn');
+        if (undoBtn) undoBtn.disabled = this.points.length === 0;
+    }
+
     setupPolygonEditControls() {
         // Simplification slider - live real-time interaction
         const simplifySlider = document.getElementById('simplify-slider');
@@ -1108,6 +1144,7 @@ class SegmentationManager {
         
         this.points.push([x, y]);
         this.labels.push(label);
+        this.updateUndoButton();
         
         console.log('Total points:', this.points.length);
         
@@ -1274,6 +1311,8 @@ class SegmentationManager {
         if (drawControls) drawControls.style.display = 'block';
         if (editControls) editControls.style.display = 'none';
         
+        this.updateUndoButton();
+
         // Redraw canvas
         if (window.canvasManager) {
             window.canvasManager.redraw();
