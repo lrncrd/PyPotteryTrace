@@ -128,7 +128,7 @@ def main():
         print("Missing dependencies!")
         print("=" * 60)
         print("\nTo install all dependencies, run:")
-        print("  pip install -r requirements_interactive.txt")
+        print("  pip install -r requirements.txt")
         print("  pip install git+https://github.com/facebookresearch/segment-anything-2.git")
         sys.exit(1)
     
@@ -159,7 +159,7 @@ def main():
     # Import and run the Flask app
     try:
         from main import app
-        app.run(debug=False, host='0.0.0.0', port=port, use_reloader=False)
+        app.run(debug=False, host='127.0.0.1', port=port, use_reloader=False)
     except KeyboardInterrupt:
         print("\n\nServer stopped by user")
     except Exception as e:
