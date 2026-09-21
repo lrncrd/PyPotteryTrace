@@ -5,7 +5,7 @@
 <img src="interactive_app/static/LogoTrace.png" width="250"/>
 
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](LICENSE)
+[![Open Source](https://img.shields.io/badge/Open%20Source-community--driven-green.svg)](https://lrncrd.github.io/PyPottery/community.html)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/lrncrd/PyPotteryTrace)
 [![Status](https://img.shields.io/badge/Stage-Alpha-orange)](https://github.com/lrncrd/PyPotteryTrace)
 [![AI](https://img.shields.io/badge/AI-SAM2-purple)](https://github.com/facebookresearch/segment-anything-2)
