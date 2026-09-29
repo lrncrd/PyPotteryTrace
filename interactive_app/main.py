@@ -34,6 +34,7 @@ import time
 # Import SAM2 and processing modules
 from sam2_handler import SAM2Handler, MODELS_DIR
 from vectorization_handler import VectorizationHandler
+from archaeological_vectorizer import generate_revolution_shading, add_shading_to_svg
 from ml_export_handler import MLExportHandler
 from project_manager import ProjectManager
 
@@ -578,6 +579,7 @@ def generate_svg_preview():
                 
                 # Determine output format based on segment preference
                 should_vectorize = segment.get('should_vectorize', True)
+                mask_png_path = None
                 
                 if should_vectorize:
                     # For vectorization: create image with WHITE background (for better contour detection)
@@ -592,6 +594,11 @@ def generate_svg_preview():
                     
                     cv2.imwrite(str(png_path), full_img)
                     print(f"  ✓ Saved for vectorization: {png_filename} ({full_img.shape[1]}x{full_img.shape[0]}px)")
+                    
+                    # Prospect outline extraction also needs the mask (closes gaps in the drawn border)
+                    if segment['category'] == 'Prospectus':
+                        mask_png_path = masks_dir / f"{i+1:02d}_{segment['category']}_{safe_name}_mask.png"
+                        cv2.imwrite(str(mask_png_path), mask_improved)
                 else:
                     # For PNG export: create image with TRANSPARENT background
                     full_img_rgba = cv2.cvtColor(img.copy(), cv2.COLOR_BGR2BGRA)
@@ -608,7 +615,8 @@ def generate_svg_preview():
                 mask_files.append({
                     'path': str(png_path),
                     'segment': segment,
-                    'index': i
+                    'index': i,
+                    'mask_path': str(mask_png_path) if mask_png_path else None
                 })
                 
             except Exception as e:
@@ -848,7 +856,8 @@ def generate_svg_preview():
                         epsilon=epsilon,
                         smoothing_factor=smoothing,
                         lines_threshold=lines_threshold,
-                        debug_svg_dir=str(svg_debug_dir)  # Save intermediate SVG for debugging
+                        debug_svg_dir=str(svg_debug_dir),  # Save intermediate SVG for debugging
+                        mask_path=mask_info.get('mask_path')
                     )
                     
                     # Add reference to the SVG file path for unified export
@@ -1070,6 +1079,25 @@ def generate_svg_preview():
                 import traceback
                 traceback.print_exc()
                 continue
+        
+        # PROSPECT SHADING: stippling from the lighting of the profile revolved around the axis
+        if profile_outer_contour is not None and session.get('rotation_center'):
+            for element in vectorized_elements:
+                prospect_data = element.get('stats', {}).get('prospect_data')
+                if element.get('category') != 'Prospectus' or not prospect_data or not element.get('svg_file'):
+                    continue
+                try:
+                    dots = generate_revolution_shading(
+                        outline=prospect_data['outline'],
+                        outer_contour=profile_outer_contour,
+                        center_x=session['rotation_center']['x'],
+                        shape=(height, width)
+                    )
+                    add_shading_to_svg(element['svg_file'], dots)
+                    print(f"  ✓ Prospect shading for {element['name']}: {len(dots)} dots")
+                except Exception as e:
+                    print(f"  ✗ ERROR generating prospect shading for {element['name']}: {e}")
+                    traceback.print_exc()
         
         # EXTEND & MERGE: Handle Profile + Running_Element connections
         if running_element_info is not None and profile_outer_contour is not None:

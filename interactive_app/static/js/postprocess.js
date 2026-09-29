@@ -626,6 +626,8 @@ class PostProcessingManager {
                     // Also apply to all path elements inside
                     const paths = g.querySelectorAll('path, polyline, line, circle, rect');
                     paths.forEach(path => {
+                        // Prospect stippling dots are filled shapes, not strokes
+                        if (path.closest('g.shading')) return;
                         path.setAttribute('stroke-width', strokeWidth);
                         path.setAttribute('stroke', '#000000');
                     });

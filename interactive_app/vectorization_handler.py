@@ -29,7 +29,8 @@ from archaeological_vectorizer import (
     smooth_path_to_bezier,
     create_simple_path,
     calculate_path_length,
-    vectorize_archaeological_drawing
+    vectorize_archaeological_drawing,
+    vectorize_prospect_drawing
 )
 
 
@@ -247,7 +248,8 @@ class VectorizationHandler:
         epsilon: float = 1.5,
         smoothing_factor: float = 0.3,
         lines_threshold: int = 100,
-        debug_svg_dir: Optional[str] = None  # NEW: save intermediate SVG for debugging
+        debug_svg_dir: Optional[str] = None,  # NEW: save intermediate SVG for debugging
+        mask_path: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Vectorize from a saved PNG file (already masked, full-size, white background).
@@ -266,6 +268,7 @@ class VectorizationHandler:
             smoothing_factor: Bezier smoothing factor
             lines_threshold: Binarization threshold for lines
             debug_svg_dir: Directory to save intermediate SVG files for debugging
+            mask_path: Segmentation mask PNG (Prospectus only: closes gaps in the drawn border)
             
         Returns:
             Dictionary with vectorized paths and metadata
@@ -290,25 +293,37 @@ class VectorizationHandler:
             is_profile_mode = (category == 'Profile' or category == 'Running_Element')
             if is_profile_mode:
                 print(f"  → Using extract_profile_mode for {category} category")
-            
-            result = vectorize_archaeological_drawing(
-                image_path=png_path,  # Use the saved PNG directly!
-                output_svg_path=str(svg_output_path),
-                epsilon=epsilon,
-                smoothing_factor=smoothing_factor,
-                lines_threshold=lines_threshold,
-                points_threshold=30,
-                min_dotted_area=10,
-                max_dotted_area=200,
-                dotted_circularity=0.2,
-                dark_threshold=100,
-                min_decoration_area=20000,
-                filter_branches=True,
-                show_debug_plots=False,
-                save_debug_images=False,
-                include_background_image=False,
-                extract_profile_mode=is_profile_mode  # Attiva modalità profilo per Profile
-            )
+
+            if category == 'Prospectus':
+                # Front view: outer border only, shading is generated later from the profile
+                print(f"  → Using prospect outline extraction for {category} category")
+                result = vectorize_prospect_drawing(
+                    image_path=png_path,
+                    output_svg_path=str(svg_output_path),
+                    mask_path=mask_path,
+                    lines_threshold=lines_threshold,
+                    epsilon=epsilon,
+                    smoothing_factor=smoothing_factor
+                )
+            else:
+                result = vectorize_archaeological_drawing(
+                    image_path=png_path,  # Use the saved PNG directly!
+                    output_svg_path=str(svg_output_path),
+                    epsilon=epsilon,
+                    smoothing_factor=smoothing_factor,
+                    lines_threshold=lines_threshold,
+                    points_threshold=30,
+                    min_dotted_area=10,
+                    max_dotted_area=200,
+                    dotted_circularity=0.2,
+                    dark_threshold=100,
+                    min_decoration_area=20000,
+                    filter_branches=True,
+                    show_debug_plots=False,
+                    save_debug_images=False,
+                    include_background_image=False,
+                    extract_profile_mode=is_profile_mode  # Attiva modalità profilo per Profile
+                )
             
             print(f"  → Vectorization complete: {result.get('total_paths_extracted', 0)} paths extracted")
             
@@ -329,10 +344,12 @@ class VectorizationHandler:
                     'decorations': result.get('decorations_count', 0)
                 }
             }
-            
+
             # Add profile_data if it exists (from extract_profile_mode)
             if 'profile_data' in result:
                 result_dict['stats']['profile_data'] = result['profile_data']
+            if 'prospect_data' in result:
+                result_dict['stats']['prospect_data'] = result['prospect_data']
             
             return result_dict
             
@@ -456,6 +473,9 @@ class VectorizationHandler:
                 'is_manual': True
             }
             print(f"  → Added profile_data: full={len(full_profile)}, outer={len(outer_contour)} points")
+        elif category == 'Prospectus':
+            # The polygon is the prospect outline, used to generate the shading
+            result_dict['stats']['prospect_data'] = {'outline': full_profile.astype(float)}
         
         return result_dict
     
@@ -1729,7 +1749,13 @@ class VectorizationHandler:
                         # If no paths with namespace, try without
                         if not paths_found:
                             paths_found = svg_root.findall('.//path')
-                        
+
+                        # Prospect stippling keeps its own fill styling instead of the category stroke
+                        filled_groups = [g for g in svg_root.iter()
+                                         if g.tag.split('}')[-1] == 'g' and g.get('class') == 'shading']
+                        filled_children = {id(child) for g in filled_groups for child in g.iter()}
+                        paths_found = [p for p in paths_found if id(p) not in filled_children]
+
                         # Create element group with optional stroke-dasharray
                         group_attrs = {
                             'id': f"element_{sanitize_svg_id(element['name'])}",
@@ -1752,9 +1778,28 @@ class VectorizationHandler:
                                     d=original_path_data,
                                     id=f"{sanitize_svg_id(element['name'])}_path_{i}"
                                 ))
-                        
+
+                        for g in filled_groups:
+                            kind = g.get('class')
+                            sub_attrs = {
+                                'id': f"{sanitize_svg_id(element['name'])}_{kind}",
+                                'class_': kind,
+                                'fill': g.get('fill', '#000000'),
+                                'stroke': 'none'
+                            }
+                            sub_group = dwg.g(**sub_attrs)
+                            for child in g:
+                                tag = child.tag.split('}')[-1]
+                                if tag == 'circle':
+                                    sub_group.add(dwg.circle(
+                                        center=(float(child.get('cx', 0)), float(child.get('cy', 0))),
+                                        r=float(child.get('r', 1))
+                                    ))
+                            element_group.add(sub_group)
+
                         layer_group.add(element_group)
-                        print(f"  ✓ Added vectorized from SVG: {element['name']} ({len(paths_found)} paths)")
+                        print(f"  ✓ Added vectorized from SVG: {element['name']} ({len(paths_found)} paths"
+                              + "".join(f", {len(g)} {g.get('class')}" for g in filled_groups) + ")")
                         
                     except Exception as e:
                         print(f"  ✗ Error importing SVG file: {e}")

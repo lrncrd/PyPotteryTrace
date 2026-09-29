@@ -28,6 +28,7 @@ Unlike generic vectorization tools, it understands archaeological pottery conven
 - **Archaeological Category System**: Profile, Running_Element, Prospectus, Application, Handle, Decoration, Detail, each with its own vectorization rules
 - **Smart Mirroring & Connection**: automatic profile mirroring around a user-defined rotation center, with construction lines (Symmetry_Line, Diameter)
 - **Vectorization Engine**: contour extraction, Douglas-Peucker simplification and optional Bézier smoothing
+- **Prospect Vectorization**: the front view's outline is traced and its stippled shading is generated from the profile revolved around the symmetry axis
 - **Project Management**: save and reload the complete session, with an organized workspace per project
 - **Export**: category-grouped SVG layers, COCO annotations for machine learning, and individual PNG masks
 

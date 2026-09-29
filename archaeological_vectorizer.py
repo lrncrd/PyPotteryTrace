@@ -1176,6 +1176,249 @@ from typing import Optional, Dict, Any, List, Tuple
 
 
 
+# ============================================================================
+# PROSPECT (FRONT VIEW) VECTORIZATION
+# ============================================================================
+
+def estimate_stroke_width(ink: np.ndarray, min_area: int = 500) -> float:
+    """Median stroke width (px) of the large ink components, from the distance transform on their skeleton."""
+    n, lab, st, _ = cv2.connectedComponentsWithStats(ink.astype(np.uint8), connectivity=8)
+    big = np.flatnonzero(st[:, cv2.CC_STAT_AREA] >= min_area)
+    big = big[big > 0]
+    if len(big) == 0:
+        return 3.0
+    big_mask = np.isin(lab, big)
+    dt = cv2.distanceTransform(big_mask.astype(np.uint8), cv2.DIST_L2, 3)
+    skel = skeletonize(big_mask)
+    if not skel.any():
+        return 3.0
+    return float(max(2.0, 2 * np.median(dt[skel])))
+
+
+def extract_prospect_outline(img_gray: np.ndarray,
+                             mask: Optional[np.ndarray] = None,
+                             lines_threshold: int = 100) -> Tuple[Optional[np.ndarray], float]:
+    """
+    Extract the outer border of a prospect as a closed curve along the middle of the drawn stroke.
+
+    Interior lines, decorations and shading are ignored: the drawing is filled from its border
+    inwards and only the silhouette is kept. Where the drawn border is interrupted (or shared
+    with the symmetry axis) the edge of the segmentation mask closes it.
+
+    Returns:
+        (outline as (N, 2) array of (y, x) points or None, stroke width in px)
+    """
+    ink = cv2.bitwise_not(cv2.GaussianBlur(img_gray, (3, 3), 0)) > lines_threshold
+    w = estimate_stroke_width(ink)
+    closed = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_CLOSE, disk(int(np.ceil(w))))
+    ink_closed = closed.astype(bool)
+    if mask is not None:
+        m = mask > 0
+        edge = m & ~cv2.erode(m.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+        closed = (ink_closed | edge).astype(np.uint8)
+    filled = ndimage.binary_fill_holes(closed)
+    if mask is not None:
+        filled &= m
+        # Drop the thin band between the drawn border and the mask edge: regions without ink
+        # that touch the outside of the mask and are no wider than the mask margin
+        empty = (filled & ~closed.astype(bool)).astype(np.uint8)
+        n, lab = cv2.connectedComponents(empty, connectivity=4)
+        if n > 1:
+            dt = cv2.distanceTransform(empty, cv2.DIST_L2, 3)
+            outside = cv2.dilate((~m).astype(np.uint8), np.ones((5, 5), np.uint8)).astype(bool)
+            ids = np.arange(1, n)
+            band_width = np.asarray(ndimage.maximum(dt, lab, ids))
+            touches = np.asarray(ndimage.maximum(outside, lab, ids)) > 0
+            band = ids[touches & (band_width <= 1.5 * w + 6)]
+            filled &= ~np.isin(lab, band) & ~(edge & ~ink_closed)
+            filled = ndimage.binary_fill_holes(filled)
+    n, lab, st, _ = cv2.connectedComponentsWithStats(filled.astype(np.uint8), connectivity=8)
+    if n < 2:
+        return None, w
+    silhouette = lab == 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
+    # Shrink by half a stroke so the outline runs along the middle of the drawn border
+    inner = cv2.erode(silhouette.astype(np.uint8), disk(max(1, int(round(w / 2)))))
+    contours, _ = cv2.findContours(inner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None, w
+    c = max(contours, key=cv2.contourArea)
+    return np.array([[p[0][1], p[0][0]] for p in c], dtype=float), w
+
+
+def vectorize_prospect_drawing(image_path: str,
+                               output_svg_path: str,
+                               mask_path: Optional[str] = None,
+                               lines_threshold: int = 100,
+                               epsilon: float = 1.5,
+                               smoothing_factor: float = 0.3) -> Dict[str, Any]:
+    """
+    Vectorize a prospect (front view of the vessel) as its outer border only.
+
+    Shading is not traced from the drawing: it is generated afterwards from the revolved
+    profile (see generate_revolution_shading), which needs the outline returned here.
+
+    Args:
+        image_path: Path to input image (masked prospect, white background)
+        output_svg_path: Path for output SVG file
+        mask_path: Optional segmentation mask (white = prospect), closes gaps in the border
+        lines_threshold: Binarization threshold (higher = only dark ink)
+        epsilon: RDP simplification epsilon
+        smoothing_factor: Bezier smoothing (0-1)
+
+    Returns:
+        Dictionary with statistics and 'prospect_data' {'outline': (N, 2) (y, x) array}
+    """
+    img_gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img_gray is None:
+        raise ValueError(f"Error: Could not read image from {image_path}")
+    height, width = map(int, img_gray.shape)
+    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) if mask_path else None
+
+    outline, stroke_width = extract_prospect_outline(img_gray, mask, lines_threshold)
+    print(f"Prospect: stroke width ~{stroke_width:.1f}px, outline {0 if outline is None else len(outline)} points")
+
+    dwg = svgwrite.Drawing(output_svg_path, size=(f'{width}px', f'{height}px'), profile='full')
+    lines_group = dwg.g(id='lines', stroke='black', stroke_width=1, fill='none')
+    if outline is not None:
+        simplified = rdp(outline, epsilon=epsilon)
+        if len(simplified) >= 3:
+            d = smooth_path_to_bezier(simplified, smoothing_factor) if smoothing_factor > 0 else create_simple_path(simplified)
+            lines_group.add(dwg.path(d=d + " Z"))
+    dwg.add(lines_group)
+    dwg.save()
+
+    stats = {'total_paths_extracted': 0 if outline is None else 1, 'stroke_width': stroke_width}
+    if outline is not None:
+        stats['prospect_data'] = {'outline': outline}
+    return stats
+
+
+def vessel_radius_by_row(outer_contour: np.ndarray, center_x: float, height: int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Radius r(y) of the vessel for every image row, and its derivative dr/dy, from the outer
+    contour of the profile. Rows above/below the profile keep the end radius (dr/dy = 0).
+    """
+    ys = np.clip(outer_contour[:, 0].astype(int), 0, height - 1)
+    dist = np.abs(center_x - outer_contour[:, 1].astype(float))
+    y0, y1 = int(ys.min()), int(ys.max())
+    r = np.full(y1 - y0 + 1, -1.0)
+    np.maximum.at(r, ys - y0, dist)  # outermost point of each row
+    rows = np.arange(len(r))
+    known = r >= 0
+    r = np.interp(rows, rows[known], r[known])
+    r = ndimage.gaussian_filter1d(r, max(3.0, (y1 - y0) / 80))  # hand-drawn wobble would stripe the shading
+    radius = np.empty(height)
+    radius[:y0] = r[0]
+    radius[y0:y1 + 1] = r
+    radius[y1 + 1:] = r[-1]
+    dr = np.zeros(height)
+    dr[y0:y1 + 1] = np.gradient(r)
+    return radius, dr
+
+
+def generate_revolution_shading(outline: np.ndarray,
+                                outer_contour: np.ndarray,
+                                center_x: float,
+                                shape: Tuple[int, int],
+                                light: Tuple[float, float, float] = (-1.0, -1.0, 1.0),
+                                lit_level: float = 0.75,
+                                gamma: float = 1.3,
+                                seed: int = 0) -> List[Tuple[float, float, float]]:
+    """
+    Stippling for a prospect, from the lighting of the profile revolved around the symmetry axis.
+
+    The profile gives the radius r(y); every point of the prospect lies on the surface of
+    revolution x^2 + z^2 = r(y)^2 (x measured from the axis), whose normal is (x, -r r'(y), z).
+    Lambert lighting with a light from the upper left gives a luminance; dark areas get dense
+    dots. Dots are placed by error-diffusion dithering on a jittered grid (blue-noise stippling).
+
+    Args:
+        outline: Prospect outline, (N, 2) array of (y, x)
+        outer_contour: Outer contour of the profile, (N, 2) array of (y, x)
+        center_x: x of the symmetry axis
+        shape: (height, width) of the image
+        light: Light direction (x right, y down, z towards the viewer)
+        lit_level: Normalized luminance above which no dots are drawn
+        gamma: Contrast of the dot density
+
+    Returns:
+        List of dots (cx, cy, radius)
+    """
+    h, w = shape
+    silhouette = np.zeros(shape, np.uint8)
+    cv2.fillPoly(silhouette, [np.round(outline[:, ::-1]).astype(np.int32)], 1)
+    ys, xs = np.nonzero(silhouette)
+    if len(ys) == 0:
+        return []
+
+    radius, dr = vessel_radius_by_row(outer_contour, center_x, h)
+    dx = xs - center_x
+    r = radius[ys]
+    z = np.maximum(np.sqrt(np.clip(r ** 2 - dx ** 2, 0, None)), 0.05 * r)  # outside the revolved shape: grazing
+    normal = np.stack([dx, -r * dr[ys], z], axis=1)
+    normal /= np.linalg.norm(normal, axis=1, keepdims=True)
+    L = np.asarray(light, float)
+    lum = normal @ (L / np.linalg.norm(L))
+    lo, hi = np.percentile(lum, [1, 99])
+    lum = np.clip((lum - lo) / max(1e-6, hi - lo), 0, 1)
+    density = np.zeros(shape, np.float32)
+    density[ys, xs] = np.clip((lit_level - lum) / lit_level, 0, 1) ** gamma
+
+    # Dot size and spacing scale with the vessel height
+    vessel_height = outer_contour[:, 0].max() - outer_contour[:, 0].min()
+    dot_r = max(0.9, vessel_height / 420)
+    spacing = 3.6 * dot_r  # dot distance at full density
+
+    gh, gw = int(np.ceil(h / spacing)), int(np.ceil(w / spacing))
+    grid = cv2.resize(density, (gw, gh), interpolation=cv2.INTER_AREA).astype(np.float64)
+    inside = cv2.resize(silhouette.astype(np.float32), (gw, gh), interpolation=cv2.INTER_AREA) > 0.6
+    grid[~inside] = 0
+    rng = np.random.default_rng(seed)
+    dots = []
+    for gy in range(gh):  # serpentine Floyd-Steinberg
+        step = 1 if gy % 2 == 0 else -1
+        for gx in (range(gw) if step == 1 else range(gw - 1, -1, -1)):
+            value = grid[gy, gx]
+            on = value >= 0.5
+            err = value - (1.0 if on else 0.0)
+            if on:
+                jx, jy = rng.uniform(-0.35, 0.35, 2)
+                cx, cy = (gx + 0.5 + jx) * spacing, (gy + 0.5 + jy) * spacing
+                d = density[min(h - 1, int(cy)), min(w - 1, int(cx))]
+                dots.append((cx, cy, dot_r * (0.75 + 0.5 * d)))
+            if 0 <= gx + step < gw:
+                grid[gy, gx + step] += err * 7 / 16
+            if gy + 1 < gh:
+                if 0 <= gx - step < gw:
+                    grid[gy + 1, gx - step] += err * 3 / 16
+                grid[gy + 1, gx] += err * 5 / 16
+                if 0 <= gx + step < gw:
+                    grid[gy + 1, gx + step] += err * 1 / 16
+
+    # Keep the dots clear of the outline
+    clear = cv2.erode(silhouette, np.ones((int(2 * spacing) | 1,) * 2, np.uint8))
+    return [d for d in dots if clear[min(h - 1, int(d[1])), min(w - 1, int(d[0]))]]
+
+
+def add_shading_to_svg(svg_path: str, dots: List[Tuple[float, float, float]]) -> None:
+    """Append (or replace) the stippling group of an element SVG, as filled circles."""
+    import xml.etree.ElementTree as ET
+    ns = 'http://www.w3.org/2000/svg'
+    ET.register_namespace('', ns)
+    ET.register_namespace('xlink', 'http://www.w3.org/1999/xlink')
+    ET.register_namespace('ev', 'http://www.w3.org/2001/xml-events')
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    for g in list(root):
+        if g.get('class') == 'shading':
+            root.remove(g)
+    # class marks the group so the unified export and post-processing keep it filled, not stroked
+    group = ET.SubElement(root, f'{{{ns}}}g', {'id': 'shading', 'class': 'shading', 'fill': 'black', 'stroke': 'none'})
+    for cx, cy, r in dots:
+        ET.SubElement(group, f'{{{ns}}}circle', {'cx': f'{cx:.2f}', 'cy': f'{cy:.2f}', 'r': f'{r:.2f}'})
+    tree.write(svg_path, xml_declaration=True, encoding='utf-8')
+
+
 def create_graph_debug_image(original: np.ndarray, graph, output_path: str):
     """
     Create debug image showing ALL edges in the graph.

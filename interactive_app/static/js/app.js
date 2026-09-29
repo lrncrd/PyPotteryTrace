@@ -698,8 +698,8 @@ class PyPotteryTraceApp {
     }
 
     getDefaultVectorization(category) {
-        // Profile, Application, and Running_Element are vectorized by default
-        return category === 'Profile' || category === 'Application' || category === 'Running_Element';
+        // Profile, Application, Running_Element and Prospectus are vectorized by default
+        return category === 'Profile' || category === 'Application' || category === 'Running_Element' || category === 'Prospectus';
     }
 
     async deleteSegment(segmentId) {

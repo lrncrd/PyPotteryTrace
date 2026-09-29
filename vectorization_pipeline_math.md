@@ -132,6 +132,35 @@ This process exploits the radial symmetry characteristic of ceramic profiles, al
 
 ---
 
+## 6. Prospect (Front View): Outline and Generated Shading
+
+A prospect mixes several drawing conventions (outline, interior lines, decoration, stippled shading). At the resolution of typical scans, dots and decoration motifs touch or overlap, so they cannot be traced reliably. PyPotteryTrace therefore extracts only the **outer border** of the prospect and **generates** the shading from the vessel shape given by the profile.
+
+### Outline
+
+The ink mask $M$ (high threshold) is closed with a disk of radius $\lceil w \rceil$, where $w$ is the median stroke width
+$$w = 2 \cdot \operatorname{median}_{p \in S} D(p)$$
+($D$ = Euclidean distance transform of the ink, $S$ its skeleton, on components $\geq 500$ px). The closed mask, together with the edge of the segmentation mask (which closes the border where it is interrupted or shared with the symmetry axis), is hole-filled. Ink-free regions that touch the outside of the segmentation mask and are no wider than $1.5w + 6$ px (the margin between the drawn border and the mask edge) are removed. The largest remaining region is the silhouette; eroding it by $w/2$ puts its contour along the middle of the drawn border. The contour is simplified (RDP) and smoothed (Section 4) into one closed path.
+
+### Surface of Revolution
+
+From the outer contour of the profile and the axis position $c_x$, the radius $r(y)$ is the outermost distance $|c_x - x|$ on each row, interpolated and smoothed with a Gaussian ($\sigma = \max(3, H/80)$, $H$ = profile height). A point $(x, y)$ of the prospect, with $\Delta x = x - c_x$, lies on the surface
+$$F(\Delta x, y, z) = \Delta x^2 + z^2 - r(y)^2 = 0, \qquad z = \sqrt{r(y)^2 - \Delta x^2}$$
+whose normal is
+$$\vec{n} \propto \nabla F = \big(\Delta x,\ -r(y)\,r'(y),\ z\big)$$
+
+### Lighting and Dot Density
+
+With the conventional light from the upper left, $\vec{L} \propto (-1, -1, 1)$ (x right, y down, z towards the viewer), the Lambert luminance is $\ell = \hat{n} \cdot \hat{L}$, normalized to $[0,1]$ over the prospect (1st–99th percentile). The dot density is
+$$\rho = \operatorname{clip}\left(\frac{\ell_0 - \ell}{\ell_0},\ 0,\ 1\right)^{\gamma}, \qquad \ell_0 = 0.75,\ \gamma = 1.3$$
+so lit areas stay blank and surfaces facing down or away (under the rim, the lower body) get dense dots.
+
+### Stippling
+
+Dots have radius $r_d = \max(0.9, H/420)$ and spacing $s = 3.6\,r_d$ at full density. $\rho$ is averaged on a grid of cell $s$ and binarized with serpentine Floyd–Steinberg error diffusion, which yields a blue-noise distribution whose local density follows $\rho$. Each dot is jittered by up to $\pm 0.35\,s$ and drawn with radius $r_d (0.75 + 0.5\rho)$; dots closer than $\approx s$ to the outline are dropped.
+
+---
+
 ## References
 
 - Maragos, P. (1986). Tutorial on advances in morphological image processing and analysis. *Optical Engineering*, 26(7), 623–632.
