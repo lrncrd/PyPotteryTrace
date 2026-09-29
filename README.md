@@ -28,7 +28,7 @@ Unlike generic vectorization tools, it understands archaeological pottery conven
 - **Archaeological Category System**: Profile, Running_Element, Prospectus, Application, Handle, Decoration, Detail, each with its own vectorization rules
 - **Smart Mirroring & Connection**: automatic profile mirroring around a user-defined rotation center, with construction lines (Symmetry_Line, Diameter)
 - **Vectorization Engine**: contour extraction, Douglas-Peucker simplification and optional Bézier smoothing
-- **Prospect Canvas**: the front view's outline is traced, then shaded (stippling or grey tone, generated from the profile revolved around the symmetry axis) and decorated with brushes (grooves, oval and dot impressions) in a dedicated tab that works with mouse, touch and pen
+- **Prospect Canvas**: the front view's outline is traced, then shaded (stippling or grey tone, generated from the profile revolved around the symmetry axis) and decorated with brushes (grooves, oval and dot impressions) in a dedicated tab that works with mouse, touch and pen. Handles traced in the Handle layer are shaded as side views and can be placed on the vessel as front views derived from them
 - **Project Management**: save and reload the complete session, with an organized workspace per project
 - **Export**: category-grouped SVG layers, COCO annotations for machine learning, and individual PNG masks
 

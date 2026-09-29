@@ -24,6 +24,15 @@
                 toneDarkness: 0.85,   // darkest grey of the tone mode
                 seed: 0
             },
+            // Side view of an applied part (handle): the silhouette is inflated into a strap
+            surface: {
+                bevel: 0.7,           // rounded width of the edge, as a fraction of the half thickness (1 = round rod)
+                relief: 1             // height of the arc (1 = circular section)
+            },
+            // Handles seen from the front, derived from their side view (Handle layer):
+            // { id, part, points: [[x, y], ...] (its outline on the drawing, tapped by the user),
+            //   roundness, bend, shadow }
+            fronts: [],
             decorations: []           // { id, brush, params, points: [[x, y], ...], clip }
         };
     }
@@ -37,6 +46,8 @@
         try {
             const saved = JSON.parse(meta.textContent);
             Object.assign(model.shading, saved.shading || {});
+            Object.assign(model.surface, saved.surface || {});
+            model.fronts = Array.isArray(saved.fronts) ? saved.fronts.filter(f => Array.isArray(f.points) && f.points.length >= 3) : [];
             model.decorations = Array.isArray(saved.decorations) ? saved.decorations : [];
         } catch (e) {
             console.warn('Prospect model could not be read, using defaults:', e);
@@ -114,7 +125,8 @@
         const clipId = `prospect_clip_${safeId}`;
         if (rendered.clipD) {
             const clip = el(doc, 'clipPath', { id: clipId });
-            clip.appendChild(el(doc, 'path', { d: rendered.clipD }));
+            // even-odd: the hole of a handle stays out of the clip
+            clip.appendChild(el(doc, 'path', { d: rendered.clipD, 'clip-rule': 'evenodd' }));
             art.appendChild(clip);
         }
         const meta = el(doc, 'metadata', { class: 'prospect-model' });
@@ -135,6 +147,15 @@
             });
             img.setAttributeNS(XLINK_NS, 'xlink:href', url);  // older viewers (Illustrator)
             g.appendChild(img);
+            art.appendChild(g);
+        }
+
+        // Side lines of the handles in front view
+        if (rendered.frontEdges && rendered.frontEdges.length) {
+            const g = el(doc, 'g', { class: 'handle-front', id: `${safeId}_handle_front`, fill: 'none', stroke: '#000000', 'stroke-width': '1', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+            for (const pl of rendered.frontEdges) {
+                g.appendChild(el(doc, 'path', { d: pl.map((p, i) => `${i ? 'L' : 'M'} ${fmt(p.x)} ${fmt(p.y)}`).join(' ') }));
+            }
             art.appendChild(g);
         }
 

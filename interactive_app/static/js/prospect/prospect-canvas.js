@@ -24,7 +24,21 @@
         { key: 'toneDarkness', label: 'Tone darkness', min: 0.1, max: 1, step: 0.01, mode: 'tone' }
     ];
 
-    const TOOL_KEYS = { v: 'select', h: 'pan', b: 'band', p: 'polyline', f: 'freehand', s: 'stamp' };
+    // Section of an applied part seen from the side (geometry: changes the luminance field)
+    const SURFACE_SCHEMA = [
+        { key: 'bevel', label: 'Edge rounding', min: 0.05, max: 1, step: 0.05 },
+        { key: 'relief', label: 'Edge steepness', min: 0.2, max: 2, step: 0.05 }
+    ];
+
+    // Front view of a handle (see prospect-surfaces.js)
+    const FRONT_SCHEMA = [
+        { key: 'roundness', label: 'Edge rounding', min: 0.1, max: 1, step: 0.05 },
+        { key: 'bend', label: 'Arch shading', min: 0, max: 1.5, step: 0.05 },
+        { key: 'blend', label: 'Blend into the wall', min: 0, max: 2.5, step: 0.05 },
+        { key: 'shadow', label: 'Shadow on the wall', min: 0, max: 1.5, step: 0.05 }
+    ];
+
+    const TOOL_KEYS ={ v: 'select', h: 'pan', b: 'band', p: 'polyline', f: 'freehand', s: 'stamp' };
     const HIT_PX = 10;  // screen px
 
     class ProspectCanvas {
@@ -38,8 +52,12 @@
             this.scene = null;
             this.prospect = null;       // current prospect of the scene
             this.models = new Map();    // element id -> { model, history }
-            this.field = null;          // luminance field of the current prospect
+            this.field = null;          // luminance field of the current prospect (with its handles)
+            this.baseField = null;      // the same without the handles
+            this.vesselCache = null;
             this.fieldKey = '';
+            this.frontRasters = new Map();
+            this.frontEdges = [];
             this.density = null;
             this.dots = [];
             this.tone = null;
@@ -70,6 +88,12 @@
             this.dirty = false;
 
             this.buildShadingControls();
+            this.buildSurfaceControls();
+            this.buildFrontControls();
+            this.selectedFrontId = null;
+            this.frontPts = [];         // vertices of the handle outline being tapped
+            this.snapshots = new Map(); // element id -> what was drawn for it, to show all the elements
+            this.showAll = true;
             this.setupEvents();
 
             // The tab is available whenever the SVG Editor is (it works on the same document)
@@ -108,6 +132,7 @@
                 this.prospect = null;
                 this.selectedId = null;
                 this.fieldKey = '';
+                this.vesselCache = null;
             }
             this.loadBackground();
             this.readScene();
@@ -120,6 +145,7 @@
         }
 
         readScene() {
+            this.vesselCache = null;
             const editor = window.svgEditor;
             const dOverrides = new Map();
             (editor.paths || []).forEach(p => { if (p.element && p.currentD) dOverrides.set(p.element, p.currentD); });
@@ -131,36 +157,49 @@
             this.contextLines = [];
             this.svgElement.querySelectorAll('g[id^="layer_"]:not([id="layer_Prospectus"]) path').forEach(p => {
                 if (G().isProspectArt(p)) return;
-                this.contextLines.push(...G().flattenPathD(dOverrides.get(p) || p.getAttribute('d'), 3));
+                // The paths of an applied part are drawn again as its outline: same flattening, so the
+                // faint copy lies exactly under the black one
+                const own = p.closest('g[id="layer_Handle"], g[id="layer_Application"]');
+                this.contextLines.push(...G().flattenPathD(dOverrides.get(p) || p.getAttribute('d'), own ? 1.5 : 3));
             });
 
+            // Front views (Prospectus) first, then the side views of applied parts (Handle, Application)
+            this.items = this.scene.prospects.concat(this.scene.parts);
             const select = document.getElementById('prospect-element-select');
             select.innerHTML = '';
-            this.scene.prospects.forEach(pr => {
+            this.items.forEach(pr => {
                 const opt = document.createElement('option');
                 opt.value = pr.id;
                 opt.textContent = pr.name;
                 select.appendChild(opt);
             });
 
-            if (!this.scene.prospects.length) {
+            if (!this.items.length) {
                 this.prospect = null;
                 this.showMessage('No Prospectus element in this drawing. In Segmentation, assign the front view to the Prospectus category and vectorize again.');
                 this.updateUI();
                 return;
             }
             this.hideMessage();
-            const keep = this.prospect && this.scene.prospects.find(p => p.id === this.prospect.id);
-            this.setProspect((keep || this.scene.prospects[0]).id, !keep);
+            const keep = this.prospect && this.items.find(p => p.id === this.prospect.id);
+            const current = (keep || this.items[0]).id;
+            // Every element is prepared, so that all of them can be shown together
+            this.snapshots.clear();
+            for (const it of this.items) if (it.id !== current) this.loadItem(it.id);
+            this.prospect = null;
+            this.setProspect(current, !keep);
         }
 
-        setProspect(id, fit = true) {
-            if (this.prospect && this.prospect.id !== id) this.commitToDocument();
-            this.prospect = this.scene.prospects.find(p => p.id === id);
+        // Makes an element the current one: its model, decorations and shading (no commit to the
+        // document, no view change)
+        loadItem(id) {
+            this.prospect = this.items.find(p => p.id === id);
+            // Even-odd: the hole of a handle is not part of it
             this.outlinePath = new Path2D();
-            this.prospect.outline.forEach((pt, i) => (i ? this.outlinePath.lineTo(pt.x, pt.y) : this.outlinePath.moveTo(pt.x, pt.y)));
-            this.outlinePath.closePath();
-            document.getElementById('prospect-element-select').value = id;
+            for (const ring of this.prospect.rings) {
+                ring.forEach((pt, i) => (i ? this.outlinePath.lineTo(pt.x, pt.y) : this.outlinePath.moveTo(pt.x, pt.y)));
+                this.outlinePath.closePath();
+            }
             if (!this.models.has(id)) {
                 const model = M().readModel(this.prospect.group);
                 const history = new (M().History)();
@@ -172,12 +211,40 @@
             this.presetParams = {};
             B().PRESETS.forEach(p => { this.presetParams[p.id] = B().presetParams(p.id, this.unit); });
             this.selectedId = null;
+            this.selectedFrontId = null;
+            this.frontPts = [];
             this.fieldKey = '';
             this.rebuildAllDecorations();
             this.recomputeShading();
+        }
+
+        setProspect(id, fit = true) {
+            if (this.prospect && this.prospect.id !== id) this.commitToDocument();
+            this.loadItem(id);
+            document.getElementById('prospect-element-select').value = id;
             if (fit) this.fitView();
             this.updateUI();
             this.redraw();
+        }
+
+        // What the canvas shows for an element that is not the current one
+        saveSnapshot() {
+            if (!this.prospect) return;
+            this.snapshots.set(this.prospect.id, {
+                item: this.prospect, model: this.model, dots: this.dots, tone: this.tone,
+                frontEdges: this.frontEdges, decoPrims: new Map(this.decoPrims), outlinePath: this.outlinePath
+            });
+        }
+
+        // The element under a point (image space), other than the current one
+        hitOtherItem(x, y) {
+            for (const it of this.items) {
+                if (it === this.prospect) continue;
+                let n = 0;
+                for (const ring of it.rings) if (G().pointInPolygon(x, y, ring)) n++;
+                if (n % 2 === 1) return it;
+            }
+            return null;
         }
 
         loadBackground() {
@@ -194,30 +261,105 @@
         // ------------------------------------------------------------------
 
         get shadingAvailable() {
-            return !!(this.scene && this.scene.radius && this.prospect);
+            if (!this.scene || !this.prospect) return false;
+            return this.prospect.kind === 'applied' || !!this.scene.radius;
+        }
+
+        // Height that scales the dots: the vessel's, so a handle has the same dots as the body
+        get referenceHeight() {
+            if (this.scene.radius) return this.scene.radius.height;
+            const all = this.scene.prospects.concat(this.scene.parts);
+            return Math.max(...all.map(p => p.bbox.h), 1);
+        }
+
+        // The vessel is the largest front view of the drawing
+        get vessel() {
+            if (!this.scene || !this.scene.radius) return null;
+            return this.scene.prospects.reduce((m, p) => (!m || p.bbox.h > m.bbox.h ? p : m), null);
+        }
+
+        // Luminance field of the vessel (cached): its range is also the scale of the applied
+        // parts, so their tone matches the body of the vessel
+        vesselField(sh) {
+            const vessel = this.vessel;
+            if (!vessel) return null;
+            const key = `${vessel.id}|${sh.direction}|${sh.elevation}|${vessel.outline.length}|${this.scene.axisX}`;
+            if (!this.vesselCache || this.vesselCache.key !== key) {
+                this.vesselCache = { key, field: S().computeLuminance(vessel.outline, this.scene.radius, this.scene.axisX, sh) };
+            }
+            return this.vesselCache.field;
+        }
+
+        vesselRange(sh) {
+            const f = this.vesselField(sh);
+            return f ? f.range : null;
+        }
+
+        // Front views of the handles on the current vessel: raster + side lines of each one
+        buildFronts(sh) {
+            this.frontRasters = new Map();
+            this.frontEdges = [];
+            const model = this.model;
+            if (!model || this.prospect.kind !== 'prospect' || !this.scene.radius || this.scene.axisX === null) return;
+            const range = this.vesselRange(sh);
+            for (const spec of model.fronts) {
+                const part = this.scene.parts.find(p => p.id === spec.part);
+                if (!part) continue;
+                const front = window.ProspectSurfaces.buildFront(spec, part, this.scene, sh, range);
+                if (!front) continue;
+                this.frontRasters.set(spec.id, front);
+                this.frontEdges.push(...front.edges);
+            }
         }
 
         recomputeShading() {
+            this.computeShading();
+            this.saveSnapshot();
+        }
+
+        computeShading() {
             this.dots = [];
             this.tone = null;
+            this.frontEdges = [];
+            this.frontRasters = new Map();
             if (!this.shadingAvailable || !this.model) return;
             const sh = this.model.shading;
+            this.buildFronts(sh);
             if (sh.mode === 'none') return;
-            const key = `${this.prospect.id}|${sh.direction}|${sh.elevation}|${this.prospect.outline.length}|${this.scene.axisX}`;
-            if (key !== this.fieldKey) {
-                this.field = S().computeLuminance(this.prospect.outline, this.scene.radius, this.scene.axisX, sh);
-                this.fieldKey = key;
+            const applied = this.prospect.kind === 'applied';
+            const su = this.model.surface;
+            let field;
+            if (this.prospect === this.vessel) {
+                field = this.vesselField(sh);
+            } else {
+                const key = `${this.prospect.id}|${sh.direction}|${sh.elevation}|${this.prospect.outline.length}|${this.scene.axisX}` +
+                    (applied ? `|${su.bevel}|${su.relief}` : '');
+                if (key !== this.fieldKey) {
+                    this.baseField = applied
+                        ? S().computeInflateLuminance(this.prospect.rings, su, sh, this.vesselRange(sh))
+                        : S().computeLuminance(this.prospect.outline, this.scene.radius, this.scene.axisX, sh);
+                    this.fieldKey = key;
+                }
+                field = this.baseField;
             }
+            // Handles in front view join the field; their shadow falls on the wall
+            const SU = window.ProspectSurfaces;
+            if (this.frontRasters.size) {
+                field = SU.compose(field, [...this.frontRasters.values()]);
+                SU.castShadows(field, this.model.fronts.map(f => Object.assign({}, f, { front: this.frontRasters.get(f.id) })), this.light2d);
+            }
+            this.field = field;
+            const rings = this.prospect.rings.concat(this.frontEdges);
             this.density = S().computeDensity(this.field, sh);
             // The floor of the decorations is shaded by the marks themselves
             const shades = [];
             for (const prims of this.decoPrims.values()) for (const pr of prims) if (pr.kind === 'shade') shades.push(pr);
             if (shades.length) S().applyShadeRegions(this.field, this.density, shades);
             if (sh.mode === 'stipple') {
-                const dotR = S().defaultDotRadius(this.scene.radius) * sh.dotScale;
+                const dotR = S().defaultDotRadius({ height: this.referenceHeight }) * sh.dotScale;
                 // No dots on or inside the decorations
-                const blocked = S().decorationMask(this.field, this.decoPrims.values(), dotR * 1.5, this.prospect.outline);
-                this.dots = S().stipple(this.field, this.density, this.prospect.outline, sh, dotR, blocked);
+                const blocked = S().decorationMask(this.field, this.decoPrims.values(), dotR * 1.5, this.prospect.rings);
+                this.dots = S().stipple(this.field, this.density, rings, sh, dotR, blocked);
             } else if (sh.mode === 'tone') {
                 this.tone = { canvas: S().toneCanvas(this.field, this.density, sh), x: this.field.x0, y: this.field.y0 };
             }
@@ -252,11 +394,218 @@
             });
         }
 
+        buildSurfaceControls() {
+            const box = document.getElementById('prospect-surface-controls');
+            if (!box) return;
+            box.innerHTML = '';
+            SURFACE_SCHEMA.forEach(f => {
+                const group = document.createElement('div');
+                group.className = 'form-group prospect-control';
+                group.innerHTML = `<label>${f.label}: <span class="prospect-value" id="prospect-su-${f.key}-value"></span></label>
+                    <input type="range" class="slider" id="prospect-su-${f.key}" min="${f.min}" max="${f.max}" step="${f.step}">`;
+                box.appendChild(group);
+                const input = group.querySelector('input');
+                let frame = null;
+                input.addEventListener('input', () => {
+                    if (!this.model) return;
+                    this.model.surface[f.key] = parseFloat(input.value);
+                    document.getElementById(`prospect-su-${f.key}-value`).textContent = input.value;
+                    if (frame) return;
+                    frame = requestAnimationFrame(() => {
+                        frame = null;
+                        this.recomputeShading();
+                        this.redraw();
+                    });
+                });
+                input.addEventListener('change', () => this.pushHistory());
+            });
+        }
+
+        // ------------------------------------------------------------------
+        // Handles in front view
+        // ------------------------------------------------------------------
+
+        get selectedFront() {
+            return this.model && this.selectedFrontId ? this.model.fronts.find(f => f.id === this.selectedFrontId) : null;
+        }
+
+        get handlesAvailable() {
+            return !!(this.scene && this.prospect && this.prospect.kind === 'prospect' &&
+                this.scene.radius && this.scene.axisX !== null && this.scene.parts.length);
+        }
+
+        // Pointer on the selected front: a vertex is dragged (tapped twice it is removed), an edge
+        // gets a new vertex. Returns true when the front took the pointer.
+        startFrontDrag(ip) {
+            const front = this.selectedFront;
+            if (!front) return false;
+            const tol = HIT_PX / this.scale;
+            const vi = front.points.findIndex(([x, y]) => Math.hypot(x - ip.x, y - ip.y) <= tol);
+            if (vi >= 0) {
+                const now = Date.now();
+                if (this.lastVertexTap && this.lastVertexTap.id === front.id && this.lastVertexTap.index === vi && now - this.lastVertexTap.time < 400 && front.points.length > 3) {
+                    front.points.splice(vi, 1);
+                    this.lastVertexTap = null;
+                    this.recomputeShading();
+                    this.pushHistory();
+                    return true;
+                }
+                this.lastVertexTap = { id: front.id, index: vi, time: now };
+                this.action = { type: 'fvertex', id: front.id, index: vi, moved: false };
+                return true;
+            }
+            const n = front.points.length;
+            for (let i = 0; i < n; i++) {
+                const a = front.points[i], b = front.points[(i + 1) % n];
+                if (G().distToSegment(ip.x, ip.y, { x: a[0], y: a[1] }, { x: b[0], y: b[1] }) <= tol) {
+                    front.points.splice(i + 1, 0, [ip.x, ip.y]);
+                    this.action = { type: 'fvertex', id: front.id, index: i + 1, moved: true };
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        dragFrontVertex(a, ip) {
+            const front = this.model.fronts.find(f => f.id === a.id);
+            if (!front) return;
+            front.points[a.index] = [ip.x, ip.y];
+            a.moved = true;
+            this.buildFronts(this.model.shading);
+        }
+
+        // The front under a point, if any (its band)
+        hitFront(x, y) {
+            for (const [id, r] of this.frontRasters) {
+                const i = Math.floor(x - r.x0), j = Math.floor(y - r.y0);
+                if (i >= 0 && j >= 0 && i < r.w && j < r.h && r.mask[j * r.w + i]) return id;
+            }
+            return null;
+        }
+
+        // A tap of the handle tool: a vertex of the outline (a tap on the first one closes it)
+        addFrontPoint(ip) {
+            const pts = this.frontPts;
+            if (pts.length >= 3 && Math.hypot(pts[0].x - ip.x, pts[0].y - ip.y) * this.scale <= 12) {
+                this.finishFront();
+                return;
+            }
+            const last = pts[pts.length - 1];
+            if (!last || Math.hypot(last.x - ip.x, last.y - ip.y) * this.scale > 3) pts.push(ip);
+        }
+
+        // The outline is done: the front view of the chosen handle
+        finishFront() {
+            const pts = this.frontPts;
+            this.frontPts = [];
+            const part = this.scene && this.scene.parts.find(p => p.id === document.getElementById('prospect-front-part').value);
+            if (pts.length < 3 || !part || !this.handlesAvailable) {
+                this.updateUI();
+                this.redraw();
+                return;
+            }
+            const spec = {
+                id: `front_${Date.now().toString(36)}`,
+                part: part.id,
+                points: pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]),
+                roundness: 0.6,
+                bend: 0.5,
+                blend: 0.5,
+                shadow: 0.6
+            };
+            this.model.fronts.push(spec);
+            this.selectedFrontId = spec.id;
+            this.setTool('select');
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        deleteFront(id) {
+            this.model.fronts = this.model.fronts.filter(f => f.id !== id);
+            if (this.selectedFrontId === id) this.selectedFrontId = null;
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        buildFrontControls() {
+            const box = document.getElementById('prospect-front-controls');
+            if (!box) return;
+            box.innerHTML = '';
+            FRONT_SCHEMA.forEach(f => {
+                const group = document.createElement('div');
+                group.className = 'form-group prospect-control';
+                group.innerHTML = `<label>${f.label}: <span class="prospect-value" id="prospect-fr-${f.key}-value"></span></label>
+                    <input type="range" class="slider" id="prospect-fr-${f.key}" min="${f.min}" max="${f.max}" step="${f.step}">`;
+                box.appendChild(group);
+                const input = group.querySelector('input');
+                let frame = null;
+                input.addEventListener('input', () => {
+                    const front = this.selectedFront;
+                    if (!front) return;
+                    front[f.key] = parseFloat(input.value);
+                    document.getElementById(`prospect-fr-${f.key}-value`).textContent = input.value;
+                    if (frame) return;
+                    frame = requestAnimationFrame(() => {
+                        frame = null;
+                        this.recomputeShading();
+                        this.redraw();
+                    });
+                });
+                input.addEventListener('change', () => this.pushHistory());
+            });
+        }
+
+        updateHandlesPanel() {
+            const panel = document.getElementById('prospect-handles-panel');
+            if (!panel) return;
+            panel.style.display = this.handlesAvailable ? '' : 'none';
+            if (!this.handlesAvailable) return;
+            const select = document.getElementById('prospect-front-part');
+            const current = select.value;
+            select.innerHTML = '';
+            this.scene.parts.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name;
+                select.appendChild(opt);
+            });
+            if (current && this.scene.parts.some(p => p.id === current)) select.value = current;
+            const list = document.getElementById('prospect-fronts-list');
+            list.innerHTML = '';
+            this.model.fronts.forEach((f, i) => {
+                const part = this.scene.parts.find(p => p.id === f.part);
+                const row = document.createElement('div');
+                row.className = 'prospect-deco-row' + (f.id === this.selectedFrontId ? ' active' : '');
+                row.innerHTML = `<span class="prospect-deco-name">${i + 1}. ${part ? part.name : f.part}</span>
+                    <button class="toolbar-btn" title="Delete this front view"><i class="bi bi-trash"></i></button>`;
+                row.querySelector('.prospect-deco-name').addEventListener('click', () => {
+                    this.selectedFrontId = f.id;
+                    this.updateUI();
+                });
+                row.querySelector('button').addEventListener('click', () => this.deleteFront(f.id));
+                list.appendChild(row);
+            });
+            const front = this.selectedFront;
+            document.getElementById('prospect-front-controls').style.display = front ? '' : 'none';
+            if (front) {
+                FRONT_SCHEMA.forEach(f => {
+                    document.getElementById(`prospect-fr-${f.key}`).value = front[f.key];
+                    document.getElementById(`prospect-fr-${f.key}-value`).textContent = front[f.key];
+                });
+            }
+        }
+
         // Shading back to its defaults (the mode and the dot pattern are kept)
         resetShading() {
             if (!this.model) return;
             const keep = { mode: this.model.shading.mode, seed: this.model.shading.seed };
-            this.model.shading = Object.assign(M().defaultModel(this.prospect.id).shading, keep);
+            const fresh = M().defaultModel(this.prospect.id);
+            this.model.shading = Object.assign(fresh.shading, keep);
+            this.model.surface = fresh.surface;
             this.rebuildAllDecorations();
             this.recomputeShading();
             this.pushHistory();
@@ -397,6 +746,7 @@
             if (!model) return;
             this.entry.model = model;
             if (this.selectedId && !model.decorations.find(d => d.id === this.selectedId)) this.selectedId = null;
+            if (this.selectedFrontId && !model.fronts.find(f => f.id === this.selectedFrontId)) this.selectedFrontId = null;
             this.rebuildAllDecorations();
             this.recomputeShading();
             this.dirty = true;
@@ -419,6 +769,7 @@
                 dots: this.shadingAvailable ? this.dots : [],
                 tone: this.shadingAvailable ? this.tone : null,
                 decorations: this.decoPrims,
+                frontEdges: this.frontEdges,
                 clipD: this.prospect.outlineD || (this.prospect.outline.map((q, i) => `${i ? 'L' : 'M'} ${q.x.toFixed(2)} ${q.y.toFixed(2)}`).join(' ') + ' Z')
             });
         }
@@ -453,7 +804,13 @@
 
         fitView() {
             if (!this.prospect || !this.cssW) return;
-            const b = this.prospect.bbox;
+            let b = this.prospect.bbox;
+            if (this.showAll && this.items.length > 1) {
+                // all the elements together
+                const x0 = Math.min(...this.items.map(i => i.bbox.x0)), y0 = Math.min(...this.items.map(i => i.bbox.y0));
+                const x1 = Math.max(...this.items.map(i => i.bbox.x1)), y1 = Math.max(...this.items.map(i => i.bbox.y1));
+                b = { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
+            }
             const pad = 40;
             this.scale = Math.min((this.cssW - 2 * pad) / b.w, (this.cssH - 2 * pad) / b.h);
             this.ox = this.cssW / 2 - (b.x0 + b.w / 2) * this.scale;
@@ -515,6 +872,33 @@
             }
             if (!this.prospect) return;
 
+            // The other elements of the drawing, as they will be
+            if (this.showAll) {
+                for (const snap of this.snapshots.values()) {
+                    if (snap.item === this.prospect) continue;
+                    const mode = snap.model.shading.mode;
+                    if (snap.tone && mode === 'tone') {
+                        ctx.drawImage(snap.tone.canvas, snap.tone.x, snap.tone.y);
+                    } else if (snap.dots.length && mode === 'stipple') {
+                        ctx.fillStyle = '#000000';
+                        ctx.beginPath();
+                        for (const [cx, cy, r] of snap.dots) {
+                            ctx.moveTo(cx + r, cy);
+                            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                        }
+                        ctx.fill();
+                    }
+                    ctx.save();
+                    ctx.clip(snap.outlinePath, 'evenodd');
+                    for (const deco of snap.model.decorations) this.drawPrims(snap.decoPrims.get(deco.id) || [], '#000000');
+                    ctx.restore();
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = Math.max(px, 1);
+                    for (const ring of snap.item.rings) this.strokePolyline(G().edgeLine(ring), !ring.open);
+                    for (const edge of snap.frontEdges) this.strokePolyline(edge);
+                }
+            }
+
             // Shading
             if (this.tone && this.model.shading.mode === 'tone') {
                 ctx.drawImage(this.tone.canvas, this.tone.x, this.tone.y);
@@ -531,7 +915,7 @@
             // Decorations, cut by the outline like on the vessel
             const sel = this.selected;
             ctx.save();
-            ctx.clip(this.outlinePath);
+            ctx.clip(this.outlinePath, 'evenodd');
             for (const deco of this.model.decorations) this.drawPrims(this.decoPrims.get(deco.id) || [], '#000000');
             if (sel) this.drawPrims(this.decoPrims.get(sel.id) || [], '#2563eb');
             const preview = this.previewGuide();
@@ -548,7 +932,40 @@
             // Outline
             ctx.strokeStyle = '#000000';
             ctx.lineWidth = Math.max(px, 1);
-            this.strokePolyline(this.prospect.outline, true);
+            for (const ring of this.prospect.rings) this.strokePolyline(G().edgeLine(ring), !ring.open);
+            for (const edge of this.frontEdges) this.strokePolyline(edge);
+            // The outline of the selected handle front view, with its vertices
+            const selFront = this.selectedFront;
+            if (selFront) {
+                ctx.strokeStyle = '#2563eb';
+                ctx.lineWidth = px;
+                ctx.setLineDash([4 * px, 3 * px]);
+                this.strokePolyline(selFront.points.map(([x, y]) => ({ x, y })), true);
+                ctx.setLineDash([]);
+                ctx.fillStyle = '#ffffff';
+                for (const [x, y] of selFront.points) {
+                    ctx.beginPath();
+                    ctx.arc(x, y, 5 * px, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                }
+            }
+            // The outline being tapped
+            if (this.frontPts.length) {
+                const pts = this.hover && this.hoverType === 'mouse' ? this.frontPts.concat([this.hover]) : this.frontPts;
+                ctx.strokeStyle = '#2563eb';
+                ctx.lineWidth = px;
+                ctx.setLineDash([4 * px, 3 * px]);
+                this.strokePolyline(pts, this.frontPts.length >= 3);
+                ctx.setLineDash([]);
+                ctx.fillStyle = '#ffffff';
+                this.frontPts.forEach((p, i) => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, (i === 0 ? 7 : 5) * px, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                });
+            }
 
             // Selection
             if (sel) {
@@ -664,7 +1081,7 @@
             c.addEventListener('pointerup', e => this.onPointerUp(e));
             c.addEventListener('pointercancel', e => this.onPointerUp(e, true));
             c.addEventListener('pointerleave', () => { this.hover = null; this.redraw(); });
-            c.addEventListener('dblclick', e => { e.preventDefault(); if (this.tool === 'polyline') this.finishPolyline(); });
+            c.addEventListener('dblclick', e => { e.preventDefault(); if (this.tool === 'polyline' || this.tool === 'handle') this.finishPolyline(); });
             c.addEventListener('contextmenu', e => {
                 e.preventDefault();
                 if (this.tool === 'polyline' && this.polyPts.length) this.finishPolyline();
@@ -687,7 +1104,9 @@
             const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
             on('prospect-element-select', 'change', e => this.setProspect(e.target.value));
             on('prospect-reseed-btn', 'click', () => this.reseed());
+            on('prospect-front-place', 'click', () => this.setTool('handle'));
             on('prospect-bg-toggle', 'change', e => { this.showBg = e.target.checked; this.redraw(); });
+            on('prospect-show-all', 'change', e => { this.showAll = e.target.checked; this.fitView(); });
             on('prospect-bg-opacity', 'input', e => { this.bgOpacity = parseFloat(e.target.value); this.redraw(); });
             on('prospect-zoom-in', 'click', () => this.zoomAt(1.25, this.cssW / 2, this.cssH / 2));
             on('prospect-zoom-out', 'click', () => this.zoomAt(0.8, this.cssW / 2, this.cssH / 2));
@@ -734,6 +1153,9 @@
 
             const ip = this.toImage(sp.x, sp.y);
             switch (this.tool) {
+                case 'handle':
+                    this.addFrontPoint(ip);
+                    break;
                 case 'band':
                     this.action = { type: 'band', x: ip.x, y: ip.y };
                     break;
@@ -756,6 +1178,7 @@
         }
 
         startSelectDrag(ip) {
+            if (this.startFrontDrag(ip)) return;
             const sel = this.selected;
             if (sel) {
                 const tol = HIT_PX / this.scale;
@@ -766,6 +1189,13 @@
                 }
             }
             const hit = this.hitDecoration(ip.x, ip.y);
+            const frontId = hit ? null : this.hitFront(ip.x, ip.y);
+            // Nothing of the current element: another element of the drawing becomes the current one
+            if (!hit && !frontId && this.showAll && !G().pointInPolygon(ip.x, ip.y, this.prospect.outline)) {
+                const other = this.hitOtherItem(ip.x, ip.y);
+                if (other) { this.setProspect(other.id, false); return; }
+            }
+            if (frontId !== this.selectedFrontId) { this.selectedFrontId = frontId; this.updateUI(); }
             this.select(hit ? hit.id : null);
             if (hit) this.action = { type: 'move', last: ip, moved: false };
         }
@@ -789,7 +1219,7 @@
             this.hoverType = e.pointerType;
             const a = this.action;
             if (!a) {
-                if ((this.tool === 'polyline' && this.polyPts.length) || ((this.tool === 'band' || this.tool === 'stamp') && e.pointerType === 'mouse')) this.redraw();
+                if ((this.tool === 'handle' && this.frontPts.length) || (this.tool === 'polyline' && this.polyPts.length) || ((this.tool === 'band' || this.tool === 'stamp') && e.pointerType === 'mouse')) this.redraw();
                 return;
             }
             if (a.type === 'band' || a.type === 'stamp') {
@@ -804,6 +1234,8 @@
                     const last = a.pts[a.pts.length - 1];
                     if (Math.hypot(p.x - last.x, p.y - last.y) * this.scale >= 1.5) a.pts.push(p);
                 }
+            } else if (a.type === 'fvertex') {
+                this.dragFrontVertex(a, ip);
             } else if (a.type === 'move' || a.type === 'vertex') {
                 const dx = ip.x - a.last.x, dy = ip.y - a.last.y;
                 a.last = ip;
@@ -837,6 +1269,10 @@
                     const smooth = G().smoothPolyline(G().resample(a.pts, 2 / this.scale), 2);
                     this.addDecoration(G().simplify(smooth, 0.3 / this.scale));
                 }
+            } else if (a.type === 'fvertex' && a.moved) {
+                this.recomputeShading();
+                this.pushHistory();
+                this.updateUI();
             } else if ((a.type === 'move' || a.type === 'vertex') && a.moved) {
                 this.recomputeShading();
                 this.pushHistory();
@@ -871,6 +1307,7 @@
         }
 
         finishPolyline() {
+            if (this.tool === 'handle') { this.finishFront(); return; }
             if (this.polyPts.length >= 2) this.addDecoration(this.polyPts);
             this.polyPts = [];
             this.updateUI();
@@ -879,6 +1316,7 @@
 
         cancelDrawing() {
             this.polyPts = [];
+            this.frontPts = [];
             this.action = null;
             this.redraw();
         }
@@ -897,7 +1335,7 @@
             if (mod || e.altKey) return;
             if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
             if (e.key === 'Escape') {
-                if (this.polyPts.length) this.cancelDrawing(); else this.select(null);
+                if (this.polyPts.length || this.frontPts.length) this.cancelDrawing(); else this.select(null);
                 return;
             }
             if (e.key === 'Enter') { this.finishPolyline(); return; }
@@ -907,6 +1345,7 @@
         }
 
         setTool(tool) {
+            if (tool !== 'handle') this.frontPts = [];
             if (tool !== 'polyline' && this.polyPts.length) this.finishPolyline();
             // The Stamp tool places single marks: only the stamping brushes can do that
             if (tool === 'stamp' && (this.presetParams[this.presetId] || {}).brush !== 'impressions') this.presetId = 'bosses';
@@ -950,7 +1389,7 @@
                 btn.classList.toggle('active', btn.dataset.prospectTool === this.tool);
             });
             const finish = document.getElementById('prospect-finish-btn');
-            if (finish) finish.style.display = this.tool === 'polyline' ? '' : 'none';
+            if (finish) finish.style.display = this.tool === 'polyline' || this.tool === 'handle' ? '' : 'none';
             const del = document.getElementById('prospect-delete-btn');
             if (del) del.disabled = !this.selected;
             const save = document.getElementById('prospect-save-btn');
@@ -958,6 +1397,7 @@
             this.canvas.style.cursor = this.tool === 'pan' ? 'grab' : (this.tool === 'select' ? 'default' : 'crosshair');
             this.updateUndoButtons();
             this.updateShadingPanel();
+            this.updateHandlesPanel();
             this.updateBrushPanel();
             this.updateDecorationList();
         }
@@ -995,6 +1435,14 @@
             });
             const reseed = document.getElementById('prospect-reseed-btn');
             if (reseed) reseed.style.display = sh.mode === 'stipple' ? '' : 'none';
+            const surfacePanel = document.getElementById('prospect-surface-panel');
+            if (surfacePanel) {
+                surfacePanel.style.display = this.prospect.kind === 'applied' && sh.mode !== 'none' ? '' : 'none';
+                SURFACE_SCHEMA.forEach(f => {
+                    document.getElementById(`prospect-su-${f.key}`).value = this.model.surface[f.key];
+                    document.getElementById(`prospect-su-${f.key}-value`).textContent = this.model.surface[f.key];
+                });
+            }
         }
 
         updateBrushPanel() {
@@ -1135,7 +1583,7 @@
                 const density = new Float32Array(field.w * field.h);
                 S().applyShadeRegions(field, density, shades);
                 if (sh.mode === 'stipple') {
-                    const dotR = S().defaultDotRadius(this.scene && this.scene.radius) * sh.dotScale;
+                    const dotR = S().defaultDotRadius({ height: this.scene ? this.referenceHeight : 400 }) * sh.dotScale;
                     ctx.fillStyle = '#000000';
                     ctx.beginPath();
                     for (const [cx, cy, r] of S().stipple(field, density, null, sh, dotR, null)) {

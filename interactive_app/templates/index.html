@@ -930,6 +930,20 @@
                         </div>
                     </div>
 
+                    <div class="panel" id="prospect-handles-panel" style="display: none;">
+                        <h2><i class="bi bi-link-45deg"></i> Handles</h2>
+                        <p class="prospect-status">Front view of a handle, derived from its side view (Handle layer). Choose the handle, press the button, then tap its outline on the original drawing: the two ends and the sides, going around it (it can be asymmetric). Double-click, Enter or a tap on the first point closes it. Drag a vertex to move it, click an edge to add one, tap a vertex twice to remove it.</p>
+                        <div class="form-group">
+                            <label for="prospect-front-part">Side view</label>
+                            <select id="prospect-front-part" class="form-control"></select>
+                        </div>
+                        <button id="prospect-front-place" class="btn btn-secondary" style="width: 100%;">
+                            <i class="bi bi-vector-pen"></i> Outline the front view
+                        </button>
+                        <div id="prospect-fronts-list" style="margin-top: 8px;"></div>
+                        <div id="prospect-front-controls"></div>
+                    </div>
+
                     <div class="panel">
                         <h2><i class="bi bi-palette"></i> Brush</h2>
                         <div id="prospect-brush-presets"></div>
@@ -986,6 +1000,11 @@
                             </label>
                         </div>
                         <div id="prospect-shading-controls" style="margin-top: 12px;"></div>
+                        <div id="prospect-surface-panel" style="display: none;">
+                            <h4 class="prospect-preset-family">Handle section</h4>
+                            <p class="prospect-status">Side view: the silhouette is shaded as a strap with rounded edges.</p>
+                            <div id="prospect-surface-controls"></div>
+                        </div>
                         <button id="prospect-reseed-btn" class="btn btn-secondary" style="width: 100%;">
                             <i class="bi bi-shuffle"></i> New dot pattern
                         </button>
@@ -998,6 +1017,9 @@
                         <h2><i class="bi bi-image"></i> Reference</h2>
                         <div class="form-group">
                             <label><input type="checkbox" id="prospect-bg-toggle" checked> Show the scan</label>
+                        </div>
+                        <div class="form-group">
+                            <label><input type="checkbox" id="prospect-show-all" checked> Show all the elements</label>
                         </div>
                         <div class="form-group">
                             <label>Opacity</label>
@@ -1593,6 +1615,13 @@
                 <div class="help-step">
                     <span class="help-step-number">3</span>
                     <div class="help-step-content">
+                        <h4>Handles</h4>
+                        <p>Handles traced in the Handle layer appear in the element list: pick one to shade its side view (adjust the edge rounding). On the vessel, the Handles panel derives the front view from it: choose the handle, then tap its outline on the original drawing (its two ends and its sides; it can be asymmetric), and adjust the edge rounding, the arch shading and the shadow on the wall. All the elements of the drawing are shown together; click one to work on it.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">4</span>
+                    <div class="help-step-content">
                         <h4>Edit and save</h4>
                         <p>Select a decoration to move it, drag its vertices or change its brush settings. Save to Project writes the SVG; reopening it keeps shading and decorations editable. On a tablet, two fingers pan and zoom; after the pen is used, one finger only pans.</p>
                     </div>
@@ -1855,6 +1884,7 @@
     <script src="{{ url_for('static', filename='js/prospect/prospect-geometry.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-shading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-brushes.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-surfaces.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-model.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-canvas.js') }}"></script>
     <script src="{{ url_for('static', filename='js/batch-export.js') }}"></script>

@@ -99,11 +99,15 @@
     }
 
     // Inside intervals [x0, x1] of the horizontal line at y
+    // poly: one ring, or a list of rings (even-odd, e.g. a handle with its hole)
     function horizontalSpans(y, poly) {
+        const rings = Array.isArray(poly[0]) ? poly : [poly];
         const xs = [];
-        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-            const a = poly[i], b = poly[j];
-            if ((a.y > y) !== (b.y > y)) xs.push((b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x);
+        for (const ring of rings) {
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const a = ring[i], b = ring[j];
+                if ((a.y > y) !== (b.y > y)) xs.push((b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x);
+            }
         }
         xs.sort((p, q) => p - q);
         const spans = [];
@@ -291,7 +295,9 @@
     // on each row the outermost distance from the axis. Rows above/below the profile continue
     // it with its end slope (a prospect often reaches a little lower than the drawn section,
     // and a vertical wall there would show as a light band).
-    function radiusByRow(profilePolylines, axisX, height) {
+    // extrapolate: false keeps rows outside the polylines at radius 0 (a handle covers only part
+    // of the vessel height)
+    function radiusByRow(profilePolylines, axisX, height, extrapolate = true) {
         const pts = profilePolylines.flat();
         if (!pts.length) return null;
         let y0 = Infinity, y1 = -Infinity;
@@ -339,6 +345,7 @@
             dr[y0 + i] = (b - a) / ((i > 0 && i < rs.length - 1) ? 2 : 1);
         }
         // End slopes measured a little inside the section (the smoothing flattens the very end)
+        if (!extrapolate) return { radius, dr, y0, y1, height: y1 - y0 };
         const k = Math.min(rs.length - 1, Math.max(3, Math.round((y1 - y0) / 40)));
         const topSlope = (rs[k] - rs[0]) / k;
         const bottomSlope = (rs[rs.length - 1] - rs[rs.length - 1 - k]) / k;
@@ -387,6 +394,187 @@
         return null;
     }
 
+    // Exact Euclidean distance (Felzenszwalb-Huttenlocher) of every pixel of a w x h mask to the
+    // nearest pixel where mask is 0
+    function distanceTransform(mask, w, h) {
+        const INF = 1e20;
+        const f = new Float64Array(Math.max(w, h)), d = new Float64Array(Math.max(w, h));
+        const v = new Int32Array(Math.max(w, h)), z = new Float64Array(Math.max(w, h) + 1);
+        const out = new Float64Array(w * h);
+        for (let i = 0; i < w * h; i++) out[i] = mask[i] ? INF : 0;
+        const pass = (n, get, set) => {
+            for (let q = 0; q < n; q++) f[q] = get(q);
+            let k = 0;
+            v[0] = 0; z[0] = -INF; z[1] = INF;
+            for (let q = 1; q < n; q++) {
+                let s;
+                for (;;) {
+                    const p = v[k];
+                    s = ((f[q] + q * q) - (f[p] + p * p)) / (2 * q - 2 * p);
+                    if (s <= z[k] && k > 0) k--; else break;
+                }
+                k++;
+                v[k] = q; z[k] = s; z[k + 1] = INF;
+            }
+            k = 0;
+            for (let q = 0; q < n; q++) {
+                while (z[k + 1] < q) k++;
+                const p = v[k];
+                d[q] = (q - p) * (q - p) + f[p];
+            }
+            for (let q = 0; q < n; q++) set(q, d[q]);
+        };
+        for (let x = 0; x < w; x++) pass(h, y => out[y * w + x], (y, val) => { out[y * w + x] = val; });
+        for (let y = 0; y < h; y++) pass(w, x => out[y * w + x], (x, val) => { out[y * w + x] = val; });
+        for (let i = 0; i < w * h; i++) out[i] = out[i] >= INF / 2 ? Math.max(w, h) : Math.sqrt(out[i]);
+        return out;
+    }
+
+    // Holes of a hand-traced shape. A drawing gives open strokes that meet at their ends (the
+    // arc of the hole, then short lines to the attachment...), not closed rings: the endpoints
+    // are merged within `tol` into a graph, and every independent cycle of it is a closed
+    // region. Returns the cycles as rings (points in walking order).
+    function strokeCycles(strokes, tol) {
+        const nodes = [];
+        const nodeOf = p => {
+            for (let i = 0; i < nodes.length; i++) if (Math.hypot(nodes[i].x - p.x, nodes[i].y - p.y) <= tol) return i;
+            nodes.push({ x: p.x, y: p.y });
+            return nodes.length - 1;
+        };
+        const edges = strokes.map((pl, i) => ({ i, a: nodeOf(pl[0]), b: nodeOf(pl[pl.length - 1]) }));
+        // Spanning forest (union-find); every other edge closes one cycle
+        const parent = nodes.map((_, i) => i);
+        const find = i => { while (parent[i] !== i) i = parent[i] = parent[parent[i]]; return i; };
+        const tree = [], extra = [];
+        for (const e of edges) {
+            if (find(e.a) === find(e.b) && e.a !== e.b) extra.push(e);
+            else if (e.a === e.b) extra.push(e);
+            else { parent[find(e.a)] = find(e.b); tree.push(e); }
+        }
+        const adj = nodes.map(() => []);
+        tree.forEach(e => { adj[e.a].push(e); adj[e.b].push(e); });
+        const rings = [];
+        for (const e of extra) {
+            // Path through the forest from e.a to e.b (breadth first)
+            const via = new Map([[e.a, null]]);
+            const queue = [e.a];
+            while (queue.length && !via.has(e.b)) {
+                const n = queue.shift();
+                for (const t of adj[n]) {
+                    const m = t.a === n ? t.b : t.a;
+                    if (!via.has(m)) { via.set(m, { edge: t, from: n }); queue.push(m); }
+                }
+            }
+            if (!via.has(e.b)) continue;
+            // The cycle: e from a to b, then back from b to a along the tree path
+            const ring = strokes[e.i].slice();
+            let at = e.b;
+            while (via.get(at)) {
+                const s = via.get(at);
+                const pl = strokes[s.edge.i];
+                ring.push(...(s.edge.a === at ? pl : pl.slice().reverse()));
+                at = s.from;
+            }
+            rings.push(ring);
+        }
+        return rings;
+    }
+
+    // Traced elements of the Handle / Application layers: side views of applied parts, shaded
+    // as inflated silhouettes. The outline is the largest stroke; the holes are the closed
+    // regions formed by the other strokes (see strokeCycles); the rest of the strokes are
+    // only lines of the drawing. An outline that is not closed (a handle stroke that starts and
+    // ends on the wall of the vessel) is closed by a straight line that is not an edge: the
+    // handle joins the vessel there (ring.open).
+    const PART_LAYERS = ['Handle', 'Application'];
+
+    // The drawn edge of a ring: an outline closed against the wall keeps its wall arc after
+    // `edgeEnd` points, and that arc is not an edge
+    function edgeLine(ring) {
+        return ring.edgeEnd ? ring.slice(0, ring.edgeEnd) : ring;
+    }
+
+    // A handle is applied to the vessel: its outline stops at the wall (the profile), it does
+    // not go into it. The parts of the stroke inside the wall are cut off at the wall, and the
+    // figure is closed along the wall itself, between the two ends (sampled every 2 px). The
+    // wall is r(y), the outermost distance of the profile from the axis, on the side where the
+    // handle is.
+    function closeAgainstWall(stroke, axisX, wall) {
+        const sgn = stroke.reduce((s, p) => s + p.x, 0) / stroke.length < axisX ? -1 : 1;
+        const rAt = y => wall.radius[Math.min(wall.radius.length - 1, Math.max(0, Math.round(y)))];
+        // > 0 outside the wall (in the air), < 0 inside the wall
+        const gap = p => Math.abs(p.x - axisX) - rAt(p.y);
+        const onWall = y => ({ x: axisX + sgn * rAt(y), y });
+        let i0 = 0, i1 = stroke.length - 1;
+        while (i0 < stroke.length && gap(stroke[i0]) < 0) i0++;
+        while (i1 > i0 && gap(stroke[i1]) < 0) i1--;
+        if (i1 - i0 < 2) return null;
+        const cross = (a, b) => {
+            const ga = gap(a), gb = gap(b);
+            const t = ga / (ga - gb);
+            return { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
+        };
+        const core = [];
+        if (i0 > 0) core.push(cross(stroke[i0 - 1], stroke[i0]));
+        // what dips into the wall between the ends is pulled back onto it
+        for (let i = i0; i <= i1; i++) core.push(gap(stroke[i]) < 0 ? onWall(stroke[i].y) : stroke[i]);
+        if (i1 < stroke.length - 1) core.push(cross(stroke[i1], stroke[i1 + 1]));
+        const a = core[0], b = core[core.length - 1];
+        const ring = core.slice();
+        const dir = a.y > b.y ? 1 : -1;
+        for (let y = b.y + dir * 2; dir > 0 ? y < a.y : y > a.y; y += dir * 2) ring.push(onWall(y));
+        ring.edgeEnd = core.length;
+        ring.open = true;
+        return ring;
+    }
+
+    function readParts(svgEl, dOverrides, axisX, wall) {
+        const parts = [];
+        for (const layer of PART_LAYERS) {
+            svgEl.querySelectorAll(`g[id="layer_${layer}"] > g[id^="element_"]`).forEach(g => {
+                const strokes = [];
+                g.querySelectorAll('path').forEach(p => {
+                    if (isProspectArt(p)) return;
+                    for (const pl of flattenPathD(pathD(p, dOverrides), 1.5)) {
+                        if (pl.length >= 2 && polylineLength(pl) > 3) strokes.push(pl);
+                    }
+                });
+                if (!strokes.length) return;
+                const areas = strokes.map(polygonArea);
+                let oi = 0;
+                areas.forEach((a, i) => { if (a > areas[oi]) oi = i; });
+                let outline = strokes[oi];
+                if (outline.length < 3 || areas[oi] < 4) return;
+                let b = bbox(outline);
+                const tol = Math.min(14, Math.max(4, 0.02 * Math.hypot(b.w, b.h)));
+                const gap = Math.hypot(outline[0].x - outline[outline.length - 1].x, outline[0].y - outline[outline.length - 1].y);
+                // (a closed path may end a step short of its start; a real opening is much wider)
+                if (gap > Math.max(tol, 0.08 * Math.hypot(b.w, b.h))) {
+                    outline.open = true;
+                    // closed against the wall of the vessel when there is one, else by a straight line
+                    const closed = axisX !== null && wall ? closeAgainstWall(outline, axisX, wall) : null;
+                    if (closed) { outline = closed; b = bbox(outline); }
+                }
+                const rings = [outline];
+                const others = strokes.filter((_, i) => i !== oi);
+                for (const ring of strokeCycles(others, tol)) {
+                    // a real hole: big enough, inside the outline
+                    if (ring.length < 3 || polygonArea(ring) < 0.005 * areas[oi]) continue;
+                    const c = bbox(ring);
+                    if (!pointInPolygon((c.x0 + c.x1) / 2, (c.y0 + c.y1) / 2, outline)) continue;
+                    rings.push(ring);
+                }
+                const id = g.getAttribute('id');
+                const ringD = r => r.map((q, i) => `${i ? 'L' : 'M'} ${q.x.toFixed(2)} ${q.y.toFixed(2)}`).join(' ') + ' Z';
+                parts.push({
+                    id, name: `${layer}: ${id.replace(/^element_/, '').replace(/_/g, ' ')}`, kind: 'applied', layer,
+                    group: g, outline, rings, outlineD: rings.map(ringD).join(' '), bbox: b
+                });
+            });
+        }
+        return parts;
+    }
+
     // dOverrides: Map(pathElement -> current "d"), so unsaved SVG Editor edits are used
     function readScene(svgEl, width, height, dOverrides, sessionAxisX) {
         const prospects = [];
@@ -401,19 +589,23 @@
             });
             if (outline) {
                 const id = g.getAttribute('id');
-                prospects.push({ id, name: id.replace(/^element_/, '').replace(/_/g, ' '), group: g, outline, outlineD, bbox: bbox(outline) });
+                prospects.push({
+                    id, name: id.replace(/^element_/, '').replace(/_/g, ' '), kind: 'prospect', group: g,
+                    outline, rings: [outline], outlineD, bbox: bbox(outline)
+                });
             }
         });
         const axisX = findAxisX(svgEl, dOverrides, sessionAxisX);
         // The profile section only (not its mirrored copy)
         const profile = layerPolylines(svgEl, 'g[id="layer_Profile"]', dOverrides);
         const radius = (axisX !== null && profile.length) ? radiusByRow(profile, axisX, Math.ceil(height)) : null;
-        return { width, height, prospects, axisX, profile, radius };
+        const parts = readParts(svgEl, dOverrides, axisX, radius);
+        return { width, height, prospects, parts, axisX, profile, radius };
     }
 
     window.ProspectGeometry = {
         isProspectArt, flattenPathD, polygonArea, bbox, pointInPolygon, distToSegment, distToPolyline,
         horizontalSpans, polylineLength, resample, pointsAlong, mulberry32, pathSampler, offsetPolyline, clipPolylineToPolygon,
-        simplify, smoothPolyline, radiusByRow, readScene
+        simplify, smoothPolyline, radiusByRow, distanceTransform, edgeLine, readScene
     };
 })();

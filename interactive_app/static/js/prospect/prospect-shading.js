@@ -18,30 +18,72 @@
 
     const mulberry32 = seed => G().mulberry32(seed);
 
-    // Inside mask of the outline over its bounding box
-    function rasterizeOutline(outline) {
-        const b = G().bbox(outline);
-        const x0 = Math.floor(b.x0), y0 = Math.floor(b.y0);
-        const w = Math.ceil(b.x1) - x0 + 1, h = Math.ceil(b.y1) - y0 + 1;
+    // Rings of a prospect: a list of polygons, a single polygon or nothing
+    function asRings(outline) {
+        if (!outline) return null;
+        return Array.isArray(outline[0]) ? outline : [outline];
+    }
+
+    function ringsPath(ctx, rings, dx = 0, dy = 0) {
+        ctx.beginPath();
+        for (const ring of rings) {
+            ring.forEach((p, i) => (i ? ctx.lineTo(p.x - dx, p.y - dy) : ctx.moveTo(p.x - dx, p.y - dy)));
+            ctx.closePath();
+        }
+    }
+
+    // Inside mask of the rings (even-odd, so a hole stays out) over their bounding box, plus `pad` px
+    function rasterizeRings(rings, pad = 0) {
+        const b = G().bbox(rings.flat());
+        const x0 = Math.floor(b.x0) - pad, y0 = Math.floor(b.y0) - pad;
+        const w = Math.ceil(b.x1) - x0 + 1 + pad, h = Math.ceil(b.y1) - y0 + 1 + pad;
         const c = document.createElement('canvas');
         c.width = w;
         c.height = h;
-        const ctx = c.getContext('2d');
-        ctx.beginPath();
-        outline.forEach((p, i) => (i ? ctx.lineTo(p.x - x0, p.y - y0) : ctx.moveTo(p.x - x0, p.y - y0)));
-        ctx.closePath();
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        ringsPath(ctx, rings, x0, y0);
         ctx.fillStyle = '#000';
-        ctx.fill();
+        ctx.fill('evenodd');
         const data = ctx.getImageData(0, 0, w, h).data;
         const inside = new Uint8Array(w * h);
         for (let i = 0; i < w * h; i++) inside[i] = data[i * 4 + 3] > 127 ? 1 : 0;
         return { x0, y0, w, h, inside };
     }
 
-    // Normalized luminance (0 = darkest, 1 = brightest, 1st-99th percentile) of every pixel
-    // of the prospect. Depends only on the geometry and the light.
+    // Percentile range of a luminance histogram
+    function histRange(hist, count, bins) {
+        const pct = q => {
+            const target = q * count;
+            let acc = 0;
+            for (let b = 0; b < bins; b++) {
+                acc += hist[b];
+                if (acc >= target) return (b + 0.5) / bins * 2 - 1;
+            }
+            return 1;
+        };
+        return { lo: pct(0.01), hi: pct(0.99) };
+    }
+
+    // Luminance range of a plain cylinder facing the viewer: the scale of an applied part when
+    // there is no vessel to take it from
+    function referenceRange(params) {
+        const L = lightVector(params.direction, params.elevation);
+        const bins = 2048, hist = new Uint32Array(bins);
+        const n = 800;
+        for (let i = 0; i < n; i++) {
+            const dx = -1 + 2 * (i + 0.5) / n;
+            const z = Math.max(Math.sqrt(1 - dx * dx), 0.05);
+            const v = (dx * L[0] + z * L[2]) / Math.hypot(dx, z);
+            hist[Math.min(bins - 1, Math.max(0, Math.floor((v + 1) / 2 * bins)))]++;
+        }
+        return histRange(hist, n, bins);
+    }
+
+    // Normalized luminance (0 = darkest, 1 = brightest) of every pixel of the vessel: a surface
+    // of revolution around the axis, normal (dx, -r r', z). The 1st-99th percentile of the
+    // prospect map to 0..1. Depends only on the geometry and the light.
     function computeLuminance(outline, radiusInfo, axisX, params) {
-        const m = rasterizeOutline(outline);
+        const m = rasterizeRings(asRings(outline));
         const { x0, y0, w, h, inside } = m;
         const L = lightVector(params.direction, params.elevation);
         const lum = new Float32Array(w * h);
@@ -66,22 +108,101 @@
                 count++;
             }
         }
-        // Percentiles from the histogram
-        const pct = q => {
-            const target = q * count;
-            let acc = 0;
-            for (let b = 0; b < bins; b++) {
-                acc += hist[b];
-                if (acc >= target) return (b + 0.5) / bins * 2 - 1;
-            }
-            return 1;
-        };
-        const lo = pct(0.01), hi = pct(0.99);
-        const span = Math.max(1e-6, hi - lo);
+        const range = histRange(hist, count, bins);
+        const span = Math.max(1e-6, range.hi - range.lo);
         for (let k = 0; k < w * h; k++) {
-            if (inside[k]) lum[k] = Math.min(1, Math.max(0, (lum[k] - lo) / span));
+            if (inside[k]) lum[k] = Math.min(1, Math.max(0, (lum[k] - range.lo) / span));
         }
-        return { x0, y0, w, h, inside, lum };
+        return { x0, y0, w, h, inside, lum, range };
+    }
+
+    // Separable box blur of a w x h float field (window 2r+1, edges clamped)
+    function boxBlur(f, w, h, r) {
+        const tmp = new Float64Array(w * h), out = new Float64Array(w * h);
+        const n = 2 * r + 1;
+        for (let j = 0; j < h; j++) {
+            for (let i = 0; i < w; i++) {
+                let acc = 0;
+                for (let k = -r; k <= r; k++) acc += f[j * w + Math.min(w - 1, Math.max(0, i + k))];
+                tmp[j * w + i] = acc / n;
+            }
+        }
+        for (let j = 0; j < h; j++) {
+            for (let i = 0; i < w; i++) {
+                let acc = 0;
+                for (let k = -r; k <= r; k++) acc += tmp[Math.min(h - 1, Math.max(0, j + k)) * w + i];
+                out[j * w + i] = acc / n;
+            }
+        }
+        return out;
+    }
+
+    // Side view of an applied part (a handle seen from the side): the silhouette is inflated into a
+    // rounded strap. The height grows with the distance d from the edge (the hole included)
+    // along a circular arc of width b = bevel * (largest inscribed radius):
+    //   H(d) = relief * b * sqrt(1 - (1 - d/b)^2),  flat beyond b.
+    // Its normal is (-H' grad d, 1); bevel 1 is a round rod, a small bevel a flat strap with
+    // rounded edges. The luminance uses the scale (range) of the vessel, so the tone matches.
+    // Silhouette of a part with, for every pixel, its distance to the drawn edges only: the
+    // closing line of an open outline is where the part joins the vessel, not an edge
+    function edgeField(rings, pad = 2) {
+        const m = rasterizeRings(asRings(rings), pad);
+        const { x0, y0, w, h, inside } = m;
+        const cv = document.createElement('canvas');
+        cv.width = w;
+        cv.height = h;
+        const cx = cv.getContext('2d', { willReadFrequently: true });
+        cx.strokeStyle = '#000';
+        cx.lineWidth = 2;
+        for (const ring of asRings(rings)) {
+            cx.beginPath();
+            G().edgeLine(ring).forEach((p, i) => (i ? cx.lineTo(p.x - x0, p.y - y0) : cx.moveTo(p.x - x0, p.y - y0)));
+            if (!ring.open) cx.closePath();
+            cx.stroke();
+        }
+        const src = cx.getImageData(0, 0, w, h).data;
+        const free = new Uint8Array(w * h);
+        for (let k = 0; k < w * h; k++) free[k] = src[k * 4 + 3] > 40 ? 0 : 1;
+        // Smoothed: the raster edge is quantized, and its gradient would streak the shading
+        const dist = boxBlur(boxBlur(G().distanceTransform(free, w, h), w, h, 2), w, h, 2);
+        // Largest inscribed radius (98th percentile: a few far pixels must not round the whole strap)
+        const ds = [];
+        for (let k = 0; k < w * h; k++) if (inside[k]) ds.push(dist[k]);
+        ds.sort((p, q) => p - q);
+        const dmax = ds.length ? ds[Math.min(ds.length - 1, Math.floor(ds.length * 0.98))] : 1;
+        return { x0, y0, w, h, inside, dist, dmax };
+    }
+
+    function computeInflateLuminance(rings, surface, params, range) {
+        const { x0, y0, w, h, inside, dist, dmax } = edgeField(rings);
+        const b = Math.max(1, surface.bevel * (dmax - 0.5));
+        const L = lightVector(params.direction, params.elevation);
+        const rg = range || referenceRange(params);
+        const span = Math.max(1e-6, rg.hi - rg.lo);
+        const lum = new Float32Array(w * h);
+        const at = (i, j) => dist[Math.min(h - 1, Math.max(0, j)) * w + Math.min(w - 1, Math.max(0, i))];
+        for (let j = 0; j < h; j++) {
+            for (let i = 0; i < w; i++) {
+                const k = j * w + i;
+                if (!inside[k]) continue;
+                const d = dist[k] - 0.5;
+                let nx = 0, ny = 0, nz = 1;
+                if (d < b) {
+                    const t = 1 - Math.max(0, d) / b;
+                    const s = Math.min(25, surface.relief * t / Math.sqrt(Math.max(1e-4, 1 - t * t)));
+                    let gx = at(i + 1, j) - at(i - 1, j), gy = at(i, j + 1) - at(i, j - 1);
+                    const gl = Math.hypot(gx, gy);
+                    if (gl > 1e-6) { gx /= gl; gy /= gl; } else { gx = gy = 0; }
+                    nx = -s * gx;
+                    ny = -s * gy;
+                    const nl = Math.sqrt(nx * nx + ny * ny + 1);
+                    nx /= nl; ny /= nl; nz = 1 / nl;
+                }
+                const v = nx * L[0] + ny * L[1] + nz * L[2];
+                lum[k] = Math.min(1, Math.max(0, (v - rg.lo) / span));
+            }
+        }
+        return { x0, y0, w, h, inside, lum, range: rg };
     }
 
     // Shading density 0..1: lit areas (luminance above `lit`) stay blank
@@ -93,6 +214,8 @@
             if (!inside[k]) continue;
             const v = Math.min(1, Math.max(0, (lit - lum[k]) / lit));
             density[k] = Math.pow(v, params.gamma);
+            // Shadow cast on the wall by an applied part
+            if (field.boost && field.boost[k] > density[k]) density[k] = field.boost[k];
         }
         return density;
     }
@@ -132,13 +255,15 @@
         const rand = mulberry32(params.seed || 0);
         // Dots may touch the drawn outline: keep only the dot radius plus half the outline stroke
         const clearance = dotR * 1.3 + 0.6;
-        const edge = outline ? G().simplify(outline, 0.5) : null;
+        const rings = asRings(outline);
+        // (an open ring, e.g. a handle joining the vessel wall, has no edge along its closing line)
+        const edges = rings ? rings.map(r => ({ pts: G().simplify(G().edgeLine(r), 0.5), closed: !r.open })) : null;
         const ok = (cx, cy) => {
             const li = Math.floor(cx - x0), lj = Math.floor(cy - y0);
             if (li < 0 || lj < 0 || li >= w || lj >= h) return false;
             const k = lj * w + li;
             if (!inside[k] || (blocked && blocked[k])) return false;
-            return !edge || G().distToPolyline(cx, cy, edge, true) >= clearance;
+            return !edges || edges.every(e => G().distToPolyline(cx, cy, e.pts, e.closed) >= clearance);
         };
         const dots = [];
         for (let gy = 0; gy < gh; gy++) {
@@ -194,10 +319,8 @@
         ctx.translate(-x0, -y0);
         if (outline) {
             // Decorations are cut by the outline: only their visible part keeps dots away
-            ctx.beginPath();
-            outline.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
-            ctx.closePath();
-            ctx.clip();
+            ringsPath(ctx, asRings(outline));
+            ctx.clip('evenodd');
         }
         ctx.fillStyle = ctx.strokeStyle = '#000';
         ctx.lineCap = ctx.lineJoin = 'round';
@@ -298,5 +421,5 @@
         return c;
     }
 
-    window.ProspectShading = { lightVector, computeLuminance, computeDensity, defaultDotRadius, stipple, decorationMask, applyShadeRegions, toneCanvas };
+    window.ProspectShading = { lightVector, computeLuminance, computeInflateLuminance, edgeField, referenceRange, computeDensity, defaultDotRadius, stipple, decorationMask, applyShadeRegions, toneCanvas };
 })();
