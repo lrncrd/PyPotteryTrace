@@ -238,6 +238,10 @@
                     <i class="bi bi-vector-pen"></i>
                     <span class="tab-label">SVG Editor</span>
                 </button>
+                <button class="tab-button" data-tab="prospect-canvas-tab" id="prospect-canvas-tab-btn" disabled>
+                    <i class="bi bi-brush"></i>
+                    <span class="tab-label">Prospect Canvas</span>
+                </button>
                 <button class="tab-button" data-tab="postprocess-tab" id="postprocess-tab-btn" disabled>
                     <i class="bi bi-layers"></i>
                     <span class="tab-label">Post-Processing</span>
@@ -875,6 +879,151 @@
             </div>
         </div>
 
+        <!-- Tab: Prospect Canvas -->
+        <div class="tab-content" id="prospect-canvas-tab">
+            <div class="main-content">
+                <aside class="sidebar left-sidebar">
+                    <div class="panel">
+                        <h2><i class="bi bi-brush"></i> Prospect Canvas</h2>
+                        <p style="font-size: 0.875rem; color: var(--text-dim); margin-bottom: 0.75rem;">
+                            Shade and decorate the front view. Shading comes from the profile revolved around the axis; decorations are drawn with brushes.
+                        </p>
+                        <div class="form-group">
+                            <label for="prospect-element-select">Prospect</label>
+                            <select id="prospect-element-select" class="form-control"></select>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h2><i class="bi bi-tools"></i> Tools</h2>
+                        <div class="mode-selector prospect-tools">
+                            <button class="mode-btn" data-prospect-tool="select" title="Select, move and edit decorations (V)">
+                                <span class="mode-icon"><i class="bi bi-cursor"></i></span>
+                                <span>Select</span>
+                                <span class="mode-desc">Move, edit vertices (V)</span>
+                            </button>
+                            <button class="mode-btn" data-prospect-tool="pan" title="Pan the view (H)">
+                                <span class="mode-icon"><i class="bi bi-arrows-move"></i></span>
+                                <span>Pan</span>
+                                <span class="mode-desc">Drag to move (H)</span>
+                            </button>
+                            <button class="mode-btn active" data-prospect-tool="band" title="Horizontal band across the prospect (B)">
+                                <span class="mode-icon"><i class="bi bi-distribute-vertical"></i></span>
+                                <span>Band</span>
+                                <span class="mode-desc">Tap a height (B)</span>
+                            </button>
+                            <button class="mode-btn" data-prospect-tool="polyline" title="Click the vertices, double-click or Enter to finish (P)">
+                                <span class="mode-icon"><i class="bi bi-activity"></i></span>
+                                <span>Polyline</span>
+                                <span class="mode-desc">Zig-zag, double-click ends (P)</span>
+                            </button>
+                            <button class="mode-btn" data-prospect-tool="stamp" title="Place a single mark: bosses, impressions (S)">
+                                <span class="mode-icon"><i class="bi bi-record-circle"></i></span>
+                                <span>Stamp</span>
+                                <span class="mode-desc">One mark per tap (S)</span>
+                            </button>
+                            <button class="mode-btn" data-prospect-tool="freehand" title="Draw freely, best with a pen (F)">
+                                <span class="mode-icon"><i class="bi bi-pencil"></i></span>
+                                <span>Freehand</span>
+                                <span class="mode-desc">Pen or mouse (F)</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h2><i class="bi bi-palette"></i> Brush</h2>
+                        <div id="prospect-brush-presets"></div>
+                        <h3 id="prospect-params-title" class="prospect-subtitle"></h3>
+                        <canvas id="prospect-brush-preview" class="prospect-brush-preview" title="Preview of the brush on a sample path"></canvas>
+                        <div id="prospect-brush-params"></div>
+                        <button id="prospect-reset-brush" class="btn btn-secondary" style="width: 100%; margin-top: 6px;">
+                            <i class="bi bi-arrow-counterclockwise"></i> Reset brush to defaults
+                        </button>
+                    </div>
+                </aside>
+
+                <main class="canvas-area">
+                    <div class="canvas-container" id="prospect-canvas-container">
+                        <canvas id="prospect-canvas"></canvas>
+                        <div id="prospect-canvas-message" class="canvas-message">
+                            <span class="message-icon"><i class="bi bi-brush" style="font-size: 2.5rem; color: var(--primary);"></i></span>
+                            <p>Vectorize a drawing with a Prospectus element to start</p>
+                        </div>
+                    </div>
+
+                    <div class="canvas-toolbar">
+                        <button id="prospect-zoom-in" class="toolbar-btn" title="Zoom In"><i class="bi bi-zoom-in"></i></button>
+                        <button id="prospect-zoom-out" class="toolbar-btn" title="Zoom Out"><i class="bi bi-zoom-out"></i></button>
+                        <button id="prospect-fit" class="toolbar-btn" title="Fit the prospect"><i class="bi bi-arrows-fullscreen"></i></button>
+                        <div class="toolbar-divider"></div>
+                        <button id="prospect-undo" class="toolbar-btn" title="Undo (Ctrl+Z)" disabled><i class="bi bi-arrow-counterclockwise"></i></button>
+                        <button id="prospect-redo" class="toolbar-btn" title="Redo (Ctrl+Shift+Z)" disabled><i class="bi bi-arrow-clockwise"></i></button>
+                        <div class="toolbar-divider"></div>
+                        <button id="prospect-delete-btn" class="toolbar-btn" title="Delete the selected decoration (Del)" disabled><i class="bi bi-trash"></i></button>
+                        <button id="prospect-finish-btn" class="toolbar-btn" title="Finish the polyline (Enter)" style="display: none;"><i class="bi bi-check-lg"></i></button>
+                    </div>
+                </main>
+
+                <aside class="sidebar right-sidebar">
+                    <div class="panel">
+                        <h2><i class="bi bi-circle-half"></i> Shading</h2>
+                        <p id="prospect-shading-status" class="prospect-status" style="display: none;"></p>
+                        <div class="macos-segmented-control" id="prospect-shading-modes" role="radiogroup" aria-label="Shading mode">
+                            <label class="macos-segment">
+                                <input type="radio" name="prospect-shading-mode" value="none">
+                                <i class="bi bi-slash-circle"></i>
+                                <span>None</span>
+                            </label>
+                            <label class="macos-segment active">
+                                <input type="radio" name="prospect-shading-mode" value="stipple" checked>
+                                <i class="bi bi-grip-horizontal"></i>
+                                <span>Stipple</span>
+                            </label>
+                            <label class="macos-segment">
+                                <input type="radio" name="prospect-shading-mode" value="tone">
+                                <i class="bi bi-circle-half"></i>
+                                <span>Tone</span>
+                            </label>
+                        </div>
+                        <div id="prospect-shading-controls" style="margin-top: 12px;"></div>
+                        <button id="prospect-reseed-btn" class="btn btn-secondary" style="width: 100%;">
+                            <i class="bi bi-shuffle"></i> New dot pattern
+                        </button>
+                        <button id="prospect-reset-shading" class="btn btn-secondary" style="width: 100%; margin-top: 6px;">
+                            <i class="bi bi-arrow-counterclockwise"></i> Reset shading to defaults
+                        </button>
+                    </div>
+
+                    <div class="panel">
+                        <h2><i class="bi bi-image"></i> Reference</h2>
+                        <div class="form-group">
+                            <label><input type="checkbox" id="prospect-bg-toggle" checked> Show the scan</label>
+                        </div>
+                        <div class="form-group">
+                            <label>Opacity</label>
+                            <input type="range" id="prospect-bg-opacity" class="slider" min="0.05" max="1" step="0.05" value="0.35">
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <h2><i class="bi bi-list-ul"></i> Decorations</h2>
+                        <div id="prospect-decorations-list" class="segments-list">
+                            <p class="empty-message">No decorations yet</p>
+                        </div>
+                    </div>
+
+                    <div class="panel">
+                        <button id="prospect-save-btn" class="btn btn-primary btn-large" disabled>
+                            <i class="bi bi-floppy"></i> Save to Project
+                        </button>
+                        <p style="font-size: 0.83rem; color: var(--text-dim); margin-top: 8px; margin-bottom: 0;">
+                            Saves the drawing (with shading and decorations) like "Save Modified SVG" in the SVG Editor. Reopening it keeps everything editable.
+                        </p>
+                    </div>
+                </aside>
+            </div>
+        </div>
+
         <!-- Tab 4: Post-Processing -->
         <div class="tab-content" id="postprocess-tab">
             <div class="postprocess-container">
@@ -1317,6 +1466,7 @@
                 <button class="help-tab-btn" data-help-tab="setup">Setup</button>
                 <button class="help-tab-btn" data-help-tab="segmentation">Segmentation</button>
                 <button class="help-tab-btn" data-help-tab="editor">SVG Editor</button>
+                <button class="help-tab-btn" data-help-tab="prospect">Prospect Canvas</button>
                 <button class="help-tab-btn" data-help-tab="postprocess">Post-Processing</button>
                 <button class="help-tab-btn" data-help-tab="shortcuts">Shortcuts</button>
             </div>
@@ -1424,6 +1574,31 @@
                 </div>
             </div>
 
+            <div class="help-tab-content" data-help-content="prospect">
+                <h3><i class="bi bi-brush"></i> Prospect Canvas</h3>
+                <div class="help-step">
+                    <span class="help-step-number">1</span>
+                    <div class="help-step-content">
+                        <h4>Shading</h4>
+                        <p>Stippling or a grey tone, generated from the Profile revolved around the rotation center. Move the light and the sliders; the shading updates live.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">2</span>
+                    <div class="help-step-content">
+                        <h4>Decorations</h4>
+                        <p>Pick a brush (groove, double groove, oval or dot impressions), then draw its path: Band for a horizontal line across the vessel, Polyline for zig-zags, Freehand with a pen or mouse. Everything is clipped to the outline.</p>
+                    </div>
+                </div>
+                <div class="help-step">
+                    <span class="help-step-number">3</span>
+                    <div class="help-step-content">
+                        <h4>Edit and save</h4>
+                        <p>Select a decoration to move it, drag its vertices or change its brush settings. Save to Project writes the SVG; reopening it keeps shading and decorations editable. On a tablet, two fingers pan and zoom; after the pen is used, one finger only pans.</p>
+                    </div>
+                </div>
+            </div>
+
             <div class="help-tab-content" data-help-content="postprocess">
                 <h3><i class="bi bi-layers"></i> Post-Processing</h3>
                 <div class="help-step">
@@ -1460,6 +1635,18 @@
                     <div class="shortcut-row"><kbd>A</kbd> <span>Add Point Mode</span></div>
                     <div class="shortcut-row"><kbd>D</kbd> / <kbd>Delete</kbd> <span>Delete Mode / Delete Selected</span></div>
                     <div class="shortcut-row"><kbd>Ctrl</kbd> + <kbd>Z</kbd> <span>Undo</span></div>
+                </div>
+                <div class="shortcuts-section" style="margin-top: 15px;">
+                    <h4>Prospect Canvas</h4>
+                    <div class="shortcut-row"><kbd>V</kbd> <span>Select</span></div>
+                    <div class="shortcut-row"><kbd>H</kbd> / <kbd>Space</kbd> <span>Pan</span></div>
+                    <div class="shortcut-row"><kbd>B</kbd> <span>Band</span></div>
+                    <div class="shortcut-row"><kbd>P</kbd> <span>Polyline (Enter / double-click to finish)</span></div>
+                    <div class="shortcut-row"><kbd>F</kbd> <span>Freehand</span></div>
+                    <div class="shortcut-row"><kbd>S</kbd> <span>Stamp (single mark)</span></div>
+                    <div class="shortcut-row"><kbd>Del</kbd> <span>Delete the selected decoration</span></div>
+                    <div class="shortcut-row"><kbd>Ctrl</kbd> + <kbd>Z</kbd> / <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> <span>Undo / Redo</span></div>
+                    <div class="shortcut-row"><kbd>Ctrl</kbd> + <kbd>S</kbd> <span>Save to Project</span></div>
                 </div>
             </div>
         </div>
@@ -1665,6 +1852,11 @@
     <script src="{{ url_for('static', filename='js/canvas.js') }}"></script>
     <script src="{{ url_for('static', filename='js/segmentation.js') }}"></script>
     <script src="{{ url_for('static', filename='js/svg-editor.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-geometry.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-shading.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-brushes.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-model.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-canvas.js') }}"></script>
     <script src="{{ url_for('static', filename='js/batch-export.js') }}"></script>
     <script src="{{ url_for('static', filename='js/postprocess.js') }}"></script>
 

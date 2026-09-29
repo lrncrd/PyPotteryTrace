@@ -4647,3 +4647,149 @@ textarea {
     color: #000000;
     transform: translateY(-1px);
 }
+/* ===== Prospect Canvas ===== */
+#prospect-canvas-container {
+    touch-action: none;
+}
+
+#prospect-canvas {
+    display: block;
+    touch-action: none;
+}
+
+.prospect-tools .mode-btn,
+.prospect-preset-btn {
+    min-height: 44px; /* finger/pen friendly */
+}
+
+.prospect-presets {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.prospect-preset-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 4px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    color: var(--text-main);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.prospect-preset-btn i {
+    font-size: 1.15rem;
+    color: var(--text-dim);
+}
+
+.prospect-preset-btn:hover,
+.prospect-preset-btn.active {
+    background: var(--primary-soft);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.prospect-preset-btn.active i,
+.prospect-preset-btn:hover i {
+    color: var(--primary);
+}
+
+.prospect-subtitle {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin: 4px 0 8px;
+}
+
+.prospect-control {
+    margin-bottom: 8px;
+}
+
+.prospect-control label {
+    font-size: 0.8rem;
+}
+
+.prospect-value {
+    font-family: var(--font-mono, monospace);
+    color: var(--primary);
+}
+
+.prospect-status {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+}
+
+#prospect-shading-modes.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+#prospect-reseed-btn {
+    margin-top: 4px;
+}
+
+.prospect-deco-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    min-height: 40px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 4px;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.prospect-deco-row:hover,
+.prospect-deco-row.active {
+    background: var(--primary-soft);
+    border-color: var(--primary);
+}
+
+.prospect-preset-family {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 8px 0 4px;
+}
+
+.prospect-brush-preview {
+    display: block;
+    width: 100%;
+    height: 110px;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 10px;
+}
+
+.prospect-section {
+    border-top: 1px solid var(--border);
+    padding: 6px 0 2px;
+}
+
+.prospect-section > summary {
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    padding: 4px 0;
+    min-height: 32px;
+}

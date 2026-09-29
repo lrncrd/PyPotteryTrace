@@ -626,8 +626,8 @@ class PostProcessingManager {
                     // Also apply to all path elements inside
                     const paths = g.querySelectorAll('path, polyline, line, circle, rect');
                     paths.forEach(path => {
-                        // Prospect stippling dots are filled shapes, not strokes
-                        if (path.closest('g.shading')) return;
+                        // Prospect shading and decorations carry their own fill/stroke
+                        if (path.closest('g.prospect-art, g.shading')) return;
                         path.setAttribute('stroke-width', strokeWidth);
                         path.setAttribute('stroke', '#000000');
                     });
@@ -706,7 +706,8 @@ class PostProcessingManager {
                 // Only process main elements
                 if (category && mainCategories.includes(category)) {
                     // Process all path elements inside this group
-                    const paths = g.querySelectorAll('path');
+                    // Prospect Canvas decorations are drawn geometry, not traced contours
+                    const paths = Array.from(g.querySelectorAll('path')).filter(p => !p.closest('g.prospect-art, g.shading'));
 
                     paths.forEach(path => {
                         const dAttr = path.getAttribute('d');

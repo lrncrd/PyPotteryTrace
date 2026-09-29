@@ -134,7 +134,7 @@ This process exploits the radial symmetry characteristic of ceramic profiles, al
 
 ## 6. Prospect (Front View): Outline and Generated Shading
 
-A prospect mixes several drawing conventions (outline, interior lines, decoration, stippled shading). At the resolution of typical scans, dots and decoration motifs touch or overlap, so they cannot be traced reliably. PyPotteryTrace therefore extracts only the **outer border** of the prospect and **generates** the shading from the vessel shape given by the profile.
+A prospect mixes several drawing conventions (outline, interior lines, decoration, stippled shading). At the resolution of typical scans, dots and decoration motifs touch or overlap, so they cannot be traced reliably. PyPotteryTrace therefore extracts only the **outer border** of the prospect; shading and decoration are then produced in the **Prospect Canvas** tab, where the shading is **generated** from the vessel shape given by the profile (below) and decorations are drawn with brushes. The canvas computes everything in the browser (`interactive_app/static/js/prospect/`) and stores its parameters in the SVG, so the result stays editable.
 
 ### Outline
 
@@ -144,20 +144,34 @@ $$w = 2 \cdot \operatorname{median}_{p \in S} D(p)$$
 
 ### Surface of Revolution
 
-From the outer contour of the profile and the axis position $c_x$, the radius $r(y)$ is the outermost distance $|c_x - x|$ on each row, interpolated and smoothed with a Gaussian ($\sigma = \max(3, H/80)$, $H$ = profile height). A point $(x, y)$ of the prospect, with $\Delta x = x - c_x$, lies on the surface
+From the profile section and the axis position $c_x$, the radius $r(y)$ is the outermost distance $|c_x - x|$ on each row crossed by the section, interpolated and smoothed with a Gaussian ($\sigma = \max(3, H/80)$, $H$ = profile height). Above and below the section $r(y)$ continues with the end slope of the profile. A point $(x, y)$ of the prospect, with $\Delta x = x - c_x$, lies on the surface
 $$F(\Delta x, y, z) = \Delta x^2 + z^2 - r(y)^2 = 0, \qquad z = \sqrt{r(y)^2 - \Delta x^2}$$
 whose normal is
 $$\vec{n} \propto \nabla F = \big(\Delta x,\ -r(y)\,r'(y),\ z\big)$$
 
 ### Lighting and Dot Density
 
-With the conventional light from the upper left, $\vec{L} \propto (-1, -1, 1)$ (x right, y down, z towards the viewer), the Lambert luminance is $\ell = \hat{n} \cdot \hat{L}$, normalized to $[0,1]$ over the prospect (1st–99th percentile). The dot density is
+With the conventional light from the upper left, $\vec{L} \propto (-1, -1, 1)$ (x right, y down, z towards the viewer; direction and elevation are adjustable in the canvas), the Lambert luminance is $\ell = \hat{n} \cdot \hat{L}$, normalized to $[0,1]$ over the prospect (1st–99th percentile). The dot density is
 $$\rho = \operatorname{clip}\left(\frac{\ell_0 - \ell}{\ell_0},\ 0,\ 1\right)^{\gamma}, \qquad \ell_0 = 0.75,\ \gamma = 1.3$$
-so lit areas stay blank and surfaces facing down or away (under the rim, the lower body) get dense dots.
+so lit areas stay blank and surfaces facing down or away (under the rim, the lower body) get dense dots. In **tone** mode the same density is rendered as a continuous grey, $255\,(1 - k\rho)$ with darkness $k$ (default 0.85), embedded as a PNG image.
 
 ### Stippling
 
-Dots have radius $r_d = \max(0.9, H/420)$ and spacing $s = 3.6\,r_d$ at full density. $\rho$ is averaged on a grid of cell $s$ and binarized with serpentine Floyd–Steinberg error diffusion, which yields a blue-noise distribution whose local density follows $\rho$. Each dot is jittered by up to $\pm 0.35\,s$ and drawn with radius $r_d (0.75 + 0.5\rho)$; dots closer than $\approx s$ to the outline are dropped.
+Dots have radius $r_d = \max(0.9, H/420)$ and spacing $s = 3.6\,r_d$ at full density. $\rho$ is averaged on a grid of cell $s$ (over the part of each cell inside the prospect) and binarized with serpentine Floyd–Steinberg error diffusion, which yields a blue-noise distribution whose local density follows $\rho$. Each dot is jittered by up to $\pm 0.35\,s$ (border cells try several positions) and drawn with radius $r_d (0.75 + 0.5\rho)$. Dots keep only $1.3\,r_d$ from the outline, so the shading reaches the drawn border, and never fall on a decoration or within $1.5\,r_d$ of it. The density and dot-size sliders scale $s$ and $r_d$.
+
+### Decoration Brushes
+
+A decoration is a guide polyline (a horizontal band clipped to the outline, a polyline, or a freehand stroke smoothed by Chaikin corner cutting) plus a brush. The **groove** brush draws $n$ parallel copies of the guide, offset along its normal (miter joins, limited at sharp zig-zag corners); the **impressions** brush places a stamp (an ellipse of given length and width, rotated by a fixed angle to the local tangent) every $s$ px of arc length, in one or more parallel rows. Nothing is cut by the brushes: every decoration is drawn under a clip path equal to the prospect outline (canvas clip; `<clipPath>` in the SVG), so marks crossing the border appear cut, as on the vessel, and the shading dots are kept away only from the visible part of a mark.
+
+**Variability.** Stamps are placed at arc-length $s_k$ along the guide, $s_{k+1} = s_k + \sigma\,(1 + v_s\,u_1)$ with $u_i$ uniform in $[-1,1]$, shifted across the path by $v_o u_2$, scaled by $(1 + v_z u_3)$ (times a factor $\beta$ for a random share $p_\beta$ of larger marks) and rotated by $v_a u_4$ on top of the fixed angle to the path. The draws come from a seeded generator (mulberry32) stored with each decoration, so the same decoration is redrawn identically when the SVG is reopened; \"New variation\" only changes the seed. The **digitate cord** is a band around the guide whose edges swell as $\pm\big(w/2 + a\cos(2\pi s/\sigma)\big)$ in step with the finger impressions, drawn in relief (shadow outside the edge facing away from the light) with incised oval impressions along its middle.
+
+Decorations are shaded by the same light. With $\hat{\ell}$ the direction of the light projected on the drawing plane and $\hat{n}$ the outward normal of the mark's outline (for a groove, of each edge of the stroke), an **incised or impressed** mark has its wall in shadow where $\hat{n}\cdot\hat{\ell} > 0$ (the wall slopes down into the mark and faces away from the light), a **relief** (protruding) mark where $\hat{n}\cdot\hat{\ell} < 0$. The stroke is thickened there by $w_s \max(0, \pm\,\hat{n}\cdot\hat{\ell})$, towards the inside of an impression and the outside of a relief, and written as a filled even-odd shape.
+
+A **single mark** (Stamp tool) is the impressions brush with `single`: one stamp at the middle of a short guide instead of a row.
+
+The **wide incision** is a channel of width $w$ around the guide, drawn as its outline. The half-width along the guide is $h\,k(s)$ where $k$ is 1 for flat and open ends, $\sqrt{1-(1-t)^2}$ for a rounded end and $t$ for a pointed one, with $t = \min(1, d/L_c)$, $d$ the distance from that end and $L_c = h\,c$ the closing length ($c$ adjustable; the two ends share a short guide). Each end can be closed (flat, rounded, pointed) or left open, in which case the outline is cut there. The guide is first rounded (Chaikin) so that the walls do not fold at clicked corners. The wall shadow follows the rule above, with the thickness limited to $0.7$ of the local half-width and smoothed along the outline so that it does not jump at the corners of the ends. The centerline of a hand-drawn stroke is smoothed over a window of about $1.2\,h$ before the walls are offset, so they do not fold. Parallel channels are $w + g$ apart (channel width plus the clear gap), so widening a channel never makes neighbours overlap; an end of the guide that lies outside the prospect is treated as open (the channel continues beyond the border), and the Band tool extends its guide well beyond the outline. The floor of a mark is shaded by the mark itself: a channel is dark next to the wall in shadow, with density $f\,(1-a)^{1.4}$ ($f$ the shadow factor of that wall, $a$ the distance from it as a fraction of the width); an incised impression is dark next to the rim facing the light and a relief boss on the side away from it, $ho = ig((\pm\hat{q}\cdot\hat{\ell} + 0.2)/1.2ig)^{1.4}$ with $\hat{q}$ the position in the unit disc of the mark. Inside these regions the shading density of the prospect is *replaced* by the density of the mark, and the result is rendered like the rest of the prospect: dots of the same size and spacing (same error diffusion) in stipple mode, a grey gradient of the same darkness in tone mode. The gain is the *Inner shading* parameter.
+
+Every brush has a **Size ×** multiplier $k$ that scales all its lengths (widths, spacings, offsets, shadow weight).
 
 ---
 

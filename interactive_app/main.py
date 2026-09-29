@@ -34,7 +34,6 @@ import time
 # Import SAM2 and processing modules
 from sam2_handler import SAM2Handler, MODELS_DIR
 from vectorization_handler import VectorizationHandler
-from archaeological_vectorizer import generate_revolution_shading, add_shading_to_svg
 from ml_export_handler import MLExportHandler
 from project_manager import ProjectManager
 
@@ -1079,25 +1078,6 @@ def generate_svg_preview():
                 import traceback
                 traceback.print_exc()
                 continue
-        
-        # PROSPECT SHADING: stippling from the lighting of the profile revolved around the axis
-        if profile_outer_contour is not None and session.get('rotation_center'):
-            for element in vectorized_elements:
-                prospect_data = element.get('stats', {}).get('prospect_data')
-                if element.get('category') != 'Prospectus' or not prospect_data or not element.get('svg_file'):
-                    continue
-                try:
-                    dots = generate_revolution_shading(
-                        outline=prospect_data['outline'],
-                        outer_contour=profile_outer_contour,
-                        center_x=session['rotation_center']['x'],
-                        shape=(height, width)
-                    )
-                    add_shading_to_svg(element['svg_file'], dots)
-                    print(f"  ✓ Prospect shading for {element['name']}: {len(dots)} dots")
-                except Exception as e:
-                    print(f"  ✗ ERROR generating prospect shading for {element['name']}: {e}")
-                    traceback.print_exc()
         
         # EXTEND & MERGE: Handle Profile + Running_Element connections
         if running_element_info is not None and profile_outer_contour is not None:

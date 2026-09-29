@@ -42,7 +42,7 @@ class TabManager {
         }
 
         // GUARD: Block switching to tabs that require an active project if none is loaded
-        const projectRequiredTabs = ['segmentation-tab', 'svg-editor-tab', 'postprocess-tab'];
+        const projectRequiredTabs = ['segmentation-tab', 'svg-editor-tab', 'prospect-canvas-tab', 'postprocess-tab'];
         if (projectRequiredTabs.includes(tabId)) {
             const hasProject = (window.ProjectManager && window.ProjectManager.currentProject) || sessionStorage.getItem('current_project_id');
             if (!hasProject) {
@@ -53,6 +53,11 @@ class TabManager {
                 }
                 return;
             }
+        }
+
+        // Leaving the Prospect Canvas: write its shading/decorations into the editor document
+        if (this.currentTab === 'prospect-canvas-tab' && tabId !== 'prospect-canvas-tab' && window.prospectCanvas) {
+            window.prospectCanvas.deactivate();
         }
 
         // Update buttons
@@ -97,6 +102,10 @@ class TabManager {
             setTimeout(syncSvgCanvas, 50);
             setTimeout(syncSvgCanvas, 150);
             setTimeout(syncSvgCanvas, 300);
+        }
+
+        if (tabId === 'prospect-canvas-tab' && window.prospectCanvas) {
+            setTimeout(() => window.prospectCanvas.activate(), 50);
         }
 
         // If switching to Post-Processing tab, ALWAYS load vectorized files

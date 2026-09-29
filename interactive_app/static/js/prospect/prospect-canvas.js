@@ -1,0 +1,1181 @@
+// Prospect Canvas - controller of the "Prospect Canvas" tab
+//
+// Works on the document loaded in the SVG Editor (window.svgEditor.svgData.element): it reads
+// the prospect outline, the profile and the axis from it, lets the user shade and decorate the
+// prospect, and writes the result back into that document (g.prospect-art), so the SVG Editor
+// save and the Post-Processing tab see it.
+//
+// Input is Pointer Events only (mouse, touch and pen share one code path). Two fingers always
+// pan/zoom; once a pen has been used, a single finger pans instead of drawing (palm rejection).
+
+(function () {
+    const G = () => window.ProspectGeometry;
+    const S = () => window.ProspectShading;
+    const B = () => window.ProspectBrushes;
+    const M = () => window.ProspectModel;
+
+    const SHADING_SCHEMA = [
+        { key: 'direction', label: 'Light direction (°)', min: 0, max: 359, step: 1, geometry: true },
+        { key: 'elevation', label: 'Light elevation (°)', min: 5, max: 85, step: 1, geometry: true },
+        { key: 'lit', label: 'Lit threshold', min: 0.2, max: 1, step: 0.01 },
+        { key: 'gamma', label: 'Contrast', min: 0.4, max: 3, step: 0.05 },
+        { key: 'density', label: 'Dot density', min: 0.4, max: 2.5, step: 0.05, mode: 'stipple' },
+        { key: 'dotScale', label: 'Dot size', min: 0.4, max: 3, step: 0.05, mode: 'stipple' },
+        { key: 'toneDarkness', label: 'Tone darkness', min: 0.1, max: 1, step: 0.01, mode: 'tone' }
+    ];
+
+    const TOOL_KEYS = { v: 'select', h: 'pan', b: 'band', p: 'polyline', f: 'freehand', s: 'stamp' };
+    const HIT_PX = 10;  // screen px
+
+    class ProspectCanvas {
+        constructor() {
+            this.canvas = document.getElementById('prospect-canvas');
+            if (!this.canvas) return;
+            this.ctx = this.canvas.getContext('2d');
+            this.container = document.getElementById('prospect-canvas-container');
+
+            this.svgElement = null;     // SVG Editor document the scene was read from
+            this.scene = null;
+            this.prospect = null;       // current prospect of the scene
+            this.models = new Map();    // element id -> { model, history }
+            this.field = null;          // luminance field of the current prospect
+            this.fieldKey = '';
+            this.density = null;
+            this.dots = [];
+            this.tone = null;
+            this.decoPrims = new Map(); // decoration id -> primitives
+            this.contextLines = [];     // other layers, drawn faint for reference
+
+            this.bgImage = null;
+            this.bgSessionId = null;
+            this.showBg = true;
+            this.bgOpacity = 0.35;
+
+            this.scale = 1;
+            this.ox = 0;
+            this.oy = 0;
+
+            this.tool = 'band';
+            this.presetId = 'double-groove';
+            this.presetParams = {};
+            this.selectedId = null;
+
+            this.pointers = new Map();  // pointerId -> {x, y, type}
+            this.gesture = null;        // pan / pinch state
+            this.action = null;         // current drawing / dragging action
+            this.polyPts = [];          // vertices of the polyline being drawn
+            this.hover = null;          // image-space cursor
+            this.penSeen = false;
+            this.spaceDown = false;
+            this.dirty = false;
+
+            this.buildShadingControls();
+            this.setupEvents();
+
+            // The tab is available whenever the SVG Editor is (it works on the same document)
+            const editorBtn = document.getElementById('svg-editor-tab-btn');
+            const ownBtn = document.getElementById('prospect-canvas-tab-btn');
+            if (editorBtn && ownBtn) {
+                const sync = () => { ownBtn.disabled = editorBtn.disabled; };
+                sync();
+                new MutationObserver(sync).observe(editorBtn, { attributes: true, attributeFilter: ['disabled'] });
+            }
+            new ResizeObserver(() => this.resize()).observe(this.container);
+        }
+
+        get active() {
+            const tab = document.getElementById('prospect-canvas-tab');
+            return !!(tab && tab.classList.contains('active'));
+        }
+
+        get entry() { return this.prospect ? this.models.get(this.prospect.id) : null; }
+        get model() { return this.entry ? this.entry.model : null; }
+
+        // ------------------------------------------------------------------
+        // Activation / scene
+        // ------------------------------------------------------------------
+
+        activate() {
+            this.resize();
+            const editor = window.svgEditor;
+            if (!editor || !editor.svgData) {
+                this.showMessage('Vectorize a drawing first: the Prospect Canvas works on the SVG shown in the SVG Editor.');
+                return;
+            }
+            if (this.svgElement !== editor.svgData.element) {
+                this.svgElement = editor.svgData.element;
+                this.models.clear();
+                this.prospect = null;
+                this.selectedId = null;
+                this.fieldKey = '';
+            }
+            this.loadBackground();
+            this.readScene();
+        }
+
+        // Called when leaving the tab: keep the document in sync without saving to disk
+        deactivate() {
+            this.cancelDrawing();
+            this.commitToDocument();
+        }
+
+        readScene() {
+            const editor = window.svgEditor;
+            const dOverrides = new Map();
+            (editor.paths || []).forEach(p => { if (p.element && p.currentD) dOverrides.set(p.element, p.currentD); });
+            const rc = window.app && window.app.rotationCenter;
+            this.scene = G().readScene(this.svgElement, editor.svgData.width, editor.svgData.height,
+                dOverrides, rc ? rc.x : undefined);
+
+            // Faint reference lines: every traced path except the prospects themselves
+            this.contextLines = [];
+            this.svgElement.querySelectorAll('g[id^="layer_"]:not([id="layer_Prospectus"]) path').forEach(p => {
+                if (G().isProspectArt(p)) return;
+                this.contextLines.push(...G().flattenPathD(dOverrides.get(p) || p.getAttribute('d'), 3));
+            });
+
+            const select = document.getElementById('prospect-element-select');
+            select.innerHTML = '';
+            this.scene.prospects.forEach(pr => {
+                const opt = document.createElement('option');
+                opt.value = pr.id;
+                opt.textContent = pr.name;
+                select.appendChild(opt);
+            });
+
+            if (!this.scene.prospects.length) {
+                this.prospect = null;
+                this.showMessage('No Prospectus element in this drawing. In Segmentation, assign the front view to the Prospectus category and vectorize again.');
+                this.updateUI();
+                return;
+            }
+            this.hideMessage();
+            const keep = this.prospect && this.scene.prospects.find(p => p.id === this.prospect.id);
+            this.setProspect((keep || this.scene.prospects[0]).id, !keep);
+        }
+
+        setProspect(id, fit = true) {
+            if (this.prospect && this.prospect.id !== id) this.commitToDocument();
+            this.prospect = this.scene.prospects.find(p => p.id === id);
+            this.outlinePath = new Path2D();
+            this.prospect.outline.forEach((pt, i) => (i ? this.outlinePath.lineTo(pt.x, pt.y) : this.outlinePath.moveTo(pt.x, pt.y)));
+            this.outlinePath.closePath();
+            document.getElementById('prospect-element-select').value = id;
+            if (!this.models.has(id)) {
+                const model = M().readModel(this.prospect.group);
+                const history = new (M().History)();
+                history.reset(model);
+                this.models.set(id, { model, history });
+            }
+            // Brush sizes follow the size of the prospect
+            this.unit = Math.max(0.5, this.prospect.bbox.h / 400);
+            this.presetParams = {};
+            B().PRESETS.forEach(p => { this.presetParams[p.id] = B().presetParams(p.id, this.unit); });
+            this.selectedId = null;
+            this.fieldKey = '';
+            this.rebuildAllDecorations();
+            this.recomputeShading();
+            if (fit) this.fitView();
+            this.updateUI();
+            this.redraw();
+        }
+
+        loadBackground() {
+            const sessionId = window.app && window.app.sessionId;
+            if (!sessionId || sessionId === this.bgSessionId) return;
+            this.bgSessionId = sessionId;
+            const img = new Image();
+            img.onload = () => { this.bgImage = img; this.redraw(); };
+            img.src = `/api/image/${sessionId}`;
+        }
+
+        // ------------------------------------------------------------------
+        // Shading
+        // ------------------------------------------------------------------
+
+        get shadingAvailable() {
+            return !!(this.scene && this.scene.radius && this.prospect);
+        }
+
+        recomputeShading() {
+            this.dots = [];
+            this.tone = null;
+            if (!this.shadingAvailable || !this.model) return;
+            const sh = this.model.shading;
+            if (sh.mode === 'none') return;
+            const key = `${this.prospect.id}|${sh.direction}|${sh.elevation}|${this.prospect.outline.length}|${this.scene.axisX}`;
+            if (key !== this.fieldKey) {
+                this.field = S().computeLuminance(this.prospect.outline, this.scene.radius, this.scene.axisX, sh);
+                this.fieldKey = key;
+            }
+            this.density = S().computeDensity(this.field, sh);
+            // The floor of the decorations is shaded by the marks themselves
+            const shades = [];
+            for (const prims of this.decoPrims.values()) for (const pr of prims) if (pr.kind === 'shade') shades.push(pr);
+            if (shades.length) S().applyShadeRegions(this.field, this.density, shades);
+            if (sh.mode === 'stipple') {
+                const dotR = S().defaultDotRadius(this.scene.radius) * sh.dotScale;
+                // No dots on or inside the decorations
+                const blocked = S().decorationMask(this.field, this.decoPrims.values(), dotR * 1.5, this.prospect.outline);
+                this.dots = S().stipple(this.field, this.density, this.prospect.outline, sh, dotR, blocked);
+            } else if (sh.mode === 'tone') {
+                this.tone = { canvas: S().toneCanvas(this.field, this.density, sh), x: this.field.x0, y: this.field.y0 };
+            }
+        }
+
+        buildShadingControls() {
+            const box = document.getElementById('prospect-shading-controls');
+            if (!box) return;
+            box.innerHTML = '';
+            SHADING_SCHEMA.forEach(f => {
+                const group = document.createElement('div');
+                group.className = 'form-group prospect-control';
+                if (f.mode) group.dataset.mode = f.mode;
+                group.innerHTML = `<label>${f.label}: <span class="prospect-value" id="prospect-sh-${f.key}-value"></span></label>
+                    <input type="range" class="slider" id="prospect-sh-${f.key}" min="${f.min}" max="${f.max}" step="${f.step}">`;
+                box.appendChild(group);
+                const input = group.querySelector('input');
+                let frame = null;
+                input.addEventListener('input', () => {
+                    if (!this.model) return;
+                    this.model.shading[f.key] = parseFloat(input.value);
+                    document.getElementById(`prospect-sh-${f.key}-value`).textContent = input.value;
+                    if (frame) return;
+                    frame = requestAnimationFrame(() => {
+                        frame = null;
+                        if (f.geometry) this.rebuildAllDecorations();
+                        this.recomputeShading();
+                        this.redraw();
+                    });
+                });
+                input.addEventListener('change', () => this.pushHistory());
+            });
+        }
+
+        // Shading back to its defaults (the mode and the dot pattern are kept)
+        resetShading() {
+            if (!this.model) return;
+            const keep = { mode: this.model.shading.mode, seed: this.model.shading.seed };
+            this.model.shading = Object.assign(M().defaultModel(this.prospect.id).shading, keep);
+            this.rebuildAllDecorations();
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        setShadingMode(mode) {
+            if (!this.model) return;
+            this.model.shading.mode = mode;
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        reseed() {
+            if (!this.model) return;
+            this.model.shading.seed = (this.model.shading.seed + 1) % 100000;
+            this.recomputeShading();
+            this.pushHistory();
+            this.redraw();
+        }
+
+        // ------------------------------------------------------------------
+        // Decorations
+        // ------------------------------------------------------------------
+
+        // Direction towards the light in the drawing plane: the decorations are shaded by it too
+        get light2d() {
+            if (!this.model) return null;
+            const sh = this.model.shading;
+            const L = S().lightVector(sh.direction, sh.elevation);
+            const n = Math.hypot(L[0], L[1]) || 1;
+            return { x: L[0] / n, y: L[1] / n };
+        }
+
+        rebuildDecoration(deco) {
+            this.decoPrims.set(deco.id, B().build(deco, this.prospect.outline, this.light2d));
+        }
+
+        rebuildAllDecorations() {
+            this.decoPrims.clear();
+            if (this.model) this.model.decorations.forEach(d => this.rebuildDecoration(d));
+        }
+
+        addDecoration(points, extraParams) {
+            if (!this.model || points.length < 2) return;
+            const preset = this.presetParams[this.presetId];
+            const deco = {
+                id: `deco_${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+                brush: preset.brush,
+                preset: this.presetId,
+                params: Object.assign({}, preset.params, 'seed' in preset.params ? { seed: 1 + Math.floor(Math.random() * 999999) } : {}, extraParams),
+                points: points.map(p => [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100]),
+                clip: true
+            };
+            this.model.decorations.push(deco);
+            this.rebuildDecoration(deco);
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        // Brush parameters back to the defaults of the preset (of the selected decoration, or of
+        // the brush about to be used); the variation and a single mark are kept
+        resetBrush() {
+            const sel = this.selected;
+            const id = sel ? sel.preset : this.presetId;
+            const fresh = B().presetParams(id, this.unit);
+            if (sel) {
+                const keep = {};
+                ['seed', 'single'].forEach(k => { if (k in sel.params) keep[k] = sel.params[k]; });
+                sel.params = Object.assign({}, fresh.params, keep);
+                this.rebuildDecoration(sel);
+                this.recomputeShading();
+                this.pushHistory();
+            } else {
+                this.presetParams[id] = fresh;
+            }
+            this.updateBrushPanel();
+            this.redraw();
+        }
+
+        get selected() {
+            return this.model && this.selectedId ? this.model.decorations.find(d => d.id === this.selectedId) : null;
+        }
+
+        select(id) {
+            this.selectedId = id;
+            this.updateUI();
+            this.redraw();
+        }
+
+        deleteSelected() {
+            if (!this.selected) return;
+            this.model.decorations = this.model.decorations.filter(d => d.id !== this.selectedId);
+            this.decoPrims.delete(this.selectedId);
+            this.selectedId = null;
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        // Decoration under a screen point: distance to its guide or to one of its primitives
+        hitDecoration(x, y) {
+            if (!this.model) return null;
+            const tol = HIT_PX / this.scale;
+            for (let i = this.model.decorations.length - 1; i >= 0; i--) {
+                const d = this.model.decorations[i];
+                const guide = d.points.map(([px, py]) => ({ x: px, y: py }));
+                if (G().distToPolyline(x, y, guide) <= tol) return d;
+                for (const prim of this.decoPrims.get(d.id) || []) {
+                    if (prim.kind === 'line' && G().distToPolyline(x, y, prim.pts) <= tol) return d;
+                    if (prim.kind === 'ellipse' && Math.hypot(x - prim.cx, y - prim.cy) <= prim.rx + tol) return d;
+                    if ((prim.kind === 'area' || prim.kind === 'shade') && G().pointInPolygon(x, y, prim.ring)) return d;
+                    if (prim.kind === 'fill' && (G().pointInPolygon(x, y, prim.rings[0]) ||
+                        G().distToPolyline(x, y, prim.rings[0], true) <= tol)) return d;
+                }
+            }
+            return null;
+        }
+
+        // ------------------------------------------------------------------
+        // History
+        // ------------------------------------------------------------------
+
+        pushHistory() {
+            if (!this.entry) return;
+            this.entry.history.push(this.model);
+            this.dirty = true;
+            this.updateUndoButtons();
+        }
+
+        restore(model) {
+            if (!model) return;
+            this.entry.model = model;
+            if (this.selectedId && !model.decorations.find(d => d.id === this.selectedId)) this.selectedId = null;
+            this.rebuildAllDecorations();
+            this.recomputeShading();
+            this.dirty = true;
+            this.updateUI();
+            this.redraw();
+        }
+
+        undo() { if (this.entry) this.restore(this.entry.history.undo()); }
+        redo() { if (this.entry) this.restore(this.entry.history.redo()); }
+
+        // ------------------------------------------------------------------
+        // Output
+        // ------------------------------------------------------------------
+
+        commitToDocument() {
+            if (!this.prospect || !this.model) return;
+            const sh = this.model.shading;
+            if (sh.mode === 'tone' && !this.tone && this.shadingAvailable) this.recomputeShading();
+            M().writeArt(this.prospect.group, this.model, {
+                dots: this.shadingAvailable ? this.dots : [],
+                tone: this.shadingAvailable ? this.tone : null,
+                decorations: this.decoPrims,
+                clipD: this.prospect.outlineD || (this.prospect.outline.map((q, i) => `${i ? 'L' : 'M'} ${q.x.toFixed(2)} ${q.y.toFixed(2)}`).join(' ') + ' Z')
+            });
+        }
+
+        async save() {
+            if (!window.svgEditor || !window.svgEditor.svgData) return;
+            this.cancelDrawing();
+            this.commitToDocument();
+            await window.svgEditor.exportModifiedSVG();
+            this.dirty = false;
+        }
+
+        // ------------------------------------------------------------------
+        // View
+        // ------------------------------------------------------------------
+
+        resize() {
+            const rect = this.container.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+            const dpr = window.devicePixelRatio || 1;
+            this.canvas.width = Math.round(rect.width * dpr);
+            this.canvas.height = Math.round(rect.height * dpr);
+            this.canvas.style.width = `${rect.width}px`;
+            this.canvas.style.height = `${rect.height}px`;
+            this.cssW = rect.width;
+            this.cssH = rect.height;
+            // Until the user moves the view, keep the prospect fitted (the tab may be measured
+            // before its layout is final)
+            if (this.prospect && !this.userMoved) this.fitView();
+            this.redraw();
+        }
+
+        fitView() {
+            if (!this.prospect || !this.cssW) return;
+            const b = this.prospect.bbox;
+            const pad = 40;
+            this.scale = Math.min((this.cssW - 2 * pad) / b.w, (this.cssH - 2 * pad) / b.h);
+            this.ox = this.cssW / 2 - (b.x0 + b.w / 2) * this.scale;
+            this.oy = this.cssH / 2 - (b.y0 + b.h / 2) * this.scale;
+            this.userMoved = false;
+            this.redraw();
+        }
+
+        zoomAt(factor, sx, sy) {
+            const ns = Math.min(40, Math.max(0.05, this.scale * factor));
+            this.ox = sx - (sx - this.ox) * ns / this.scale;
+            this.oy = sy - (sy - this.oy) * ns / this.scale;
+            this.scale = ns;
+            this.userMoved = true;
+            this.redraw();
+        }
+
+        toImage(sx, sy) { return { x: (sx - this.ox) / this.scale, y: (sy - this.oy) / this.scale }; }
+
+        // ------------------------------------------------------------------
+        // Rendering
+        // ------------------------------------------------------------------
+
+        redraw() {
+            if (this.redrawPending) return;
+            this.redrawPending = true;
+            requestAnimationFrame(() => {
+                this.redrawPending = false;
+                this.draw();
+            });
+        }
+
+        draw() {
+            const ctx = this.ctx;
+            const dpr = window.devicePixelRatio || 1;
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            if (!this.scene) return;
+            ctx.setTransform(dpr * this.scale, 0, 0, dpr * this.scale, dpr * this.ox, dpr * this.oy);
+            const px = 1 / this.scale;  // one screen px in image units
+
+            if (this.showBg && this.bgImage) {
+                ctx.globalAlpha = this.bgOpacity;
+                ctx.drawImage(this.bgImage, 0, 0);
+                ctx.globalAlpha = 1;
+            }
+
+            ctx.strokeStyle = 'rgba(100, 116, 139, 0.45)';
+            ctx.lineWidth = px;
+            for (const pl of this.contextLines) this.strokePolyline(pl);
+            if (this.scene.axisX !== null) {
+                ctx.setLineDash([6 * px, 4 * px]);
+                ctx.beginPath();
+                ctx.moveTo(this.scene.axisX, 0);
+                ctx.lineTo(this.scene.axisX, this.scene.height);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            if (!this.prospect) return;
+
+            // Shading
+            if (this.tone && this.model.shading.mode === 'tone') {
+                ctx.drawImage(this.tone.canvas, this.tone.x, this.tone.y);
+            } else if (this.dots.length && this.model.shading.mode === 'stipple') {
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                for (const [cx, cy, r] of this.dots) {
+                    ctx.moveTo(cx + r, cy);
+                    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                }
+                ctx.fill();
+            }
+
+            // Decorations, cut by the outline like on the vessel
+            const sel = this.selected;
+            ctx.save();
+            ctx.clip(this.outlinePath);
+            for (const deco of this.model.decorations) this.drawPrims(this.decoPrims.get(deco.id) || [], '#000000');
+            if (sel) this.drawPrims(this.decoPrims.get(sel.id) || [], '#2563eb');
+            const preview = this.previewGuide();
+            if (preview && preview.length >= 2) {
+                const preset = this.presetParams[this.presetId];
+                const params = this.tool === 'stamp' ? Object.assign({}, preset.params, { single: true }) : preset.params;
+                const prims = B().build({ brush: preset.brush, params, points: preview.map(p => [p.x, p.y]) }, this.prospect.outline, this.light2d);
+                ctx.globalAlpha = this.action || this.polyPts.length ? 1 : 0.55;
+                this.drawPrims(prims, '#2563eb');
+                ctx.globalAlpha = 1;
+            }
+            ctx.restore();
+
+            // Outline
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = Math.max(px, 1);
+            this.strokePolyline(this.prospect.outline, true);
+
+            // Selection
+            if (sel) {
+                const guide = sel.points.map(([x, y]) => ({ x, y }));
+                ctx.strokeStyle = '#2563eb';
+                ctx.lineWidth = px;
+                ctx.setLineDash([4 * px, 3 * px]);
+                this.strokePolyline(guide);
+                ctx.setLineDash([]);
+                ctx.fillStyle = '#ffffff';
+                for (const p of guide) {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 5 * px, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.stroke();
+                }
+            }
+
+            // Guide of the decoration being drawn (or of the band under the cursor)
+            if (preview && preview.length >= 2) {
+                ctx.strokeStyle = 'rgba(37, 99, 235, 0.6)';
+                ctx.lineWidth = px;
+                ctx.setLineDash([4 * px, 3 * px]);
+                this.strokePolyline(preview);
+                ctx.setLineDash([]);
+            }
+        }
+
+        strokePolyline(pts, closed = false, ctx = this.ctx) {
+            if (!pts || pts.length < 2) return;
+            ctx.beginPath();
+            ctx.moveTo(pts[0].x, pts[0].y);
+            for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+            if (closed) ctx.closePath();
+            ctx.stroke();
+        }
+
+        drawPrims(prims, color, ctx = this.ctx) {
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            for (const prim of prims) {
+                if (prim.kind === 'line') {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = prim.width;
+                    this.strokePolyline(prim.pts, false, ctx);
+                } else if (prim.kind === 'fill') {
+                    ctx.beginPath();
+                    for (const ring of prim.rings) {
+                        ring.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+                        ctx.closePath();
+                    }
+                    ctx.fillStyle = color;
+                    ctx.fill('evenodd');
+                } else if (prim.kind === 'ellipse') {
+                    ctx.beginPath();
+                    ctx.ellipse(prim.cx, prim.cy, prim.rx, prim.ry, prim.angle, 0, Math.PI * 2);
+                    if (prim.filled) {
+                        ctx.fillStyle = color;
+                        ctx.fill();
+                    } else {
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = prim.width;
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        // Guide of the decoration being drawn (image space), or null
+        previewGuide() {
+            if (this.action && this.action.type === 'band') return this.bandGuide(this.action.x, this.action.y);
+            if (this.action && this.action.type === 'stamp') return this.stampGuide(this.action.x, this.action.y);
+            if (this.action && this.action.type === 'freehand') return this.action.pts;
+            if (this.tool === 'polyline' && this.polyPts.length) {
+                return this.hover ? this.polyPts.concat([this.hover]) : this.polyPts;
+            }
+            // A mouse has no "pressed" state before the click: show where the band would go
+            if (this.tool === 'band' && this.hover && this.hoverType === 'mouse' && !this.gesture) {
+                return this.bandGuide(this.hover.x, this.hover.y);
+            }
+            if (this.tool === 'stamp' && this.hover && this.hoverType === 'mouse' && !this.gesture) {
+                return this.stampGuide(this.hover.x, this.hover.y);
+            }
+            return null;
+        }
+
+        // A single mark: a short horizontal guide, the mark sits at its middle
+        stampGuide(x, y) {
+            return [{ x: x - 4, y }, { x: x + 4, y }];
+        }
+
+        // Horizontal guide across the prospect at height y (the span under x, else the widest)
+        bandGuide(x, y) {
+            const spans = G().horizontalSpans(y, this.prospect.outline);
+            if (!spans.length) return null;
+            let span = spans.find(([a, b]) => x >= a && x <= b);
+            if (!span) span = spans.reduce((m, s) => (s[1] - s[0] > m[1] - m[0] ? s : m));
+            // The band goes on beyond the border (the clip cuts it): a wide channel must not show
+            // its closed end, also when the border is slanted
+            const margin = Math.max(20, 0.1 * this.prospect.bbox.w);
+            return [{ x: span[0] - margin, y }, { x: span[1] + margin, y }];
+        }
+
+        // ------------------------------------------------------------------
+        // Input
+        // ------------------------------------------------------------------
+
+        setupEvents() {
+            const c = this.canvas;
+            c.style.touchAction = 'none';
+            c.addEventListener('pointerdown', e => this.onPointerDown(e));
+            c.addEventListener('pointermove', e => this.onPointerMove(e));
+            c.addEventListener('pointerup', e => this.onPointerUp(e));
+            c.addEventListener('pointercancel', e => this.onPointerUp(e, true));
+            c.addEventListener('pointerleave', () => { this.hover = null; this.redraw(); });
+            c.addEventListener('dblclick', e => { e.preventDefault(); if (this.tool === 'polyline') this.finishPolyline(); });
+            c.addEventListener('contextmenu', e => {
+                e.preventDefault();
+                if (this.tool === 'polyline' && this.polyPts.length) this.finishPolyline();
+            });
+            c.addEventListener('wheel', e => {
+                e.preventDefault();
+                const r = c.getBoundingClientRect();
+                this.zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
+            }, { passive: false });
+
+            document.addEventListener('keydown', e => this.onKeyDown(e));
+            document.addEventListener('keyup', e => { if (e.code === 'Space') this.spaceDown = false; });
+
+            document.querySelectorAll('[data-prospect-tool]').forEach(btn => {
+                btn.addEventListener('click', () => this.setTool(btn.dataset.prospectTool));
+            });
+            document.querySelectorAll('input[name="prospect-shading-mode"]').forEach(r => {
+                r.addEventListener('change', () => this.setShadingMode(r.value));
+            });
+            const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+            on('prospect-element-select', 'change', e => this.setProspect(e.target.value));
+            on('prospect-reseed-btn', 'click', () => this.reseed());
+            on('prospect-bg-toggle', 'change', e => { this.showBg = e.target.checked; this.redraw(); });
+            on('prospect-bg-opacity', 'input', e => { this.bgOpacity = parseFloat(e.target.value); this.redraw(); });
+            on('prospect-zoom-in', 'click', () => this.zoomAt(1.25, this.cssW / 2, this.cssH / 2));
+            on('prospect-zoom-out', 'click', () => this.zoomAt(0.8, this.cssW / 2, this.cssH / 2));
+            on('prospect-fit', 'click', () => this.fitView());
+            on('prospect-undo', 'click', () => this.undo());
+            on('prospect-redo', 'click', () => this.redo());
+            on('prospect-delete-btn', 'click', () => this.deleteSelected());
+            on('prospect-finish-btn', 'click', () => this.finishPolyline());
+            on('prospect-reset-brush', 'click', () => this.resetBrush());
+            on('prospect-reset-shading', 'click', () => this.resetShading());
+            on('prospect-save-btn', 'click', () => this.save());
+        }
+
+        screenPoint(e) {
+            const r = this.canvas.getBoundingClientRect();
+            return { x: e.clientX - r.left, y: e.clientY - r.top };
+        }
+
+        // A single finger after a pen was used only navigates (the palm must not draw)
+        navigatesOnly(e) {
+            return this.tool === 'pan' || this.spaceDown || e.button === 1 ||
+                (e.pointerType === 'touch' && this.penSeen);
+        }
+
+        onPointerDown(e) {
+            if (!this.prospect) return;
+            if (e.pointerType === 'pen') this.penSeen = true;
+            const sp = this.screenPoint(e);
+            this.pointers.set(e.pointerId, { x: sp.x, y: sp.y, type: e.pointerType });
+            this.canvas.setPointerCapture(e.pointerId);
+
+            // Second finger: pinch/pan, and drop whatever the first finger started
+            const touches = [...this.pointers.values()].filter(p => p.type === 'touch');
+            if (touches.length >= 2) {
+                this.action = null;
+                this.startPinch();
+                return;
+            }
+            if (e.button === 2) return;
+            if (this.navigatesOnly(e)) {
+                this.gesture = { type: 'pan', x: sp.x, y: sp.y };
+                return;
+            }
+
+            const ip = this.toImage(sp.x, sp.y);
+            switch (this.tool) {
+                case 'band':
+                    this.action = { type: 'band', x: ip.x, y: ip.y };
+                    break;
+                case 'stamp':
+                    this.action = { type: 'stamp', x: ip.x, y: ip.y };
+                    break;
+                case 'freehand':
+                    this.action = { type: 'freehand', pts: [ip] };
+                    break;
+                case 'polyline': {
+                    const last = this.polyPts[this.polyPts.length - 1];
+                    if (!last || Math.hypot(last.x - ip.x, last.y - ip.y) * this.scale > 3) this.polyPts.push(ip);
+                    break;
+                }
+                case 'select':
+                    this.startSelectDrag(ip);
+                    break;
+            }
+            this.redraw();
+        }
+
+        startSelectDrag(ip) {
+            const sel = this.selected;
+            if (sel) {
+                const tol = HIT_PX / this.scale;
+                const vi = sel.points.findIndex(([x, y]) => Math.hypot(x - ip.x, y - ip.y) <= tol);
+                if (vi >= 0) {
+                    this.action = { type: 'vertex', index: vi, last: ip, moved: false };
+                    return;
+                }
+            }
+            const hit = this.hitDecoration(ip.x, ip.y);
+            this.select(hit ? hit.id : null);
+            if (hit) this.action = { type: 'move', last: ip, moved: false };
+        }
+
+        onPointerMove(e) {
+            const sp = this.screenPoint(e);
+            const ptr = this.pointers.get(e.pointerId);
+            if (ptr) { ptr.x = sp.x; ptr.y = sp.y; }
+            if (this.gesture && this.gesture.type === 'pinch') { this.updatePinch(); return; }
+            if (this.gesture && this.gesture.type === 'pan') {
+                this.userMoved = true;
+                this.ox += sp.x - this.gesture.x;
+                this.oy += sp.y - this.gesture.y;
+                this.gesture.x = sp.x;
+                this.gesture.y = sp.y;
+                this.redraw();
+                return;
+            }
+            const ip = this.toImage(sp.x, sp.y);
+            this.hover = ip;
+            this.hoverType = e.pointerType;
+            const a = this.action;
+            if (!a) {
+                if ((this.tool === 'polyline' && this.polyPts.length) || ((this.tool === 'band' || this.tool === 'stamp') && e.pointerType === 'mouse')) this.redraw();
+                return;
+            }
+            if (a.type === 'band' || a.type === 'stamp') {
+                a.x = ip.x;
+                a.y = ip.y;
+            } else if (a.type === 'freehand') {
+                // Pens report many more samples than frames: keep them all
+                const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+                for (const ev of events) {
+                    const evp = this.screenPoint(ev);
+                    const p = this.toImage(evp.x, evp.y);
+                    const last = a.pts[a.pts.length - 1];
+                    if (Math.hypot(p.x - last.x, p.y - last.y) * this.scale >= 1.5) a.pts.push(p);
+                }
+            } else if (a.type === 'move' || a.type === 'vertex') {
+                const dx = ip.x - a.last.x, dy = ip.y - a.last.y;
+                a.last = ip;
+                a.moved = true;
+                const sel = this.selected;
+                if (a.type === 'move') sel.points = sel.points.map(([x, y]) => [x + dx, y + dy]);
+                else sel.points[a.index] = [sel.points[a.index][0] + dx, sel.points[a.index][1] + dy];
+                this.rebuildDecoration(sel);
+            }
+            this.redraw();
+        }
+
+        onPointerUp(e, cancelled = false) {
+            this.pointers.delete(e.pointerId);
+            if (this.gesture) {
+                // Lifting one finger of a pinch must not turn the other one into a pan or a stroke
+                if (!this.pointers.size) this.gesture = null;
+                else if (this.gesture.type === 'pinch') this.gesture = { type: 'idle' };
+                return;
+            }
+            const a = this.action;
+            this.action = null;
+            if (!a || cancelled) { this.redraw(); return; }
+            if (a.type === 'band') {
+                const guide = this.bandGuide(a.x, a.y);
+                if (guide) this.addDecoration(guide);
+            } else if (a.type === 'stamp') {
+                this.addDecoration(this.stampGuide(a.x, a.y), { single: true });
+            } else if (a.type === 'freehand') {
+                if (G().polylineLength(a.pts) * this.scale > 8) {
+                    const smooth = G().smoothPolyline(G().resample(a.pts, 2 / this.scale), 2);
+                    this.addDecoration(G().simplify(smooth, 0.3 / this.scale));
+                }
+            } else if ((a.type === 'move' || a.type === 'vertex') && a.moved) {
+                this.recomputeShading();
+                this.pushHistory();
+            }
+            this.redraw();
+        }
+
+        startPinch() {
+            const [a, b] = [...this.pointers.values()].filter(p => p.type === 'touch');
+            this.gesture = {
+                type: 'pinch',
+                dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+                cx: (a.x + b.x) / 2,
+                cy: (a.y + b.y) / 2
+            };
+        }
+
+        updatePinch() {
+            const touches = [...this.pointers.values()].filter(p => p.type === 'touch');
+            if (touches.length < 2) return;
+            const [a, b] = touches;
+            const g = this.gesture;
+            const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+            const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+            this.userMoved = true;
+            this.ox += cx - g.cx;
+            this.oy += cy - g.cy;
+            this.zoomAt(dist / g.dist, cx, cy);
+            g.dist = dist;
+            g.cx = cx;
+            g.cy = cy;
+        }
+
+        finishPolyline() {
+            if (this.polyPts.length >= 2) this.addDecoration(this.polyPts);
+            this.polyPts = [];
+            this.updateUI();
+            this.redraw();
+        }
+
+        cancelDrawing() {
+            this.polyPts = [];
+            this.action = null;
+            this.redraw();
+        }
+
+        onKeyDown(e) {
+            if (!this.active) return;
+            if (e.target && (e.target.matches('input, textarea, select') || e.target.isContentEditable)) return;
+            const mod = e.ctrlKey || e.metaKey;
+            if (mod && (e.key === 'z' || e.key === 'Z')) {
+                e.preventDefault();
+                if (e.shiftKey) this.redo(); else this.undo();
+                return;
+            }
+            if (mod && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); this.redo(); return; }
+            if (mod && (e.key === 's' || e.key === 'S')) { e.preventDefault(); this.save(); return; }
+            if (mod || e.altKey) return;
+            if (e.code === 'Space') { this.spaceDown = true; e.preventDefault(); return; }
+            if (e.key === 'Escape') {
+                if (this.polyPts.length) this.cancelDrawing(); else this.select(null);
+                return;
+            }
+            if (e.key === 'Enter') { this.finishPolyline(); return; }
+            if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelected(); return; }
+            const tool = TOOL_KEYS[e.key.toLowerCase()];
+            if (tool) this.setTool(tool);
+        }
+
+        setTool(tool) {
+            if (tool !== 'polyline' && this.polyPts.length) this.finishPolyline();
+            // The Stamp tool places single marks: only the stamping brushes can do that
+            if (tool === 'stamp' && (this.presetParams[this.presetId] || {}).brush !== 'impressions') this.presetId = 'bosses';
+            this.tool = tool;
+            this.updateUI();
+            this.redraw();
+        }
+
+        setPreset(id) {
+            this.presetId = id;
+            if (this.tool === 'select' || this.tool === 'pan') this.tool = 'band';
+            if (this.tool === 'stamp' && (this.presetParams[id] || {}).brush !== 'impressions') this.tool = 'band';
+            this.select(null);
+        }
+
+        // ------------------------------------------------------------------
+        // Panels
+        // ------------------------------------------------------------------
+
+        showMessage(text) {
+            const box = document.getElementById('prospect-canvas-message');
+            if (!box) return;
+            box.querySelector('p').textContent = text;
+            box.style.display = '';
+        }
+
+        hideMessage() {
+            const box = document.getElementById('prospect-canvas-message');
+            if (box) box.style.display = 'none';
+        }
+
+        updateUndoButtons() {
+            const undo = document.getElementById('prospect-undo');
+            const redo = document.getElementById('prospect-redo');
+            if (undo) undo.disabled = !(this.entry && this.entry.history.canUndo());
+            if (redo) redo.disabled = !(this.entry && this.entry.history.canRedo());
+        }
+
+        updateUI() {
+            document.querySelectorAll('[data-prospect-tool]').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.prospectTool === this.tool);
+            });
+            const finish = document.getElementById('prospect-finish-btn');
+            if (finish) finish.style.display = this.tool === 'polyline' ? '' : 'none';
+            const del = document.getElementById('prospect-delete-btn');
+            if (del) del.disabled = !this.selected;
+            const save = document.getElementById('prospect-save-btn');
+            if (save) save.disabled = !this.prospect;
+            this.canvas.style.cursor = this.tool === 'pan' ? 'grab' : (this.tool === 'select' ? 'default' : 'crosshair');
+            this.updateUndoButtons();
+            this.updateShadingPanel();
+            this.updateBrushPanel();
+            this.updateDecorationList();
+        }
+
+        updateShadingPanel() {
+            const status = document.getElementById('prospect-shading-status');
+            const controls = document.getElementById('prospect-shading-controls');
+            const modes = document.getElementById('prospect-shading-modes');
+            const available = this.shadingAvailable;
+            if (status) {
+                status.style.display = available || !this.prospect ? 'none' : '';
+                if (!available && this.scene) {
+                    const missing = [];
+                    if (!this.scene.profile.length) missing.push('a vectorized Profile');
+                    if (this.scene.axisX === null) missing.push('the rotation center');
+                    status.textContent = `Shading needs ${missing.join(' and ') || 'the profile'}. Decorations still work.`;
+                }
+            }
+            if (modes) modes.classList.toggle('disabled', !available);
+            if (!this.model) return;
+            const sh = this.model.shading;
+            document.querySelectorAll('input[name="prospect-shading-mode"]').forEach(r => {
+                r.checked = r.value === sh.mode;
+                r.disabled = !available;
+                r.closest('label').classList.toggle('active', r.checked);
+            });
+            if (!controls) return;
+            controls.style.display = available && sh.mode !== 'none' ? '' : 'none';
+            SHADING_SCHEMA.forEach(f => {
+                const input = document.getElementById(`prospect-sh-${f.key}`);
+                input.value = sh[f.key];
+                document.getElementById(`prospect-sh-${f.key}-value`).textContent = sh[f.key];
+                const group = input.closest('.prospect-control');
+                group.style.display = !f.mode || f.mode === sh.mode ? '' : 'none';
+            });
+            const reseed = document.getElementById('prospect-reseed-btn');
+            if (reseed) reseed.style.display = sh.mode === 'stipple' ? '' : 'none';
+        }
+
+        updateBrushPanel() {
+            const presetsBox = document.getElementById('prospect-brush-presets');
+            if (presetsBox && !presetsBox.childElementCount) {
+                // Presets by family, so the list can grow without getting long
+                const families = [...new Set(B().PRESETS.map(p => p.group))];
+                families.forEach(family => {
+                    const title = document.createElement('h4');
+                    title.className = 'prospect-preset-family';
+                    title.textContent = family;
+                    presetsBox.appendChild(title);
+                    const grid = document.createElement('div');
+                    grid.className = 'prospect-presets';
+                    B().PRESETS.filter(p => p.group === family).forEach(p => {
+                        const btn = document.createElement('button');
+                        btn.className = 'prospect-preset-btn';
+                        btn.dataset.preset = p.id;
+                        btn.title = p.label;
+                        btn.innerHTML = `<i class="bi ${p.icon}"></i><span>${p.label}</span>`;
+                        btn.addEventListener('click', () => this.setPreset(p.id));
+                        grid.appendChild(btn);
+                    });
+                    presetsBox.appendChild(grid);
+                });
+            }
+            const sel = this.selected;
+            const activePreset = sel ? sel.preset : this.presetId;
+            document.querySelectorAll('.prospect-preset-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.preset === activePreset);
+            });
+
+            const title = document.getElementById('prospect-params-title');
+            const box = document.getElementById('prospect-brush-params');
+            if (!box) return;
+            const target = sel || this.presetParams[this.presetId];
+            if (title) {
+                const label = (B().PRESETS.find(p => p.id === (sel ? sel.preset : this.presetId)) || {}).label || '';
+                title.textContent = sel ? `Selected: ${label}` : `New: ${label}`;
+            }
+            // Keep the sections the user has closed
+            const closed = new Set([...box.querySelectorAll('details:not([open])')].map(d => d.dataset.group));
+            box.innerHTML = '';
+            if (!target) return;
+            const brush = B().BRUSHES[target.brush];
+            const sections = new Map();
+            const onChange = () => { this.drawBrushPreview(target); };
+            brush.schema.forEach(f => {
+                const groupName = f.group || 'Shape';
+                if (!sections.has(groupName)) {
+                    const details = document.createElement('details');
+                    details.className = 'prospect-section';
+                    details.dataset.group = groupName;
+                    if (!closed.has(groupName)) details.open = true;
+                    details.innerHTML = `<summary>${groupName}</summary>`;
+                    box.appendChild(details);
+                    sections.set(groupName, details);
+                }
+                const group = document.createElement('div');
+                group.className = 'form-group prospect-control';
+                if (target.params[f.key] === undefined) target.params[f.key] = brush.defaults[f.key];
+                const value = target.params[f.key];
+                if (f.type === 'seed') {
+                    group.innerHTML = `<button class="btn btn-secondary" style="width: 100%;"><i class="bi bi-shuffle"></i> New variation</button>`;
+                    group.querySelector('button').addEventListener('click', () => {
+                        target.params.seed = 1 + Math.floor(Math.random() * 999999);
+                        if (sel) {
+                            this.rebuildDecoration(sel);
+                            this.recomputeShading();
+                            this.pushHistory();
+                        }
+                        onChange();
+                        this.redraw();
+                    });
+                    sections.get(groupName).appendChild(group);
+                    return;
+                }
+                if (f.type === 'check') {
+                    group.innerHTML = `<label><input type="checkbox" ${value ? 'checked' : ''}> ${f.label}</label>`;
+                } else if (f.type === 'select') {
+                    group.innerHTML = `<label>${f.label}</label><select class="form-control">${
+                        f.options.map(([v, l]) => `<option value="${v}" ${v === value ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+                } else {
+                    group.innerHTML = `<label>${f.label}: <span class="prospect-value">${value}</span></label>
+                        <input type="range" class="slider" min="${f.min}" max="${f.max}" step="${f.step}" value="${value}">`;
+                }
+                sections.get(groupName).appendChild(group);
+                const input = group.querySelector('input, select');
+                input.addEventListener('input', () => {
+                    const v = f.type === 'check' ? input.checked : (f.type === 'select' ? input.value : parseFloat(input.value));
+                    target.params[f.key] = v;
+                    const span = group.querySelector('.prospect-value');
+                    if (span) span.textContent = v;
+                    if (sel) this.rebuildDecoration(sel);
+                    onChange();
+                    this.redraw();
+                });
+                input.addEventListener('change', () => {
+                    if (!sel) return;
+                    this.recomputeShading();
+                    this.pushHistory();
+                    this.redraw();
+                });
+            });
+            this.drawBrushPreview(target);
+        }
+
+        // Swatch of the current brush (with the parameters being edited) on a sample path, drawn
+        // at the size the marks really have, whatever the resolution of the scan
+        drawBrushPreview(target) {
+            const canvas = document.getElementById('prospect-brush-preview');
+            if (!canvas || !target) return;
+            const dpr = window.devicePixelRatio || 1;
+            const cssW = canvas.clientWidth || 240, cssH = canvas.clientHeight || 110;
+            if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+                canvas.width = Math.round(cssW * dpr);
+                canvas.height = Math.round(cssH * dpr);
+            }
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            // 1 unit of the prospect = 2.2 preview px
+            const k = 2.2 / (this.unit || 1);
+            ctx.setTransform(dpr * k, 0, 0, dpr * k, 0, 0);
+            const W = cssW / k, H = cssH / k;
+            const guide = [];
+            for (let i = 0; i <= 40; i++) {
+                const t = i / 40;
+                guide.push([W * (0.03 + 0.94 * t), H * (0.5 + 0.22 * Math.sin(t * Math.PI * 2))]);
+            }
+            const prims = B().build({ brush: target.brush, params: target.params, points: guide }, null, this.light2d);
+            // Floor shading of the marks, in the current shading style
+            const shades = prims.filter(pr => pr.kind === 'shade');
+            const sh = this.model && this.model.shading;
+            if (shades.length && sh && sh.mode !== 'none') {
+                const field = { x0: 0, y0: 0, w: Math.ceil(W), h: Math.ceil(H), inside: new Uint8Array(Math.ceil(W) * Math.ceil(H)).fill(1) };
+                const density = new Float32Array(field.w * field.h);
+                S().applyShadeRegions(field, density, shades);
+                if (sh.mode === 'stipple') {
+                    const dotR = S().defaultDotRadius(this.scene && this.scene.radius) * sh.dotScale;
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    for (const [cx, cy, r] of S().stipple(field, density, null, sh, dotR, null)) {
+                        ctx.moveTo(cx + r, cy);
+                        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                    }
+                    ctx.fill();
+                } else {
+                    ctx.drawImage(S().toneCanvas(field, density, sh), 0, 0);
+                }
+            }
+            this.drawPrims(prims, '#000000', ctx);
+        }
+
+        updateDecorationList() {
+            const list = document.getElementById('prospect-decorations-list');
+            if (!list) return;
+            list.innerHTML = '';
+            const decos = this.model ? this.model.decorations : [];
+            if (!decos.length) {
+                list.innerHTML = '<p class="empty-message">No decorations yet</p>';
+                return;
+            }
+            decos.forEach((d, i) => {
+                const label = (B().PRESETS.find(p => p.id === d.preset) || { label: d.brush }).label;
+                const row = document.createElement('div');
+                row.className = 'prospect-deco-row' + (d.id === this.selectedId ? ' active' : '');
+                row.innerHTML = `<span>${i + 1}. ${label}</span><button class="toolbar-btn" title="Delete"><i class="bi bi-trash"></i></button>`;
+                row.addEventListener('click', () => { this.setTool('select'); this.select(d.id); });
+                row.querySelector('button').addEventListener('click', ev => {
+                    ev.stopPropagation();
+                    this.selectedId = d.id;
+                    this.deleteSelected();
+                });
+                list.appendChild(row);
+            });
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        window.prospectCanvas = new ProspectCanvas();
+    });
+})();
