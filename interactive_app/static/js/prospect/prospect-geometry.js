@@ -115,6 +115,22 @@
         return spans;
     }
 
+    // Same as horizontalSpans, along a vertical line at x: [[y0, y1], ...]
+    function verticalSpans(x, poly) {
+        const rings = Array.isArray(poly[0]) ? poly : [poly];
+        const ys = [];
+        for (const ring of rings) {
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const a = ring[i], b = ring[j];
+                if ((a.x > x) !== (b.x > x)) ys.push((b.y - a.y) * (x - a.x) / (b.x - a.x) + a.y);
+            }
+        }
+        ys.sort((p, q) => p - q);
+        const spans = [];
+        for (let i = 0; i + 1 < ys.length; i += 2) spans.push([ys[i], ys[i + 1]]);
+        return spans;
+    }
+
     function polylineLength(pts) {
         let len = 0;
         for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
@@ -605,7 +621,7 @@
 
     window.ProspectGeometry = {
         isProspectArt, flattenPathD, polygonArea, bbox, pointInPolygon, distToSegment, distToPolyline,
-        horizontalSpans, polylineLength, resample, pointsAlong, mulberry32, pathSampler, offsetPolyline, clipPolylineToPolygon,
+        horizontalSpans, verticalSpans, polylineLength, resample, pointsAlong, mulberry32, pathSampler, offsetPolyline, clipPolylineToPolygon,
         simplify, smoothPolyline, radiusByRow, distanceTransform, edgeLine, readScene
     };
 })();

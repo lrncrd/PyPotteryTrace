@@ -4793,3 +4793,27 @@ textarea {
     padding: 4px 0;
     min-height: 32px;
 }
+
+/* Prospect Canvas: docked 3D views of handles and lugs */
+.prospect-dock {
+    display: flex;
+    gap: 6px;
+    height: 230px;
+    padding: 6px;
+    border-top: 1px solid var(--border, #e2e8f0);
+    background: var(--bg-secondary, #f8fafc);
+    flex: 0 0 auto;
+}
+.prospect-dock.expanded { height: 56vh; }
+.prospect-dock-view { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.prospect-dock-title {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.75rem; font-weight: 600; color: var(--text-secondary, #475569);
+    height: 24px;
+}
+.prospect-dock-title select { font-size: 0.7rem; margin-left: auto; }
+.prospect-dock-view canvas {
+    flex: 1; width: 100%; min-height: 0;
+    background: #ffffff; border: 1px solid var(--border, #e2e8f0); border-radius: 6px;
+    touch-action: none;
+}

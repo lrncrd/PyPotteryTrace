@@ -1,151 +1,139 @@
-// Prospect Canvas - front view of applied parts (handles)
+// Prospect Canvas - front view of applied parts (handles, lugs)
 //
-// A handle is drawn in the section as a side view (its silhouette, in the Handle layer). Seen from
-// the front it is a band. The user outlines it on the original drawing (a polygon of tapped
-// points: its two ends and its sides, so it may be asymmetric); the side view gives what the
-// outline cannot: how far the handle stands out of the vessel at every height, rho_out(y), the
-// distance from the axis of the outermost point of its outer contour.
-//
-// On each row y the band spans [xl, xr] (the polygon), its middle is c = (xl + xr) / 2 and its
-// width W = xr - xl. The middle of the band lies at azimuth theta(y) = asin((c - axis) / rho_out(y)),
-// and across the band, u in [-w/2, w/2] with w = W / cos(theta),
-//     x = axis + rho_out(y) sin(theta) + u cos(theta)
-//     z = (rho_out(y) - depth(u)) cos(theta) - u sin(theta)
-// where depth(u) is the recession of the cross-section towards the edges (a rod or a strap with
-// rounded edges). The outer surface F = rho - rho_out(y) + depth(u) = 0 has normal
-// (1, -rho_out'(y), depth'(u)) in (rho, y, u), turned into the view frame. It is shaded like the
-// vessel (same light, same luminance range), and hidden where it is inside the wall (z below the
-// wall of the vessel): it joins the wall there, with no line.
+// The surface of an applied part is not a solid apart from the vessel: prospect-field.js gives the
+// smooth union of the wall and the part (the part from what the drawing gives of it: the traced front
+// outline, the side view, the crest). Here that surface is looked at from the viewer of the drawing:
+// each pixel is ray-marched along the view, and the normal is the gradient of the field, so the tone
+// is that of the vessel (same light, same luminance range) and it flows from the wall into the part
+// with no seam. The wall itself is modified where the part rises from it: `delta` is the change of
+// luminance of the wall pixels around the part, and the part's own pixels (`mask`, inside the traced
+// outline and in front of the wall) carry their own luminance. The shadow of the part falls on the wall.
 
 (function () {
+    const F = () => window.ProspectField;
     const G = () => window.ProspectGeometry;
     const S = () => window.ProspectShading;
 
-    const MAX_SIN = 0.97;
-
-    // Recession depth(u) of the surface at distance u from the middle of a band of the given
-    // width, and its slope. roundness 1 = a round rod (circular section of radius w/2), small = a
-    // flat strap whose edges are rounded on a radius roundness * w/2
-    function section(width, roundness) {
-        const h = width / 2;
-        const b = Math.max(0.5, Math.min(1, roundness) * h);
-        const flat = h - b;
-        return {
-            depth(u) {
-                const t = Math.abs(u) - flat;
-                return t <= 0 ? 0 : b - Math.sqrt(Math.max(0, b * b - t * t));
-            },
-            slope(u) {
-                const t = Math.abs(u) - flat;
-                if (t <= 0) return 0;
-                return Math.sign(u) * Math.min(12, t / Math.sqrt(Math.max(1e-3, b * b - t * t)));
-            }
-        };
+    // Width proposed for a placed vertical handle: the thickness of its strap seen from the side
+    function defaultWidth(part) {
+        return Math.max(4, 2 * (S().edgeField(part.rings).dmax - 0.5));
     }
 
-    // rho_out(y) of a part (side view), per image row
-    function outerProfile(part, axisX, height) {
-        return G().radiusByRow([G().edgeLine(part.outline)], axisX, height, false);
-    }
+    const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-    // Raster of the front view: { x0, y0, w, h, mask, lum, edges, meanW }. `edges` are the two side
-    // lines of the band (open polylines) over the rows where it stands out of the wall.
+    // Raster of the front view: { x0, y0, w, h, mask, lum, delta, edges, meanW }. The raster covers the
+    // outline of the part and the reach of its fillet; `edges` are the two side lines of the part.
     function buildFront(spec, part, scene, params, range) {
-        const poly = (spec.points || []).map(([x, y]) => ({ x, y }));
-        if (poly.length < 3) return null;
-        const axisX = scene.axisX;
-        const wall = scene.radius;
-        const rho = outerProfile(part, axisX, wall.radius.length);
-        if (!rho) return null;
-        const bend = 'bend' in spec ? spec.bend : 0.5;
-        const L = S().lightVector(params.direction, params.elevation);
+        const FD = F();
+        const vessel = FD.vesselField(scene);
+        const pf = FD.partField(spec, part, scene, vessel);
+        if (!pf) return null;
+        const union = (x, y, z) => FD.smin(vessel.sd(x, y, z), pf.sd(x, y, z), pf.kAt(x, y));
+        // The shadow of the part on the wall (and on the fillet): soft shadow, marched towards the light
+        // through the field of the part alone; its reach is a multiple of the thickness
+        const strength = Math.min(0.95, 'shadow' in spec ? spec.shadow : 0.6);
+        const reach = strength > 0 ? 1.6 * pf.thick + 10 : 0;
+        const Lw = S().lightVector(params.direction, params.elevation);
+        const m = Math.ceil(pf.k) + 3 + Math.ceil(reach * Math.hypot(Lw[0], Lw[1]));
+        const bb = pf.bb;
+        const x0 = Math.floor(bb.x0) - m, y0 = Math.floor(bb.y0) - m;
+        const w = Math.ceil(bb.x1) - x0 + m + 1, h = Math.ceil(bb.y1) - y0 + m + 1;
+        const L = Lw;
         const rg = range || S().referenceRange(params);
         const span = Math.max(1e-6, rg.hi - rg.lo);
-        const bb = G().bbox(poly);
-        const yTop = Math.max(rho.y0, Math.ceil(bb.y0)), yBot = Math.min(rho.y1, Math.floor(bb.y1));
-        if (yBot <= yTop) return null;
-
-        // The band on every row
-        const rows = new Map();
-        let sumW = 0;
-        for (let y = yTop; y <= yBot; y++) {
-            const p = rho.radius[y];
-            if (p <= 0.5) continue;
-            const spans = G().horizontalSpans(y + 0.5, poly);
-            if (!spans.length) continue;
-            const xl = spans[0][0], xr = spans[spans.length - 1][1];
-            if (xr - xl < 1) continue;
-            const sinT = Math.max(-MAX_SIN, Math.min(MAX_SIN, ((xl + xr) / 2 - axisX) / p));
-            const cosT = Math.sqrt(1 - sinT * sinT);
-            const hw = (xr - xl) / (2 * cosT);
-            rows.set(y, { p, dp: rho.dr[y] * bend, xl, xr, sinT, cosT, hw, xc: axisX + p * sinT, sec: section(2 * hw, spec.roundness) });
-            sumW += xr - xl;
-        }
-        if (!rows.size) return null;
-
-        // How far the band stands out of the wall at a point (px, towards the viewer)
-        const elevation = (x, y, u, r) => {
-            const zh = (r.p - r.sec.depth(u)) * r.cosT - u * r.sinT;
-            const wr = wall.radius[Math.min(wall.radius.length - 1, y)];
-            const dx = x - axisX;
-            return zh - Math.sqrt(Math.max(0, wr * wr - dx * dx));
+        const bend = 'bend' in spec ? spec.bend : 0.5;
+        const ax = scene.axisX;
+        const mask = new Uint8Array(w * h), lum = new Float32Array(w * h), delta = new Float32Array(w * h);
+        const shade = new Float32Array(w * h).fill(1);
+        const shadowAt = (x, y, z) => {
+            let res = 1, tm = 0, t = 2;
+            for (let s = 0; s < 40 && t < reach; s++) {
+                const d = pf.sd(x + L[0] * t, y + L[1] * t, z + L[2] * t);
+                if (d < 0.1) { res = 0; tm = t; break; }
+                const r = 6 * d / t;
+                if (r < res) { res = r; tm = t; }
+                if (res < 0.02) { res = 0; break; }
+                t += Math.max(1, 0.8 * d);
+            }
+            // the shadow fades out towards the end of its reach
+            const u = Math.min(1, Math.max(0, (tm - 0.4 * reach) / (0.6 * reach)));
+            return 1 - (1 - res) * (1 - u * u * (3 - 2 * u));
         };
-        // The band shows where it is in front of the wall
-        const front = (x, y, u, r) => elevation(x, y, u, r) > 0.3;
-
-        // A handle joins the vessel gradually: its tone fades into that of the wall where it
-        // barely stands out of it, and towards the two ends that were outlined
-        const meanW = sumW / rows.size;
-        const blendLen = Math.max(1, ('blend' in spec ? spec.blend : 0.5) * 0.7 * meanW);
-        const smooth = t => t * t * (3 - 2 * t);
-
-        const x0 = Math.floor(bb.x0) - 2, y0 = yTop;
-        const w = Math.ceil(bb.x1) - x0 + 3, h = yBot - yTop + 1;
-        const mask = new Uint8Array(w * h);
-        const lum = new Float32Array(w * h);
-        const weight = new Float32Array(w * h);
-        for (const [y, r] of rows) {
-            const j = y - y0;
+        // could the part be on the way to the light? (its outline, seen from the pixel)
+        const maybeShadowed = (x, y) => {
+            for (let i = 1; i <= 24; i++) {
+                const t = reach * i / 24;
+                if (pf.sdXY(x + L[0] * t, y + L[1] * t) < 6) return true;
+            }
+            return false;
+        };
+        for (let j = 0; j < h; j++) {
             for (let i = 0; i < w; i++) {
-                const x = x0 + i;
-                if (x < r.xl - 0.5 || x > r.xr + 0.5) continue;
-                const u = (x - r.xc) / r.cosT;
-                const e = elevation(x, y, u, r);
-                if (e <= 0.3) continue;
-                const nu = r.sec.slope(u);
-                const nx = r.sinT + nu * r.cosT, ny = -r.dp, nz = r.cosT - nu * r.sinT;
-                const v = (nx * L[0] + ny * L[1] + nz * L[2]) / (Math.sqrt(nx * nx + ny * ny + nz * nz) || 1);
-                mask[j * w + i] = 1;
-                lum[j * w + i] = Math.min(1, Math.max(0, (v - rg.lo) / span));
-                weight[j * w + i] = smooth(Math.min(1, e / blendLen)) * smooth(Math.min(1, Math.min(y - yTop, yBot - y) / blendLen));
+                const x = x0 + i + 0.5, y = y0 + j + 0.5;
+                const wz = FD.wallZ(scene, x, y);
+                // farther than the fillet from the outline: the wall, untouched (but for the shadow)
+                if (pf.sdXY(x, y) > pf.k + 1) {
+                    if (reach > 0 && wz > 0 && maybeShadowed(x, y)) shade[j * w + i] = 1 - strength * (1 - shadowAt(x, y, wz));
+                    continue;
+                }
+                const zEnd = wz > 0 ? wz - 3 : -pf.zTop;
+                let z = pf.zTop + pf.k + 2, hit = false;
+                for (let s = 0; s < 60; s++) {
+                    const d = union(x, y, z);
+                    if (d < 0.03) { hit = true; break; }
+                    z -= Math.max(0.25, 0.85 * d);
+                    if (z < zEnd) break;
+                }
+                if (!hit) continue;
+                const n = FD.normalAt(union, x, y, z);
+                // the slope along a part is tempered by `bend` (a share of the part's, not of the wall's)
+                const own = FD.share(vessel.sd(x, y, z), pf.sd(x, y, z), pf.kAt(x, y));
+                n[1] *= 1 - own * (1 - bend);
+                const nl = Math.hypot(n[0], n[1], n[2]) || 1;
+                const v = (n[0] * L[0] + n[1] * L[1] + n[2] * L[2]) / nl;
+                // the wall behind, as the vessel shades it
+                const r = vessel.radiusAt(y), dr = vessel.slopeAt(y), dx = x - ax;
+                const zw = Math.max(Math.sqrt(Math.max(0, r * r - dx * dx)), 0.05 * r);
+                const ny = -r * dr, wl = Math.sqrt(dx * dx + ny * ny + zw * zw) || 1;
+                const vRef = (dx * L[0] + ny * L[1] + zw * L[2]) / wl;
+                const k = j * w + i;
+                lum[k] = clamp01((v - rg.lo) / span);
+                delta[k] = (v - vRef) / span;
+                if (reach > 0 && own < 0.35) shade[k] = 1 - strength * (1 - shadowAt(x, y, z));
+                if (z - wz > 0.3 && pf.inside(x, y)) mask[k] = 1;
             }
         }
-
-        // The two side lines, where the band stands out of the wall
-        const runs = { left: [[]], right: [[]] };
-        for (let y = yTop; y <= yBot; y++) {
-            const r = rows.get(y);
-            for (const side of ['left', 'right']) {
-                const list = runs[side];
-                const xe = r ? (side === 'left' ? r.xl : r.xr) : 0;
-                if (r && front(xe, y, (xe - r.xc) / r.cosT, r)) list[list.length - 1].push({ x: xe, y: y + 0.5 });
-                else if (list[list.length - 1].length) list.push([]);
-            }
-        }
+        // The contour: the traced outline itself, wherever the part stands out of the wall (a run of
+        // it ends where the part merges into the wall)
         const edges = [];
-        for (const side of ['left', 'right']) {
-            for (const run of runs[side]) {
-                if (run.length < 3) continue;
-                const smooth = G().smoothPolyline(run, 2);
-                smooth.open = true;
-                edges.push(smooth);
+        const at = (x, y) => {
+            const i = Math.floor(x) - x0, j = Math.floor(y) - y0;
+            return i >= 0 && j >= 0 && i < w && j < h && mask[j * w + i] === 1;
+        };
+        const standsOut = (x, y) => at(x, y) || at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1);
+        const poly = spec.points;
+        let run = [], gap = [];   // (a gap of a few px in the contour is bridged)
+        const flush = () => {
+            if (run.length >= 3) { const pl = G().simplify(run, 0.4); pl.open = true; edges.push(pl); }
+            run = [];
+        };
+        for (let i = 0; i < poly.length; i++) {
+            const [ax0, ay0] = poly[i], [bx0, by0] = poly[(i + 1) % poly.length];
+            const len = Math.hypot(bx0 - ax0, by0 - ay0), n = Math.max(1, Math.ceil(len));
+            for (let t = 0; t <= n; t++) {
+                const x = ax0 + (bx0 - ax0) * t / n, y = ay0 + (by0 - ay0) * t / n;
+                if (standsOut(x, y)) { run.push(...gap, { x, y }); gap = []; }
+                else if (run.length && gap.length < 20) gap.push({ x, y });
+                else { gap = []; flush(); }
             }
         }
-        return { x0, y0, w, h, mask, lum, weight, edges, meanW };
+        flush();
+        return { x0, y0, w, h, mask, lum, delta, shade, edges, meanW: pf.meanW };
     }
 
-    // Add the fronts to the luminance field of the vessel: the field grows to hold them, the
-    // pixels of the bands take their own luminance. `wall` keeps the vessel's own pixels.
+    // Add the fronts to the luminance field of the vessel: the field grows to hold them. The wall
+    // pixels around a part take the change of luminance the part makes (`delta`); the pixels of the
+    // part itself (`band`) are marked for the shadows.
     function compose(field, fronts) {
         const list = fronts.filter(Boolean);
         if (!list.length) return field;
@@ -168,10 +156,11 @@
             for (let j = 0; j < f.h; j++) {
                 for (let i = 0; i < f.w; i++) {
                     const s = j * f.w + i;
-                    if (!f.mask[s]) continue;
                     const k = (f.y0 - Y0 + j) * w + (f.x0 - X0 + i);
-                    // on the vessel the tone of the band is mixed with that of the wall under it
-                    lum[k] = wall[k] ? lum[k] + (f.lum[s] - lum[k]) * f.weight[s] : f.lum[s];
+                    if (wall[k] && (f.delta[s] || f.shade[s] < 1)) lum[k] = clamp01((lum[k] + f.delta[s]) * f.shade[s]);
+                    if (!f.mask[s]) continue;
+                    // beyond the silhouette of the vessel the part has its own luminance
+                    if (!wall[k]) lum[k] = f.lum[s] * f.shade[s];
                     inside[k] = 1; band[k] = 1;
                 }
             }
@@ -179,39 +168,11 @@
         return { x0: X0, y0: Y0, w, h, inside, lum, range: field.range, wall, band };
     }
 
-    // Shadow the bands cast on the wall: the mask of each band is swept away from the light over
-    // `len` px, fading out, and raises the density of the wall pixels it reaches
-    function castShadows(field, specs, light2d) {
-        if (!field.band) return;
-        const boost = new Float32Array(field.w * field.h);
-        let any = false;
-        for (const spec of specs) {
-            if (!spec.front) continue;
-            const len = Math.round(spec.shadow * 0.6 * spec.front.meanW);
-            if (len < 1) continue;
-            any = true;
-            const dx = -light2d.x, dy = -light2d.y;
-            const f = spec.front;
-            // Wall pixels within reach of the band's box
-            const bx0 = Math.max(0, f.x0 - field.x0 - len - 1), bx1 = Math.min(field.w, f.x0 - field.x0 + f.w + len + 1);
-            const by0 = Math.max(0, f.y0 - field.y0 - len - 1), by1 = Math.min(field.h, f.y0 - field.y0 + f.h + len + 1);
-            for (let j = by0; j < by1; j++) {
-                for (let i = bx0; i < bx1; i++) {
-                    const k = j * field.w + i;
-                    if (!field.wall[k] || field.band[k]) continue;
-                    let best = 0;
-                    for (let s = 1; s <= len && best < 1; s++) {
-                        const si = Math.round(i - dx * s), sj = Math.round(j - dy * s);
-                        if (si < 0 || sj < 0 || si >= field.w || sj >= field.h) break;
-                        const sk = sj * field.w + si;
-                        if (field.band[sk]) { best = Math.pow(1 - s / (len + 1), 2); break; }
-                    }
-                    if (best > 0) boost[k] = Math.max(boost[k], 0.6 * best);
-                }
-            }
-        }
-        field.boost = any ? boost : null;
-    }
-
-    window.ProspectSurfaces = { section, outerProfile, buildFront, compose, castShadows };
+    window.ProspectSurfaces = {
+        outerProfile: (...a) => F().outerProfile(...a),
+        planAt: (...a) => F().planAt(...a),
+        defaultPlan: (...a) => F().defaultPlan(...a),
+        wallZ: (...a) => F().wallZ(...a),
+        buildFront, defaultWidth, compose
+    };
 })();

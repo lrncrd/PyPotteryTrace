@@ -224,87 +224,89 @@
         return Math.max(0.9, (radiusInfo ? radiusInfo.height : 400) / 420);
     }
 
-    // Stippling: density averaged on a grid of cell `spacing` over the part of each cell inside
-    // the prospect (so the shading keeps its tone right up to the outline), binarized with
-    // serpentine Floyd-Steinberg error diffusion; each dot is jittered inside its cell, and
-    // border cells try several positions until one falls inside, clear of the outline. `blocked` (optional, field-sized) marks pixels
-    // covered by decorations, where no dot may fall. Returns [cx, cy, r].
+    // Stippling: blue-noise dots whose spacing follows the density. Candidates on a fine jittered
+    // grid are taken in random order (dart throwing) and kept when they are inside the prospect,
+    // clear of the outline (the dot radius plus half the stroke) and of the decorations (`blocked`,
+    // optional, field-sized), and farther from every kept dot than the mean of the two local radii
+    //   r(x) = 0.83 * spacing / sqrt(density(x))
+    // (a saturated dart throw packs 0.7 / r^2 dots per px^2, so the count is density / spacing^2 as
+    // for an ordered dither, but without its rows and worms). Dots grow a little with the density.
+    // Returns [cx, cy, r].
     function stipple(field, density, outline, params, dotRadius, blocked) {
         const { x0, y0, w, h, inside } = field;
         const dotR = dotRadius;
         const spacing = 3.6 * dotR / Math.max(0.2, params.density);
-        const gw = Math.ceil(w / spacing), gh = Math.ceil(h / spacing);
-        const n = gw * gh;
-        const sum = new Float64Array(n), area = new Float64Array(n), cells = new Float64Array(n);
-        const sx = new Float64Array(n), sy = new Float64Array(n);
-        for (let j = 0; j < h; j++) {
-            const gy = Math.min(gh - 1, Math.floor(j / spacing));
-            for (let i = 0; i < w; i++) {
-                const g = gy * gw + Math.min(gw - 1, Math.floor(i / spacing));
-                const k = j * w + i;
-                cells[g]++;
-                if (inside[k]) { area[g]++; sum[g] += density[k]; sx[g] += i; sy[g] += j; }
-            }
-        }
-        const grid = new Float64Array(n);
-        // Slivers of cells barely touching the prospect count by their area
-        for (let g = 0; g < n; g++) {
-            grid[g] = area[g] > 0 ? sum[g] / (area[g] / cells[g] > 0.25 ? area[g] : cells[g]) : 0;
-        }
-
+        const DMIN = 0.03;
+        const rmin = 0.83 * spacing, rmax = rmin / Math.sqrt(DMIN);
         const rand = mulberry32(params.seed || 0);
         // Dots may touch the drawn outline: keep only the dot radius plus half the outline stroke
         const clearance = dotR * 1.3 + 0.6;
         const rings = asRings(outline);
-        // (an open ring, e.g. a handle joining the vessel wall, has no edge along its closing line)
-        const edges = rings ? rings.map(r => ({ pts: G().simplify(G().edgeLine(r), 0.5), closed: !r.open })) : null;
-        const ok = (cx, cy) => {
-            const li = Math.floor(cx - x0), lj = Math.floor(cy - y0);
-            if (li < 0 || lj < 0 || li >= w || lj >= h) return false;
-            const k = lj * w + li;
-            if (!inside[k] || (blocked && blocked[k])) return false;
-            return !edges || edges.every(e => G().distToPolyline(cx, cy, e.pts, e.closed) >= clearance);
-        };
+        let near = null;
+        if (rings) {
+            const c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            ctx.translate(-x0, -y0);
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2 * clearance;
+            ctx.lineCap = ctx.lineJoin = 'round';
+            // (an open ring, e.g. a handle joining the vessel wall, has no edge along its closing line)
+            for (const r of rings) {
+                ctx.beginPath();
+                G().edgeLine(r).forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+                if (!r.open) ctx.closePath();
+                ctx.stroke();
+            }
+            const data = ctx.getImageData(0, 0, w, h).data;
+            near = new Uint8Array(w * h);
+            for (let k = 0; k < w * h; k++) near[k] = data[4 * k + 3] > 100 ? 1 : 0;
+        }
+        // Grid of the kept dots
+        const cell = rmin / Math.SQRT2;
+        const gw = Math.ceil(w / cell) + 1, gh = Math.ceil(h / cell) + 1;
+        const head = new Int32Array(gw * gh).fill(-1);
+        const next = [], px = [], py = [], pr = [];
+        // Candidates: a jittered grid of half the smallest radius, in random order
+        const step = 0.5 * rmin;
+        const cx0 = Math.ceil(w / step), cy0 = Math.ceil(h / step);
+        const order = new Uint32Array(cx0 * cy0);
+        for (let i = 0; i < order.length; i++) order[i] = i;
+        for (let i = order.length - 1; i > 0; i--) {
+            const j = Math.floor(rand() * (i + 1));
+            const t = order[i]; order[i] = order[j]; order[j] = t;
+        }
         const dots = [];
-        for (let gy = 0; gy < gh; gy++) {
-            const step = gy % 2 === 0 ? 1 : -1;
-            for (let m = 0; m < gw; m++) {
-                const gx = step === 1 ? m : gw - 1 - m;
-                const g = gy * gw + gx;
-                const value = grid[g];
-                const on = value >= 0.5;
-                const err = value - (on ? 1 : 0);
-                if (on && area[g] > 0) {
-                    // Full cells: jitter around the center; border cells: anywhere in the cell,
-                    // first around the centroid of its inside part
-                    const full = area[g] === cells[g];
-                    const tries = full ? 4 : 10;
-                    for (let attempt = 0; attempt < tries; attempt++) {
-                        let cx, cy;
-                        if (full) {
-                            cx = x0 + (gx + 0.5 + (rand() - 0.5) * 0.7) * spacing;
-                            cy = y0 + (gy + 0.5 + (rand() - 0.5) * 0.7) * spacing;
-                        } else if (attempt < 3) {
-                            cx = x0 + sx[g] / area[g] + 0.5 + (rand() - 0.5) * 0.4 * spacing;
-                            cy = y0 + sy[g] / area[g] + 0.5 + (rand() - 0.5) * 0.4 * spacing;
-                        } else {
-                            cx = x0 + (gx + rand()) * spacing;
-                            cy = y0 + (gy + rand()) * spacing;
-                        }
-                        if (!ok(cx, cy)) continue;
-                        const d = density[Math.floor(cy - y0) * w + Math.floor(cx - x0)];
-                        dots.push([cx, cy, dotR * (0.75 + 0.5 * d)]);
-                        break;
+        for (let n = 0; n < order.length; n++) {
+            const gx = order[n] % cx0, gy = (order[n] / cx0) | 0;
+            const lx = (gx + rand()) * step, ly = (gy + rand()) * step;
+            const li = Math.floor(lx), lj = Math.floor(ly);
+            if (li >= w || lj >= h) continue;
+            const k = lj * w + li;
+            if (!inside[k] || (blocked && blocked[k]) || (near && near[k])) continue;
+            const d = density[k];
+            if (d < DMIN) continue;
+            const r = rmin / Math.sqrt(d);
+            const reach = 0.5 * (r + rmax);
+            const ci = Math.floor(lx / cell), cj = Math.floor(ly / cell), span = Math.ceil(reach / cell);
+            let free = true;
+            for (let j = Math.max(0, cj - span); j <= Math.min(gh - 1, cj + span) && free; j++) {
+                for (let i = Math.max(0, ci - span); i <= Math.min(gw - 1, ci + span); i++) {
+                    for (let q = head[j * gw + i]; q >= 0; q = next[q]) {
+                        const need = 0.5 * (r + pr[q]);
+                        const ddx = px[q] - lx, ddy = py[q] - ly;
+                        if (ddx * ddx + ddy * ddy < need * need) { free = false; break; }
                     }
-                }
-                if (gx + step >= 0 && gx + step < gw) grid[g + step] += err * 7 / 16;
-                if (gy + 1 < gh) {
-                    const below = g + gw;
-                    if (gx - step >= 0 && gx - step < gw) grid[below - step] += err * 3 / 16;
-                    grid[below] += err * 5 / 16;
-                    if (gx + step >= 0 && gx + step < gw) grid[below + step] += err * 1 / 16;
+                    if (!free) break;
                 }
             }
+            if (!free) continue;
+            const id = px.length;
+            px.push(lx); py.push(ly); pr.push(r);
+            next.push(head[cj * gw + ci]);
+            head[cj * gw + ci] = id;
+            dots.push([x0 + lx, y0 + ly, dotR * (0.75 + 0.5 * d)]);
         }
         return dots;
     }
@@ -421,5 +423,5 @@
         return c;
     }
 
-    window.ProspectShading = { lightVector, computeLuminance, computeInflateLuminance, edgeField, referenceRange, computeDensity, defaultDotRadius, stipple, decorationMask, applyShadeRegions, toneCanvas };
+    window.ProspectShading = { lightVector, computeLuminance, computeInflateLuminance, edgeField, boxBlur, referenceRange, computeDensity, defaultDotRadius, stipple, decorationMask, applyShadeRegions, toneCanvas };
 })();

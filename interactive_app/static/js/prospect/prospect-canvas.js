@@ -31,7 +31,20 @@
     ];
 
     // Front view of a handle (see prospect-surfaces.js)
+    // `axis`: only for that sweep ('y' vertical, 'x' horizontal or lug); `derived`: only while the outline is a
+    // placed shape (get/set read and write it)
     const FRONT_SCHEMA = [
+        { key: 'gw', label: 'Width of the placed shape', min: 6, max: 800, step: 1, derived: true,
+            get: f => Math.round(f.gen.w), set: (f, v) => { f.gen.w = v; } },
+        { key: 'gh', label: 'Height of the placed shape', min: 6, max: 500, step: 1, derived: true, axis: 'x',
+            get: f => Math.round(f.gen.h), set: (f, v) => { f.gen.h = v; } },
+        { key: 'crest', label: 'Height of the crest above the wall', min: 0, max: 400, step: 1, axis: 'x',
+            get: f => Math.round(Math.max(...f.plan.map(p => p.dz))),
+            set: (f, v) => {
+                const m = Math.max(...f.plan.map(p => p.dz)) || 1;
+                f.plan.forEach(p => { p.dz = Math.round(p.dz * v / m * 10) / 10; });
+            } },
+        { key: 'thickness', label: 'Thickness (0 = from the side view)', min: 0, max: 200, step: 1 },
         { key: 'roundness', label: 'Edge rounding', min: 0.1, max: 1, step: 0.05 },
         { key: 'bend', label: 'Arch shading', min: 0, max: 1.5, step: 0.05 },
         { key: 'blend', label: 'Blend into the wall', min: 0, max: 2.5, step: 0.05 },
@@ -303,8 +316,9 @@
             if (!model || this.prospect.kind !== 'prospect' || !this.scene.radius || this.scene.axisX === null) return;
             const range = this.vesselRange(sh);
             for (const spec of model.fronts) {
-                const part = this.scene.parts.find(p => p.id === spec.part);
-                if (!part) continue;
+                // a horizontal handle or a lug has no side view to draw from
+                const part = this.scene.parts.find(p => p.id === spec.part) || null;
+                if (!part && spec.axis !== 'x') continue;
                 const front = window.ProspectSurfaces.buildFront(spec, part, this.scene, sh, range);
                 if (!front) continue;
                 this.frontRasters.set(spec.id, front);
@@ -315,6 +329,7 @@
         recomputeShading() {
             this.computeShading();
             this.saveSnapshot();
+            if (window.prospect3d) window.prospect3d.invalidate();
         }
 
         computeShading() {
@@ -346,7 +361,6 @@
             const SU = window.ProspectSurfaces;
             if (this.frontRasters.size) {
                 field = SU.compose(field, [...this.frontRasters.values()]);
-                SU.castShadows(field, this.model.fronts.map(f => Object.assign({}, f, { front: this.frontRasters.get(f.id) })), this.light2d);
             }
             this.field = field;
             const rings = this.prospect.rings.concat(this.frontEdges);
@@ -431,7 +445,7 @@
 
         get handlesAvailable() {
             return !!(this.scene && this.prospect && this.prospect.kind === 'prospect' &&
-                this.scene.radius && this.scene.axisX !== null && this.scene.parts.length);
+                this.scene.radius && this.scene.axisX !== null);
         }
 
         // Pointer on the selected front: a vertex is dragged (tapped twice it is removed), an edge
@@ -440,6 +454,16 @@
             const front = this.selectedFront;
             if (!front) return false;
             const tol = HIT_PX / this.scale;
+            // A placed shape (proposed by the 3D) moves as a whole; its outline is edited after "Adopt"
+            if (front.source === 'derived') {
+                const r = this.frontRasters.get(front.id);
+                const poly = front.points.map(([x, y]) => ({ x, y }));
+                if (G().pointInPolygon(ip.x, ip.y, poly) || G().distToPolyline(ip.x, ip.y, poly, true) <= tol || (r && this.hitFront(ip.x, ip.y) === front.id)) {
+                    this.action = { type: 'fmove', id: front.id, last: ip, moved: false };
+                    return true;
+                }
+                return false;
+            }
             const vi = front.points.findIndex(([x, y]) => Math.hypot(x - ip.x, y - ip.y) <= tol);
             if (vi >= 0) {
                 const now = Date.now();
@@ -494,29 +518,113 @@
             if (!last || Math.hypot(last.x - ip.x, last.y - ip.y) * this.scale > 3) pts.push(ip);
         }
 
-        // The outline is done: the front view of the chosen handle
-        finishFront() {
-            const pts = this.frontPts;
-            this.frontPts = [];
-            const part = this.scene && this.scene.parts.find(p => p.id === document.getElementById('prospect-front-part').value);
-            if (pts.length < 3 || !part || !this.handlesAvailable) {
-                this.updateUI();
-                this.redraw();
-                return;
-            }
+        get frontKind() {
+            const el = document.getElementById('prospect-front-kind');
+            return el ? el.value : 'vertical';
+        }
+
+        // Defaults of a new applied part of the chosen type
+        newFront(points, source, gen) {
+            const kind = this.frontKind;
+            const SU = window.ProspectSurfaces;
             const spec = {
                 id: `front_${Date.now().toString(36)}`,
-                part: part.id,
-                points: pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]),
-                roundness: 0.6,
+                kind: kind === 'lug' ? 'lug' : 'handle',
+                axis: kind === 'vertical' ? 'y' : 'x',
+                part: kind === 'vertical' ? document.getElementById('prospect-front-part').value : null,
+                points, source, gen: gen || null,
+                roundness: kind === 'lug' ? 1 : 0.6,
+                thickness: 0,
                 bend: 0.5,
                 blend: 0.5,
                 shadow: 0.6
             };
+            if (spec.axis === 'x') {
+                const b = G().bbox(points.map(([x, y]) => ({ x, y })));
+                spec.plan = SU.defaultPlan(Math.round((kind === 'lug' ? 0.5 : 0.35) * b.w));
+            }
+            return spec;
+        }
+
+        addFront(spec) {
             this.model.fronts.push(spec);
             this.selectedFrontId = spec.id;
             this.setTool('select');
             this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        // The outline is done: the front view of the chosen part, traced on the drawing
+        finishFront() {
+            const pts = this.frontPts;
+            this.frontPts = [];
+            const kind = this.frontKind;
+            const partOk = kind !== 'vertical' || (this.scene && this.scene.parts.some(p => p.id === document.getElementById('prospect-front-part').value));
+            if (pts.length < 3 || !partOk || !this.handlesAvailable) {
+                this.updateUI();
+                this.redraw();
+                return;
+            }
+            this.addFront(this.newFront(pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]), 'traced', null));
+        }
+
+        // Outline of a placed shape { shape, cx, cy, w, h, y0, y1 }
+        genPolygon(g) {
+            const r1 = v => Math.round(v * 10) / 10;
+            if (g.shape === 'band') {
+                return [[g.cx - g.w / 2, g.y0], [g.cx + g.w / 2, g.y0], [g.cx + g.w / 2, g.y1], [g.cx - g.w / 2, g.y1]].map(p => [r1(p[0]), r1(p[1])]);
+            }
+            const pts = [];
+            if (g.shape === 'ellipse') {
+                for (let i = 0; i < 28; i++) {
+                    const a = 2 * Math.PI * i / 28;
+                    pts.push([r1(g.cx + g.w / 2 * Math.cos(a)), r1(g.cy + g.h / 2 * Math.sin(a))]);
+                }
+                return pts;
+            }
+            // a pill: a rectangle with round ends
+            const R = Math.min(g.h / 2, g.w / 2), n = 8;
+            const corner = (cx, cy, a0) => {
+                for (let k = 0; k <= n; k++) {
+                    const a = a0 + Math.PI / 2 * k / n;
+                    pts.push([r1(cx + R * Math.cos(a)), r1(cy + R * Math.sin(a))]);
+                }
+            };
+            corner(g.cx + g.w / 2 - R, g.cy + g.h / 2 - R, 0);
+            corner(g.cx - g.w / 2 + R, g.cy + g.h / 2 - R, Math.PI / 2);
+            corner(g.cx - g.w / 2 + R, g.cy - g.h / 2 + R, Math.PI);
+            corner(g.cx + g.w / 2 - R, g.cy - g.h / 2 + R, 1.5 * Math.PI);
+            return pts;
+        }
+
+        // A default shape of the chosen type, with its middle at the point: the 3D proposes an outline
+        placeApplied(ip) {
+            if (!this.handlesAvailable) return;
+            const kind = this.frontKind;
+            const V = this.vessel ? this.vessel.bbox : this.prospect.bbox;
+            let gen;
+            if (kind === 'vertical') {
+                const part = this.scene.parts.find(p => p.id === document.getElementById('prospect-front-part').value);
+                if (!part) return;
+                const rho = window.ProspectSurfaces.outerProfile(part, this.scene.axisX, this.scene.radius.radius.length);
+                if (!rho) return;
+                gen = { shape: 'band', cx: ip.x, w: Math.round(window.ProspectSurfaces.defaultWidth(part)), y0: rho.y0, y1: rho.y1 };
+            } else if (kind === 'lug') {
+                gen = { shape: 'ellipse', cx: ip.x, cy: ip.y, w: Math.round(0.1 * V.w), h: Math.round(0.08 * V.h) };
+            } else {
+                gen = { shape: 'pill', cx: ip.x, cy: ip.y, w: Math.round(0.22 * V.w), h: Math.round(0.09 * V.h) };
+            }
+            this.addFront(this.newFront(this.genPolygon(gen), 'derived', gen));
+        }
+
+        // The proposed outline becomes the user's own (traced): from now on the drawing rules
+        adoptFront() {
+            const f = this.selectedFront;
+            if (!f || f.source !== 'derived') return;
+            f.source = 'traced';
+            f.gen = null;
             this.pushHistory();
             this.updateUI();
             this.redraw();
@@ -538,6 +646,7 @@
             FRONT_SCHEMA.forEach(f => {
                 const group = document.createElement('div');
                 group.className = 'form-group prospect-control';
+                group.id = `prospect-fr-${f.key}-group`;
                 group.innerHTML = `<label>${f.label}: <span class="prospect-value" id="prospect-fr-${f.key}-value"></span></label>
                     <input type="range" class="slider" id="prospect-fr-${f.key}" min="${f.min}" max="${f.max}" step="${f.step}">`;
                 box.appendChild(group);
@@ -546,7 +655,9 @@
                 input.addEventListener('input', () => {
                     const front = this.selectedFront;
                     if (!front) return;
-                    front[f.key] = parseFloat(input.value);
+                    const v = parseFloat(input.value);
+                    if (f.set) f.set(front, v); else front[f.key] = v;
+                    if (front.source === 'derived' && front.gen) front.points = this.genPolygon(front.gen);
                     document.getElementById(`prospect-fr-${f.key}-value`).textContent = input.value;
                     if (frame) return;
                     frame = requestAnimationFrame(() => {
@@ -557,6 +668,12 @@
                 });
                 input.addEventListener('change', () => this.pushHistory());
             });
+        }
+
+        frontLabel(f, i) {
+            const part = this.scene.parts.find(p => p.id === f.part);
+            const name = f.axis === 'x' ? (f.kind === 'lug' ? 'Lug' : 'Horizontal handle') : (part ? part.name : 'Handle');
+            return `${i + 1}. ${name}${f.source === 'derived' ? ' (placed)' : ''}`;
         }
 
         updateHandlesPanel() {
@@ -574,14 +691,19 @@
                 select.appendChild(opt);
             });
             if (current && this.scene.parts.some(p => p.id === current)) select.value = current;
+            // A vertical handle needs its side view
+            const kindSel = document.getElementById('prospect-front-kind');
+            const vertical = kindSel.value === 'vertical';
+            document.getElementById('prospect-front-part-group').style.display = vertical ? '' : 'none';
+            kindSel.querySelector('option[value="vertical"]').disabled = !this.scene.parts.length;
+            if (!this.scene.parts.length && vertical) kindSel.value = 'horizontal';
             const list = document.getElementById('prospect-fronts-list');
             list.innerHTML = '';
             this.model.fronts.forEach((f, i) => {
-                const part = this.scene.parts.find(p => p.id === f.part);
                 const row = document.createElement('div');
                 row.className = 'prospect-deco-row' + (f.id === this.selectedFrontId ? ' active' : '');
-                row.innerHTML = `<span class="prospect-deco-name">${i + 1}. ${part ? part.name : f.part}</span>
-                    <button class="toolbar-btn" title="Delete this front view"><i class="bi bi-trash"></i></button>`;
+                row.innerHTML = `<span class="prospect-deco-name">${this.frontLabel(f, i)}</span>
+                    <button class="toolbar-btn" title="Delete"><i class="bi bi-trash"></i></button>`;
                 row.querySelector('.prospect-deco-name').addEventListener('click', () => {
                     this.selectedFrontId = f.id;
                     this.updateUI();
@@ -591,10 +713,16 @@
             });
             const front = this.selectedFront;
             document.getElementById('prospect-front-controls').style.display = front ? '' : 'none';
+            document.getElementById('prospect-front-adopt').style.display = front && front.source === 'derived' ? '' : 'none';
             if (front) {
                 FRONT_SCHEMA.forEach(f => {
-                    document.getElementById(`prospect-fr-${f.key}`).value = front[f.key];
-                    document.getElementById(`prospect-fr-${f.key}-value`).textContent = front[f.key];
+                    const group = document.getElementById(`prospect-fr-${f.key}-group`);
+                    const show = (!f.axis || f.axis === (front.axis || 'y')) && (!f.derived || front.source === 'derived');
+                    group.style.display = show ? '' : 'none';
+                    if (!show) return;
+                    const v = f.get ? f.get(front) : front[f.key];
+                    document.getElementById(`prospect-fr-${f.key}`).value = v;
+                    document.getElementById(`prospect-fr-${f.key}-value`).textContent = v;
                 });
             }
         }
@@ -943,11 +1071,14 @@
                 this.strokePolyline(selFront.points.map(([x, y]) => ({ x, y })), true);
                 ctx.setLineDash([]);
                 ctx.fillStyle = '#ffffff';
-                for (const [x, y] of selFront.points) {
-                    ctx.beginPath();
-                    ctx.arc(x, y, 5 * px, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.stroke();
+                // the vertices of a traced outline are handles; a placed shape moves as a whole
+                if (selFront.source !== 'derived') {
+                    for (const [x, y] of selFront.points) {
+                        ctx.beginPath();
+                        ctx.arc(x, y, 5 * px, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+                    }
                 }
             }
             // The outline being tapped
@@ -1105,6 +1236,9 @@
             on('prospect-element-select', 'change', e => this.setProspect(e.target.value));
             on('prospect-reseed-btn', 'click', () => this.reseed());
             on('prospect-front-place', 'click', () => this.setTool('handle'));
+            on('prospect-front-derive', 'click', () => this.setTool('place'));
+            on('prospect-front-adopt', 'click', () => this.adoptFront());
+            on('prospect-front-kind', 'change', () => this.updateHandlesPanel());
             on('prospect-bg-toggle', 'change', e => { this.showBg = e.target.checked; this.redraw(); });
             on('prospect-show-all', 'change', e => { this.showAll = e.target.checked; this.fitView(); });
             on('prospect-bg-opacity', 'input', e => { this.bgOpacity = parseFloat(e.target.value); this.redraw(); });
@@ -1155,6 +1289,9 @@
             switch (this.tool) {
                 case 'handle':
                     this.addFrontPoint(ip);
+                    break;
+                case 'place':
+                    this.placeApplied(ip);
                     break;
                 case 'band':
                     this.action = { type: 'band', x: ip.x, y: ip.y };
@@ -1236,6 +1373,16 @@
                 }
             } else if (a.type === 'fvertex') {
                 this.dragFrontVertex(a, ip);
+            } else if (a.type === 'fmove') {
+                const front = this.model.fronts.find(f => f.id === a.id);
+                if (front && front.gen) {
+                    front.gen.cx += ip.x - a.last.x;
+                    if (front.gen.shape !== 'band') front.gen.cy += ip.y - a.last.y;
+                    front.points = this.genPolygon(front.gen);
+                    a.last = ip;
+                    a.moved = true;
+                    this.buildFronts(this.model.shading);
+                }
             } else if (a.type === 'move' || a.type === 'vertex') {
                 const dx = ip.x - a.last.x, dy = ip.y - a.last.y;
                 a.last = ip;
@@ -1269,7 +1416,7 @@
                     const smooth = G().smoothPolyline(G().resample(a.pts, 2 / this.scale), 2);
                     this.addDecoration(G().simplify(smooth, 0.3 / this.scale));
                 }
-            } else if (a.type === 'fvertex' && a.moved) {
+            } else if ((a.type === 'fvertex' || a.type === 'fmove') && a.moved) {
                 this.recomputeShading();
                 this.pushHistory();
                 this.updateUI();
@@ -1398,6 +1545,7 @@
             this.updateUndoButtons();
             this.updateShadingPanel();
             this.updateHandlesPanel();
+            if (window.prospect3d) window.prospect3d.invalidate();
             this.updateBrushPanel();
             this.updateDecorationList();
         }

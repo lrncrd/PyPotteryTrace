@@ -931,16 +931,30 @@
                     </div>
 
                     <div class="panel" id="prospect-handles-panel" style="display: none;">
-                        <h2><i class="bi bi-link-45deg"></i> Handles</h2>
-                        <p class="prospect-status">Front view of a handle, derived from its side view (Handle layer). Choose the handle, press the button, then tap its outline on the original drawing: the two ends and the sides, going around it (it can be asymmetric). Double-click, Enter or a tap on the first point closes it. Drag a vertex to move it, click an edge to add one, tap a vertex twice to remove it.</p>
+                        <h2><i class="bi bi-link-45deg"></i> Handles and lugs</h2>
+                        <p class="prospect-status">Applied parts. Trace the outline on the original drawing (the drawing rules), or place a default shape and adjust it in the 3D views (the 3D proposes; adopt it to edit its outline).</p>
                         <div class="form-group">
+                            <label for="prospect-front-kind">Type</label>
+                            <select id="prospect-front-kind" class="form-control">
+                                <option value="vertical">Vertical handle (from its side view)</option>
+                                <option value="horizontal">Horizontal handle</option>
+                                <option value="lug">Lug</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="prospect-front-part-group">
                             <label for="prospect-front-part">Side view</label>
                             <select id="prospect-front-part" class="form-control"></select>
                         </div>
                         <button id="prospect-front-place" class="btn btn-secondary" style="width: 100%;">
-                            <i class="bi bi-vector-pen"></i> Outline the front view
+                            <i class="bi bi-vector-pen"></i> Outline on the drawing
+                        </button>
+                        <button id="prospect-front-derive" class="btn btn-secondary" style="width: 100%; margin-top: 6px;">
+                            <i class="bi bi-plus-circle"></i> Place a default shape
                         </button>
                         <div id="prospect-fronts-list" style="margin-top: 8px;"></div>
+                        <button id="prospect-front-adopt" class="btn btn-secondary" style="width: 100%; display: none;">
+                            <i class="bi bi-check2-square"></i> Adopt the outline from the 3D
+                        </button>
                         <div id="prospect-front-controls"></div>
                     </div>
 
@@ -965,6 +979,33 @@
                         </div>
                     </div>
 
+                    <div class="prospect-dock" id="prospect-dock" style="display: none;">
+                        <div class="prospect-dock-view">
+                            <div class="prospect-dock-title">Side</div>
+                            <canvas id="prospect-view-side"></canvas>
+                        </div>
+                        <div class="prospect-dock-view">
+                            <div class="prospect-dock-title">From above
+                                <input type="range" id="prospect-view-slice" min="0" max="100" value="50" title="Height of the section (vertical handles)" style="width: 90px; margin-left: auto;">
+                            </div>
+                            <canvas id="prospect-view-top"></canvas>
+                        </div>
+                        <div class="prospect-dock-view">
+                            <div class="prospect-dock-title">3D
+                                <select id="prospect-view-vessel" title="How the vessel is shown">
+                                    <option value="fragment" selected>vessel: piece around it</option>
+                                    <option value="full">vessel: whole</option>
+                                    <option value="none">vessel: hidden</option>
+                                </select>
+                                <button id="prospect-view-quads" class="toolbar-btn" title="Show the quads of the mesh"><i class="bi bi-grid-3x3"></i></button>
+                                <input type="range" id="prospect-view-quad-size" min="3" max="24" step="1" value="8" title="Size of the quads (px of the drawing)" style="width: 60px;">
+                                <button id="prospect-view-reset" class="toolbar-btn" title="Reset the view (double-click)"><i class="bi bi-arrow-counterclockwise"></i></button>
+                                <button id="prospect-dock-expand" class="toolbar-btn" title="Larger"><i class="bi bi-arrows-angle-expand"></i></button>
+                            </div>
+                            <canvas id="prospect-view-3d"></canvas>
+                        </div>
+                    </div>
+
                     <div class="canvas-toolbar">
                         <button id="prospect-zoom-in" class="toolbar-btn" title="Zoom In"><i class="bi bi-zoom-in"></i></button>
                         <button id="prospect-zoom-out" class="toolbar-btn" title="Zoom Out"><i class="bi bi-zoom-out"></i></button>
@@ -973,6 +1014,7 @@
                         <button id="prospect-undo" class="toolbar-btn" title="Undo (Ctrl+Z)" disabled><i class="bi bi-arrow-counterclockwise"></i></button>
                         <button id="prospect-redo" class="toolbar-btn" title="Redo (Ctrl+Shift+Z)" disabled><i class="bi bi-arrow-clockwise"></i></button>
                         <div class="toolbar-divider"></div>
+                        <button id="prospect-dock-toggle" class="toolbar-btn" title="3D views of handles and lugs" style="display: none;"><i class="bi bi-box"></i></button>
                         <button id="prospect-delete-btn" class="toolbar-btn" title="Delete the selected decoration (Del)" disabled><i class="bi bi-trash"></i></button>
                         <button id="prospect-finish-btn" class="toolbar-btn" title="Finish the polyline (Enter)" style="display: none;"><i class="bi bi-check-lg"></i></button>
                     </div>
@@ -1616,7 +1658,7 @@
                     <span class="help-step-number">3</span>
                     <div class="help-step-content">
                         <h4>Handles</h4>
-                        <p>Handles traced in the Handle layer appear in the element list: pick one to shade its side view (adjust the edge rounding). On the vessel, the Handles panel derives the front view from it: choose the handle, then tap its outline on the original drawing (its two ends and its sides; it can be asymmetric), and adjust the edge rounding, the arch shading and the shadow on the wall. All the elements of the drawing are shown together; click one to work on it.</p>
+                        <p>Handles traced in the Handle layer appear in the element list: pick one to shade its side view (adjust the edge rounding). On the vessel, the Handles panel derives the front view from it: choose the handle, then tap its outline on the original drawing (its two ends and its sides; it can be asymmetric), and adjust the edge rounding, the arch shading and the shadow on the wall. Horizontal handles and lugs can be placed as a default shape and shaped in the 3D views (button in the toolbar): drag the crest points in the top view, then adopt the outline to edit it. The views show the vessel and the part as one quad mesh, with the part rising out of the wall (the grid button shows or hides the quads, the slider sets their size). All the elements of the drawing are shown together; click one to work on it.</p>
                     </div>
                 </div>
                 <div class="help-step">
@@ -1884,9 +1926,12 @@
     <script src="{{ url_for('static', filename='js/prospect/prospect-geometry.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-shading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-brushes.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-mesh.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-field.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-surfaces.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-model.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prospect/prospect-canvas.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/prospect/prospect-3d.js') }}"></script>
     <script src="{{ url_for('static', filename='js/batch-export.js') }}"></script>
     <script src="{{ url_for('static', filename='js/postprocess.js') }}"></script>
 
