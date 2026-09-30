@@ -12,6 +12,7 @@ class PyPotteryTraceApp {
         this.currentMode = 'point';
         this.epsilon = 1.5;
         this.smoothing = 0.3;
+        this.mergeDistance = 30;
         this.linesThreshold = 100;
 
         // New: Image folder navigation
@@ -115,6 +116,11 @@ class PyPotteryTraceApp {
         document.getElementById('epsilon-slider').addEventListener('input', (e) => {
             this.epsilon = parseFloat(e.target.value);
             document.getElementById('epsilon-value').textContent = this.epsilon.toFixed(1);
+        });
+
+        document.getElementById('merge-distance-slider').addEventListener('input', (e) => {
+            this.mergeDistance = parseInt(e.target.value, 10);
+            document.getElementById('merge-distance-value').textContent = this.mergeDistance;
         });
 
         document.getElementById('smoothing-slider').addEventListener('input', (e) => {
@@ -863,6 +869,7 @@ class PyPotteryTraceApp {
                     session_id: this.sessionId,
                     epsilon: this.epsilon,
                     smoothing_factor: this.smoothing,
+                    merge_distance: this.mergeDistance,
                     lines_threshold: this.linesThreshold !== undefined ? this.linesThreshold : 100,
                     include_background: false
                 })
@@ -1161,12 +1168,35 @@ class PyPotteryTraceApp {
 
                 // Load saved annotations from project if they exist
                 await this.loadAnnotationsFromProject(projectId, filename);
+                await this.loadSavedSVG(projectId, filename);
 
                 this.showNotification('Image loaded successfully', 'success');
             }
         } catch (error) {
             console.error('Error loading project image:', error);
             this.showNotification('Failed to load image: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Reopen the SVG saved in the project for this image (edits, continuation lines, internal
+     * details, shading) in the SVG Editor. Does nothing if the image was never vectorized.
+     */
+    async loadSavedSVG(projectId, filename) {
+        if (!window.svgEditor) return;
+        const svgName = filename.replace(/\.[^.]+$/, '') + '_vectorized.svg';
+        const url = `/api/projects/${projectId}/images/${encodeURIComponent(svgName)}?folder=vectorized&t=${Date.now()}`;
+        try {
+            const probe = await fetch(url);
+            if (!probe.ok) return;
+            const editor = window.svgEditor;
+            editor.sessionId = this.sessionId;
+            editor.currentImageName = filename;
+            editor.currentProjectId = projectId;
+            document.getElementById('svg-editor-tab-btn').disabled = false;
+            await editor.loadSVG(url);
+        } catch (error) {
+            console.error('Could not reopen saved SVG:', error);
         }
     }
 

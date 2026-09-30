@@ -490,6 +490,12 @@ class SVGEditor {
 
     async loadSVG(svgUrl) {
         try {
+            // (the edits of the drawing open until now are saved first)
+            if (this.autosaveTimer) {
+                clearTimeout(this.autosaveTimer);
+                this.autosaveTimer = null;
+                await this.exportModifiedSVG({ silent: true });
+            }
             console.log('Loading SVG from:', svgUrl);
 
             const response = await fetch(svgUrl);
@@ -552,8 +558,10 @@ class SVGEditor {
                 zipBtn.disabled = false;
             }
 
-            // Save initial state
+            // Save initial state (not an edit: no autosave)
+            this.loadingSVG = true;
             this.saveState();
+            this.loadingSVG = false;
 
             console.log('SVG loaded successfully:', {
                 width,
@@ -2707,6 +2715,22 @@ class SVGEditor {
             this.history.shift();
             this.historyIndex--;
         }
+
+        // Called before each edit: the autosave fires once the edit is done
+        if (!this.loadingSVG) this.scheduleAutosave();
+    }
+
+    // Keeps the edited SVG (continuation lines, internal details, ...) in the project, so it is
+    // reloaded when the image is opened again
+    scheduleAutosave() {
+        if (!this.currentProjectId || !this.sessionId) return;
+        clearTimeout(this.autosaveTimer);
+        this.autosaveTimer = setTimeout(() => {
+            // (an edit still going on, a line being drawn or dragged: after it)
+            if (this.isDragging || this.isDrawingLine) { this.scheduleAutosave(); return; }
+            this.autosaveTimer = null;
+            this.exportModifiedSVG({ silent: true });
+        }, 2000);
     }
 
     undo() {
@@ -2742,6 +2766,7 @@ class SVGEditor {
         this.redraw();
 
         document.getElementById('svg-undo-btn').disabled = this.historyIndex <= 0;
+        this.scheduleAutosave();
     }
 
     redraw() {
@@ -3728,7 +3753,7 @@ class SVGEditor {
         return this.paths.reduce((sum, path) => sum + path.points.length, 0);
     }
 
-    async exportModifiedSVG() {
+    async exportModifiedSVG({ silent = false } = {}) {
         if (!this.svgData) return;
 
         try {
@@ -3828,7 +3853,9 @@ class SVGEditor {
 
             const data = await response.json();
 
-            if (data.success) {
+            if (data.success && silent) {
+                console.log('Autosaved SVG:', data.output_path);
+            } else if (data.success) {
                 // Show success message with the actual save path
                 const fileName = data.output_path ? data.output_path.split(/[/\\]/).pop() : 'file';
                 const message = `SVG saved: ${fileName}`;
@@ -3854,6 +3881,7 @@ class SVGEditor {
 
         } catch (error) {
             console.error('Export error:', error);
+            if (silent) return;
             if (window.app) {
                 window.app.showNotification('Error during export: ' + error.message, 'error');
             } else {

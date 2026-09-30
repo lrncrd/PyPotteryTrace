@@ -16,7 +16,8 @@
 //     (Handle layer: outer contour, hole = the lume, closed against the wall) extruded across, at the
 //     azimuth theta of the handle. The thickness and the lume are those of the side view.
 //   horizontal handle / lug (axis x): the front polygon, and the band between two offsets of the wall,
-//     dz(t) and dz(t) - b, where dz(t) is the crest along the length (the top view edits it).
+//     dz(t) and dz(t) - b, where dz(t) is the crest along the length (the top view edits it). A lug has
+//     no lume: it is solid down to the wall (no lower offset).
 // The edges of the section are rounded ("roundness") with the rounded intersection of the two.
 
 (function () {
@@ -62,28 +63,23 @@
         return Ru * (1 - Math.sqrt(Math.max(1e-6, 1 - u * u)));
     }
 
-    // Intersection of two fields with the corner rounded by R
-    function roundedIntersection(a, b, R) {
-        const qa = a + R, qb = b + R;
-        return Math.hypot(Math.max(qa, 0), Math.max(qb, 0)) + Math.min(Math.max(qa, qb), 0) - R;
-    }
-
     // A field sampled on a pixel grid, bilinear; beyond the grid the distance to it is added
+    // (one sample every `s` px of the drawing, the values in px)
     class Grid {
-        constructor(x0, y0, w, h, data) {
-            this.x0 = x0; this.y0 = y0; this.w = w; this.h = h; this.data = data;
+        constructor(x0, y0, w, h, data, s = 1) {
+            this.x0 = x0; this.y0 = y0; this.w = w; this.h = h; this.data = data; this.s = s;
         }
 
         at(x, y) {
-            const mx = this.w - 1, my = this.h - 1;
-            let fx = x - this.x0 - 0.5, fy = y - this.y0 - 0.5, ox = 0, oy = 0;
+            const mx = this.w - 1, my = this.h - 1, s = this.s;
+            let fx = (x - this.x0) / s - 0.5, fy = (y - this.y0) / s - 0.5, ox = 0, oy = 0;
             if (fx < 0) { ox = -fx; fx = 0; } else if (fx > mx) { ox = fx - mx; fx = mx; }
             if (fy < 0) { oy = -fy; fy = 0; } else if (fy > my) { oy = fy - my; fy = my; }
             const i = Math.min(mx - 1, Math.floor(fx)), j = Math.min(my - 1, Math.floor(fy));
             const tx = fx - i, ty = fy - j, d = this.data, w = this.w;
             const k = j * w + i;
             const v = (d[k] * (1 - tx) + d[k + 1] * tx) * (1 - ty) + (d[k + w] * (1 - tx) + d[k + w + 1] * tx) * ty;
-            return ox || oy ? v + Math.hypot(ox, oy) : v;
+            return ox || oy ? v + Math.hypot(ox, oy) * s : v;
         }
     }
 
@@ -172,6 +168,123 @@
         return [0, 0.25, 0.5, 0.75, 1].map(t => ({ t, dz: Math.round(protrusion * Math.sqrt(Math.max(0, 1 - (2 * t - 1) * (2 * t - 1))) * 10) / 10 }));
     }
 
+    // A curve along the length of a horizontal handle as Bezier nodes, like the curves of Blender: [{ t, z, hl, hr }]
+    // (t along the length, z the height above the wall; hl and hr the handles, as offsets [dt, dz] from the
+    // node, within the neighbouring nodes so the curve stays a function of t). bezFromPlan fits one to a plan,
+    // bezSample gives the plan back (dense points)
+    function bezFromPlan(plan, n = 9) {
+        const srt = plan.slice().sort((a, b) => a.t - b.t);
+        const ts = srt.length <= n ? srt.map(p => p.t) : Array.from({ length: n }, (_, i) => srt[Math.round(i * (srt.length - 1) / (n - 1))].t);
+        const h = 0.03, r1 = v => Math.round(v * 10) / 10;
+        return ts.map((t, i) => {
+            const a = Math.max(0, t - h), b = Math.min(1, t + h), slope = (planAt(plan, b) - planAt(plan, a)) / (b - a);
+            const l = i > 0 ? (t - ts[i - 1]) / 3 : 0, r = i < ts.length - 1 ? (ts[i + 1] - t) / 3 : 0;
+            return { t, z: r1(planAt(plan, t)), hl: [-l, r1(-slope * l)], hr: [r, r1(slope * r)] };
+        });
+    }
+
+    function bezSample(nodes) {
+        const out = [];
+        const push = (t, z) => {
+            if (!out.length || t > out[out.length - 1].t + 1e-4) out.push({ t: Math.round(t * 1e4) / 1e4, dz: Math.max(0, Math.round(z * 100) / 100) });
+        };
+        for (let i = 0; i < nodes.length - 1; i++) {
+            const a = nodes[i], b = nodes[i + 1];
+            const t0 = a.t, t1 = a.t + a.hr[0], t2 = b.t + b.hl[0], t3 = b.t;
+            const z0 = a.z, z1 = a.z + a.hr[1], z2 = b.z + b.hl[1], z3 = b.z;
+            for (let k = 0; k < 12; k++) {
+                const u = k / 12, v = 1 - u;
+                push(v * v * v * t0 + 3 * v * v * u * t1 + 3 * v * u * u * t2 + u * u * u * t3,
+                    v * v * v * z0 + 3 * v * v * u * z1 + 3 * v * u * u * z2 + u * u * u * z3);
+            }
+        }
+        const e = nodes[nodes.length - 1];
+        push(e.t, e.z);
+        return out;
+    }
+
+    // spec.bez = { crest, up, low }: the crest, and the lume where it opens on the upper and on the lower side
+    // (nodes); the plans the field works with (spec.plan, spec.under, spec.underLow) are sampled from them
+    function syncBez(spec) {
+        const b = spec.bez;
+        if (!b) return;
+        if (b.crest) spec.plan = bezSample(b.crest);
+        if (b.up && b.low) { spec.under = bezSample(b.up); spec.underLow = bezSample(b.low); }
+        if (b.nup && b.nlow) { spec.underNear = bezSample(b.nup); spec.underNearLow = bezSample(b.nlow); }
+    }
+
+    // The Bezier curves of a part (from its plans the first time)
+    function bezEnsure(spec, pf) {
+        const b = spec.bez = spec.bez || {};
+        if (!b.crest) b.crest = bezFromPlan(pf.plan);
+        if (pf.underPlan.length && !(b.up && b.low)) {
+            b.up = !spec.under && pf.circleNodes ? JSON.parse(JSON.stringify(pf.circleNodes.far)) : bezFromPlan(pf.underPlan);
+            b.low = JSON.parse(JSON.stringify(b.up));
+        }
+        // (a closed hole has its near edge too: the hole is between the two)
+        if (pf.underNearPlan.length && !(b.nup && b.nlow)) {
+            b.nup = !spec.underNear && pf.circleNodes ? JSON.parse(JSON.stringify(pf.circleNodes.near)) : bezFromPlan(pf.underNearPlan);
+            b.nlow = JSON.parse(JSON.stringify(b.nup));
+        }
+        syncBez(spec);
+        return b;
+    }
+
+    // Shapes of a horizontal handle seen from above (its crest, and its lume inside it): the height (0..1)
+    // across its length, u from -1 to 1
+    const LUME_SHAPES = {
+        arch: u => Math.sqrt(Math.max(0, 1 - u * u)),
+        flat: u => Math.pow(Math.max(0, 1 - u ** 4), 0.25),
+        // a pointed arch: two arcs of radius 1.6 meeting in the middle
+        pointed: u => Math.sqrt(Math.max(0, 2.56 - (Math.abs(u) + 0.6) ** 2)) / Math.sqrt(2.2)
+    };
+
+    // A curve of that shape `h` px high, between a and 1 - a along the length (0 outside: the arms)
+    function shapePlan(shape, h, a = 0) {
+        const g = LUME_SHAPES[shape] || LUME_SHAPES.arch;
+        const ts = Array.from({ length: 9 }, (_, i) => a + (1 - 2 * a) * i / 8);
+        if (a > 0) { ts.unshift(0); ts.push(1); }
+        return ts.map(t => ({ t: Math.round(t * 1000) / 1000, dz: Math.round(h * g(clamp((2 * t - 1) / (1 - 2 * a), -1, 1)) * 10) / 10 }));
+    }
+
+    // The fillet of a part only where it stands on the wall: full there, gone `k` px away from it (the lume
+    // is not filled in). `attached` per row or column; the fillet size of each.
+    function attachK(attached, k) {
+        const n = attached.length, d = new Float32Array(n).fill(Infinity);
+        for (let i = 0, last = -Infinity; i < n; i++) { if (attached[i]) last = i; d[i] = i - last; }
+        for (let i = n - 1, last = Infinity; i >= 0; i--) { if (attached[i]) last = i; d[i] = Math.min(d[i], last - i); }
+        return Float32Array.from(d, v => k * (1 - smoothstep(Math.min(1, v / Math.max(1e-6, k)))));
+    }
+
+    // What the section drawn next to the profile says of a horizontal handle or a lug: its extent in y, how
+    // far its crest stands out of the wall and how far from the wall the strap begins (the lume: 0 when it is
+    // on the wall), px
+    function drawnSection(part, scene) {
+        const ax = scene.axisX, rad = scene.radius.radius, H = rad.length, rings = part.rings;
+        const sgn = rings[0].reduce((s, p) => s + p.x, 0) / rings[0].length < ax ? -1 : 1;
+        const dvAt = (x, y) => sgn * (x - ax) - rad[clamp(Math.round(y), 0, H - 1)];
+        const b = G().bbox(rings[0]);
+        let crest = 0, under = Infinity, hole = 0, onWall = 0, nWall = 0, upper = Infinity, lower = Infinity;
+        const ym = (b.y0 + b.y1) / 2;
+        for (let y = Math.ceil(b.y0) + 0.5; y < b.y1; y++) {
+            for (const [xa, xb] of G().horizontalSpans(y, rings[0])) {
+                const da = dvAt(xa, y), db = dvAt(xb, y);
+                crest = Math.max(crest, da, db);
+                under = Math.min(under, da, db);
+                if (y < ym) upper = Math.min(upper, da, db); else lower = Math.min(lower, da, db);
+                if (Math.min(da, db) < 3) { onWall += y; nWall++; }
+            }
+            for (const ring of rings.slice(1)) {
+                for (const [xa, xb] of G().horizontalSpans(y, ring)) hole = Math.max(hole, dvAt(xa, y), dvAt(xb, y));
+            }
+        }
+        if (!(crest > 0)) return null;
+        // (ya: the middle of where it stands on the wall)
+        // (under: the gap between the strap and the wall; above and below, in the upper and the lower half)
+        const gap = v => Math.max(0, hole, v === Infinity ? 0 : v);
+        return { y0: b.y0, y1: b.y1, ya: nWall ? onWall / nWall : ym, crest, under: gap(under), above: gap(upper), below: gap(lower) };
+    }
+
     // ------------------------------------------------------------------
     // Applied parts
     // ------------------------------------------------------------------
@@ -182,20 +295,32 @@
     }
 
     // Raster of the front polygon: inside test and signed distance
+    // (a large polygon on one sample every few px: at most MAX_GRID samples)
+    const MAX_GRID = 250000;
+
     function polygonGrid(poly, bb) {
-        const pad = 12;
-        const x0 = Math.floor(bb.x0) - pad, y0 = Math.floor(bb.y0) - pad;
-        const w = Math.ceil(bb.x1) - x0 + pad + 1, h = Math.ceil(bb.y1) - y0 + pad + 1;
+        const x0 = Math.floor(bb.x0) - 12, y0 = Math.floor(bb.y0) - 12;
+        const W = Math.ceil(bb.x1) - x0 + 13, H = Math.ceil(bb.y1) - y0 + 13;
+        const s = Math.max(1, Math.ceil(Math.sqrt(W * H / MAX_GRID)));
+        const w = Math.ceil(W / s), h = Math.ceil(H / s);
         const path = ctx => {
             ctx.beginPath();
-            poly.forEach((p, i) => (i ? ctx.lineTo(p.x - x0, p.y - y0) : ctx.moveTo(p.x - x0, p.y - y0)));
+            poly.forEach((p, i) => (i ? ctx.lineTo((p.x - x0) / s, (p.y - y0) / s) : ctx.moveTo((p.x - x0) / s, (p.y - y0) / s)));
             ctx.closePath();
         };
         const fill = alphaOf(w, h, ctx => { path(ctx); ctx.fillStyle = '#000'; ctx.fill(); });
         const edge = alphaOf(w, h, ctx => { path(ctx); ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.stroke(); });
         const inside = new Uint8Array(w * h);
         for (let k = 0; k < w * h; k++) inside[k] = fill[k] > 127 ? 1 : 0;
-        return { grid: new Grid(x0, y0, w, h, signedDistance(inside, edge, w, h, 2)), inside, x0, y0, w, h };
+        const sd = signedDistance(inside, edge, w, h, 2);
+        if (s > 1) for (let k = 0; k < sd.length; k++) sd[k] *= s;
+        return {
+            grid: new Grid(x0, y0, w, h, sd, s),
+            isInside(px, py) {
+                const i = Math.floor((px - x0) / s), j = Math.floor((py - y0) / s);
+                return i >= 0 && j >= 0 && i < w && j < h && inside[j * w + i] === 1;
+            }
+        };
     }
 
     // The side view of a vertical handle as a field over (rho, y): rho the distance from the axis.
@@ -416,10 +541,8 @@
     // ------------------------------------------------------------------
 
     // The side view the 3D uses: the drawn one with its ends moved (spec.sideEdit { dy0, dy1 }: the
-    // figure is stretched between them and kept on the wall), or, when the drawing has none, one made
-    // up from spec.side
+    // figure is stretched between them and kept on the wall)
     function sidePart(spec, part, scene) {
-        if (spec.side) return madeSide(spec, scene);
         const e = spec.sideEdit;
         if (!part || !e || (!e.dy0 && !e.dy1)) return part;
         const ax = scene.axisX, rad = scene.radius.radius, H = rad.length;
@@ -441,39 +564,6 @@
             return q;
         });
         return Object.assign({}, part, { rings, outline: rings[0], bbox: G().bbox(rings[0]) });
-    }
-
-    // A side view made up for a handle the drawing has no side view of (spec.side { y0, y1, reach,
-    // apex, thick }): a loop from the wall at y0 to the wall at y1, whose middle line goes `reach` px out
-    // of the wall, farthest at `apex` (0 = level with the top end, 1 = with the bottom one), a strap
-    // `thick` px thick (or `thickness`). Right of the axis, closed along the wall like a drawn one.
-    function madeSide(spec, scene) {
-        const sd = spec.side, ax = scene.axisX, rad = scene.radius.radius, H = rad.length;
-        const rw = y => rad[clamp(Math.round(y), 0, H - 1)];
-        const y0 = Math.min(sd.y0, sd.y1 - 10), y1 = Math.max(sd.y1, sd.y0 + 10), span = y1 - y0;
-        const reach = Math.max(6, sd.reach);
-        const th = clamp(spec.thickness > 0 ? spec.thickness : sd.thick, 2, Math.min(0.8 * reach, 0.45 * span));
-        const lift = (clamp('apex' in sd ? sd.apex : 0.5, 0, 1) - 0.5) * span, c = 4 / 3 * reach;
-        const P = [[0, y0], [c, y0 + lift], [c, y1 + lift], [0, y1]];
-        const mid = [];
-        for (let i = 0; i <= 64; i++) {
-            const t = i / 64, w = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3];
-            mid.push({ x: w.reduce((a, v, j) => a + v * P[j][0], 0), y: w.reduce((a, v, j) => a + v * P[j][1], 0) });
-        }
-        // (x out of the wall, y down: the normal of the offset points into the loop)
-        const toDrawing = p => ({ x: ax + rw(p.y) + p.x, y: p.y });
-        const alongWall = (ya, yb) => {
-            const pts = [], dir = yb > ya ? 1 : -1;
-            for (let y = ya + 2 * dir; dir > 0 ? y < yb : y > yb; y += 2 * dir) pts.push({ x: ax + rw(y), y });
-            return pts;
-        };
-        const outer = G().offsetPolyline(mid, -th / 2), inner = G().offsetPolyline(mid, th / 2);
-        const ring = outer.map(toDrawing);
-        ring.edgeEnd = ring.length;
-        ring.push(...alongWall(outer[outer.length - 1].y, outer[0].y));
-        ring.open = true;
-        const hole = inner.map(toDrawing).concat(alongWall(inner[inner.length - 1].y, inner[0].y));
-        return { id: `side_${spec.id}`, name: 'side view made up', rings: [ring, hole], outline: ring, bbox: G().bbox(ring), madeUp: true };
     }
 
     // Vertical handle: front polygon x side view
@@ -559,6 +649,8 @@
         const median = a => { const c = a.slice().sort((p, q) => p - q); return c[Math.floor(c.length / 2)]; };
         // the fillet is a fraction of the thickness of the strap
         const kFull = (('blend' in spec) ? spec.blend : 0.5) * median(strap.length ? strap : all) * BLEND_SCALE;
+        // (only where the arms stand on the wall: not across the lume)
+        const kRow = attachK(Uint8Array.from({ length: H }, (_, y) => (inner && inner.radius[y] > 0.5 ? 0 : 1)), kFull);
         // what the side view says: the thickness of the strap and the size of the lume
         let stats = `side view: strap ${Math.round(median(strap.length ? strap : all))} px thick`;
         if (holes.length) { const hb = G().bbox(holes.flat()); stats += `, lume ${Math.round(hb.w)} x ${Math.round(hb.h)} px`; }
@@ -569,11 +661,8 @@
             outerRho: y => side.rows.at(side.rows.hi, y),
             zTop: rhoMax + maxHw + 2, rhoMax, halfU: maxHw,
             k: kFull, thick: median(strap.length ? strap : all),
-            kAt: (x, y) => taper(kFull, P.grid.at(x, y)),
-            inside: (px, py) => {
-                const i = Math.floor(px) - P.x0, j = Math.floor(py) - P.y0;
-                return i >= 0 && j >= 0 && i < P.w && j < P.h && P.inside[j * P.w + i] === 1;
-            },
+            kAt: (x, y) => taper(kRow[clamp(Math.round(y - 0.5), 0, H - 1)], P.grid.at(x, y)),
+            inside: P.isInside,
             sdXY: (x, y) => P.grid.at(x, y),
             sd(x, y, z) {
                 const rp = (x - ax) * sinT + z * cosT;
@@ -598,61 +687,294 @@
         };
     }
 
-    // Horizontal handle or lug: front polygon x band between two offsets of the wall
-    function horizontalField(spec, scene, poly, bb, vessel) {
-        const beta = spec.roundness;
+    // Horizontal handle or lug: front polygon x band between two offsets of the wall. The outer offset
+    // is the crest dz(t), the inner one the underside (spec.under, the lume; without it, one thickness
+    // below the crest). The outer face is shaped across the strap by the sections (spec.sections, the
+    // same as those of a vertical handle, t along the length; s across from the top edge to the bottom
+    // one), the corners on the underside are as round as the outer ones. A lug has no lume: it is solid
+    // down to the wall.
+    // The arch may be turned (spec.lean, degrees, up at the crest): the whole strap, section included,
+    // turns as a solid about the line along its length that runs through the middle of the traced
+    // outline, so it keeps its shape whatever the inclination; at 90 degrees the ring lies flat on the
+    // wall and is seen from the front as an arch. The traced polygon is the footprint of the strap
+    // before it is turned; what is seen from the front is its projection (`outline`), worked out from the
+    // sections: an ellipse for a round section, a rectangle for a square one.
+    // A section "as drawn" (spec.section 'drawn') is the figure drawn next to the profile itself, as the side
+    // view of a vertical handle is: it runs along the part, farther out of the wall or nearer to it as the
+    // crest seen from above, and is cut by the traced outline. It is not turned (it is drawn as it leans).
+    function horizontalField(spec, side, scene, poly, bb, vessel) {
         const xmin = Math.ceil(bb.x0), xmax = Math.floor(bb.x1);
-        if (xmax - xmin < 3) return null;
-        const plan = spec.plan && spec.plan.length ? spec.plan : defaultPlan(0.35 * (xmax - xmin));
+        const drawn = drawnSection(side, scene);
+        if (xmax - xmin < 3 || !drawn) return null;
+        const lug = spec.kind === 'lug';
+        // the crest stands out of the wall as far as in the section drawn, until it is edited from above
+        const plan = spec.plan && spec.plan.length ? spec.plan : defaultPlan(drawn.crest);
+        const ratio = spec.thickRatio > 0 ? spec.thickRatio : 0.6;
+        // A horizontal handle is a lug with a hole through it: a cylinder from top to bottom (spec.holeTilt, degrees,
+        // leans it out of the wall towards the bottom), whose section seen from above is the lume. It reaches
+        // spec.under out of the wall along the handle (edited from above), else a shape (spec.lumeShape) as
+        // deep as the gap between the strap and the wall in the section drawn (without a gap there, e.g. the
+        // handle leans and hides it, a little less than half the crest). Where the hole comes out above and
+        // below are the openings of the lume.
+        const crestTop = Math.max(...plan.map(p => p.dz));
+        const depth = Math.min(drawn.under > 1 ? drawn.under : 0.45 * drawn.crest, crestTop - 2);
+        // (the arms as thick along the length as the strap is at the crest, at most a fifth of it each)
+        // spec.lumeShape 'none': no hole (the default of a lug); 'hole': a round hole inside it, closed all round (its
+        // near edge is another curve, spec.underNear), as in a lug pierced for a cord
+        const closed = spec.lumeShape === 'hole';
+        const hasHole = lug ? !!spec.lumeShape && spec.lumeShape !== 'none' : spec.lumeShape !== 'none';
+        const len = Math.max(1, xmax - xmin), cz = 0.5 * crestTop;
+        const hr = Math.min(0.35 * crestTop, 0.18 * len), tl = 0.5 - hr / len, tr = 0.5 + hr / len;
+        // (a round hole as two curves meeting at its tips, four Bezier arcs: its far edge and its near edge)
+        const K = 0.5523, rt = hr / len, r1 = v => Math.round(v * 10) / 10;
+        const circleNodes = sign => [
+            { t: tl, z: r1(cz), hl: [0, 0], hr: [0, r1(sign * K * hr)] },
+            { t: 0.5, z: r1(cz + sign * hr), hl: [-K * rt, 0], hr: [K * rt, 0] },
+            { t: tr, z: r1(cz), hl: [0, r1(sign * K * hr)], hr: [0, 0] }
+        ];
+        const holePlan = !hasHole ? null : spec.under && spec.under.length ? spec.under
+            : closed ? bezSample(circleNodes(1)) : shapePlan(spec.lumeShape, depth, clamp(Math.max(2, crestTop - depth) / len, 0, 0.2));
+        // (the opening below may be another one than the opening above: then the hole runs from one to the other)
+        const holeLow = holePlan && spec.under && spec.under.length && spec.underLow && spec.underLow.length ? spec.underLow : holePlan;
+        const nearUp = closed ? (spec.underNear && spec.underNear.length ? spec.underNear : bezSample(circleNodes(-1))) : null;
+        const nearLow = closed ? (spec.underNearLow && spec.underNearLow.length && spec.underNear && spec.underNear.length ? spec.underNearLow : nearUp) : null;
+        // (a closed hole is only where its curves are, from tip to tip; spec.holeScale makes it larger or smaller about its
+        // middle)
+        const hs = closed ? clamp(spec.holeScale || 1, 0.2, 4) : 1;
+        const zMid = (far, near) => (Math.max(...far.map(p => p.dz)) + Math.min(...near.map(p => p.dz))) / 2;
+        const zcU = closed ? zMid(holePlan, nearUp) : 0, zcL = closed ? zMid(holeLow, nearLow) : 0;
+        // the height of a curve of the hole at t (0 outside the hole), `far` giving its span and middle
+        const hv = (plan, far, zc, t) => {
+            if (!closed) return planAt(plan, t);
+            const a = far[0].t, b = far[far.length - 1].t, tc = (a + b) / 2, q = tc + (t - tc) / hs;
+            return q < a || q > b ? 0 : zc + hs * (planAt(plan, q) - zc);
+        };
+        const tanH = Math.tan(clamp(spec.holeTilt || 0, -60, 60) * Math.PI / 180);
+        const asDrawn = spec.section === 'drawn';
+        const phi = asDrawn ? 0 : clamp(spec.lean || 0, -90, 90) * Math.PI / 180, sinF = Math.sin(phi), cosF = Math.cos(phi);
         const N = xmax - xmin + 1;
-        const dz = new Float32Array(N), hh = new Float32Array(N), thick = new Float32Array(N), Rr = new Float32Array(N);
-        let sumW = 0, n = 0, dzMax = 0;
+        const dz = new Float32Array(N), un = new Float32Array(N), hole = new Float32Array(N), hh = new Float32Array(N), cyA = new Float32Array(N);
+        const thick = new Float32Array(N), Rt = new Float32Array(N), Ru = new Float32Array(N);
+        const ceL = new Float32Array(N), ceR = new Float32Array(N), secs = new Array(N);
+        const yLo = new Float32Array(N), yHi = new Float32Array(N), holeU = new Float32Array(N), holeL = new Float32Array(N);
+        const nearU = new Float32Array(N), nearL = new Float32Array(N), nearMin = new Float32Array(N);
+        // A round or oval section is fixed: what was shaped by hand at some position (shoulders, points) does
+        // not apply to it, or it would stop being round; square, strap and custom sections can be shaped
+        const locked = asDrawn || spec.section === 'round' || spec.section === 'oval';
+        const track = sectionTrack(locked ? { roundness: spec.roundness } : spec);
+        const q = 1 - clamp(spec.roundness == null ? 0.6 : spec.roundness, 0, 1);
+        let sumW = 0, n = 0, dzMax = 0, hhMax = 0;
         for (let i = 0; i < N; i++) {
-            const x = xmin + i;
-            dz[i] = Math.max(0, planAt(plan, N > 1 ? i / (N - 1) : 0));
+            const x = xmin + i, t = N > 1 ? i / (N - 1) : 0;
+            dz[i] = Math.max(0, planAt(plan, t));
             dzMax = Math.max(dzMax, dz[i]);
             const spans = G().verticalSpans(x + 0.5, poly);
             hh[i] = spans.length ? (spans[spans.length - 1][1] - spans[0][0]) / 2 : 0;
-            thick[i] = spec.thickness > 0 ? spec.thickness : Math.max(6, 1.2 * hh[i]);
-            Rr[i] = Math.max(0.05, Math.min(beta * hh[i], hh[i], thick[i] / 2));
+            hhMax = Math.max(hhMax, hh[i]);
+            cyA[i] = spans.length ? (spans[spans.length - 1][1] + spans[0][0]) / 2 : 0;
+            const strap = spec.thickness > 0 ? spec.thickness : Math.max(6, ratio * 2 * hh[i]);
+            // solid down to the wall (back into it along its axis, far enough to stay on it when it leans); a
+            // handle has the hole through it
+            un[i] = -Math.max(0.5, (2 * hh[i] + dz[i]) * Math.abs(cosF));
+            holeU[i] = hasHole ? clamp(hv(holePlan, holePlan, zcU, t), 0, Math.max(0, dz[i] - 2)) : 0;
+            holeL[i] = hasHole ? clamp(hv(holeLow, holeLow, zcL, t), 0, Math.max(0, dz[i] - 2)) : 0;
+            hole[i] = Math.max(holeU[i], holeL[i]);
+            if (closed) {
+                nearU[i] = clamp(hv(nearUp, holePlan, zcU, t), 0, holeU[i]);
+                nearL[i] = clamp(hv(nearLow, holeLow, zcL, t), 0, holeL[i]);
+                nearMin[i] = Math.min(nearU[i], nearL[i]);
+            }
+            thick[i] = lug || closed ? strap : Math.max(2, dz[i] - hole[i]);
+            Rt[i] = Math.max(0.05, Math.min(thick[i] / 2, hh[i]));
+            const sec = secs[i] = track(t);
+            const h = Math.max(hh[i], 1e-3);
+            ceL[i] = Math.min(1, (1 + sec.sl) * h / Rt[i]);
+            ceR[i] = Math.min(1, (1 - sec.sr) * h / Rt[i]);
+            Ru[i] = Math.max(0.05, Math.min(1, 1 - (sec.sr - sec.sl) / 2) * h);
             if (hh[i] > 0) { sumW += 2 * hh[i]; n++; }
+            // what the turned strap covers on the drawing at x: its middle, and half its extent
+            const lo = 0, a = hh[i], b = (dz[i] - lo) / 2, dm = (dz[i] + lo) / 2;
+            const ell = Math.hypot(a * cosF, b * sinF), rect = a * Math.abs(cosF) + b * Math.abs(sinF);
+            const half = ell * (1 - q) + rect * q, yc = cyA[i] - dm * sinF;
+            yLo[i] = yc - half;
+            yHi[i] = yc + half;
         }
         if (!n) return null;
         const meanW = sumW / n;
         const kFull = (('blend' in spec) ? spec.blend : 0.5) * (thick.reduce((a, v) => a + v, 0) / N) * BLEND_SCALE;
         const P = polygonGrid(poly, bb);
-        const at = (arr, x) => {
-            const f = clamp(x - xmin - 0.5, 0, N - 1), i = Math.floor(f), t = f - i;
-            return arr[i] * (1 - t) + arr[Math.min(N - 1, i + 1)] * t;
+        // The outline seen from the front: the traced polygon, or its projection once the strap is turned
+        let outline = null, bbF = bb, PF = P;
+        if (Math.abs(phi) > 1e-3) {
+            const idx = Array.from({ length: N }, (_, i) => i).filter(i => hh[i] > 0);
+            outline = idx.map(i => [xmin + i + 0.5, yLo[i]]).concat(idx.slice().reverse().map(i => [xmin + i + 0.5, yHi[i]]))
+                .map(p => [Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10]);
+            const pf = outline.map(([x, y]) => ({ x, y }));
+            bbF = G().bbox(pf);
+            PF = polygonGrid(pf, bbF);
+        }
+        const pos = x => {
+            const f = clamp(x - xmin - 0.5, 0, N - 1), i = Math.floor(f);
+            return { i, i1: Math.min(N - 1, i + 1), t: f - i };
         };
-        const rMax = Math.max(...Array.from({ length: Math.ceil(bb.y1) - Math.floor(bb.y0) + 1 }, (_, i) => vessel.radiusAt(Math.floor(bb.y0) + i + 0.5)));
+        const at = (arr, k) => arr[k.i] * (1 - k.t) + arr[k.i1] * k.t;
+        // The fillet only where the strap stands on the wall (the lume is not filled in)
+        const kCol = attachK(Uint8Array.from(hole, (v, i) => (v <= 0.5 || (closed && nearMin[i] > 0.5) ? 1 : 0)), kFull);
+        const kx = x => at(kCol, pos(x));
+        const rMax = Math.max(...Array.from({ length: Math.ceil(bbF.y1) - Math.floor(bbF.y0) + 1 }, (_, i) => vessel.radiusAt(Math.floor(bbF.y0) + i + 0.5)));
         const cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
-        return {
-            axis: 'x', spec, bb, theta: Math.asin(clamp((cx - scene.axisX) / Math.max(1, vessel.radiusAt(cy)), -MAX_SIN, MAX_SIN)),
-            meanW, yTop: bb.y0, yBot: bb.y1, xmin, xmax, plan,
-            zTop: rMax + dzMax + 4, rhoMax: rMax + dzMax, halfU: (xmax - xmin) / 2,
-            k: kFull, thick: thick.reduce((a, v) => a + v, 0) / N,
-            kAt: (x, y) => taper(kFull, P.grid.at(x, y)),
-            inside: (px, py) => {
-                const i = Math.floor(px) - P.x0, j = Math.floor(py) - P.y0;
-                return i >= 0 && j >= 0 && i < P.w && j < P.h && P.inside[j * P.w + i] === 1;
+        const reach = Math.hypot(dzMax, hhMax);
+        let FW = null;   // the strap where it stands on the wall (see below)
+        // the figure drawn next to the profile, over (distance from the axis, y), and the wall it stands on
+        const figure = asDrawn ? sideGrid(side, scene.radius, scene.axisX, () => false) : null;
+        // (a handle drawn off the wall is a lug first: the gap between it and the wall is filled, the hole opens it
+        // again; innerRho the inner edge of the figure on each of its rows)
+        let innerRho = null;
+        if (figure && !lug && !closed && hasHole && drawn.under > 1) {
+            const ax = scene.axisX, ring = side.rings[0];
+            const sgn = ring.reduce((a, p) => a + p.x, 0) / ring.length < ax ? -1 : 1;
+            innerRho = new Float32Array(Math.ceil(drawn.y1) - Math.floor(drawn.y0) + 1).fill(NaN);
+            for (let j = 0; j < innerRho.length; j++) {
+                for (const [xa, xb] of G().horizontalSpans(Math.floor(drawn.y0) + j + 0.5, ring)) {
+                    const m = Math.min(sgn * (xa - ax), sgn * (xb - ax));
+                    if (!(innerRho[j] <= m)) innerRho[j] = m;
+                }
+            }
+        }
+        const innerAt = y => {
+            const j = Math.round(y - 0.5 - Math.floor(drawn.y0));
+            return j >= 0 && j < innerRho.length ? innerRho[j] : NaN;
+        };
+        // the hole: out of the wall (r) less than its depth, leaning with spec.holeTilt; rounded along its edges
+        const smax = (a, b, k) => -smin(-a, -b, k);
+        // (how far out of the wall it reaches across the strap: from the opening above, at the top edge, to the one below)
+        const holeHd = (k, uu) => {
+            const s = clamp((uu / Math.max(1, at(hh, k)) + 1) / 2, 0, 1);
+            return at(holeU, k) * (1 - s) + at(holeL, k) * s;
+        };
+        const nearHd = (k, uu) => {
+            const s = clamp((uu / Math.max(1, at(hh, k)) + 1) / 2, 0, 1);
+            return at(nearU, k) * (1 - s) + at(nearL, k) * s;
+        };
+        const holeCut = (k, r, uu, base) => {
+            if (!hasHole) return base;
+            const hd = holeHd(k, uu);
+            if (hd <= 0) return base;
+            let cut = hd - (r - uu * tanH);
+            // (closed: the hole is between its far and its near edge; where they meet there is none)
+            if (closed) {
+                const nr = nearHd(k, uu);
+                if (hd - nr <= 0.5) return base;
+                cut = Math.min(cut, r - uu * tanH - nr);
+            }
+            return smax(base, cut, Math.min(0.5 * at(thick, k), 0.35 * at(hh, k)));
+        };
+        const part = {
+            axis: 'x', spec, bb: bbF, bbFoot: bb, outline, sectionLocked: locked, asDrawn, theta: Math.asin(clamp((cx - scene.axisX) / Math.max(1, vessel.radiusAt(cy)), -MAX_SIN, MAX_SIN)),
+            meanW, yTop: bbF.y0, yBot: bbF.y1, xmin, xmax, plan, lug, crestMax: Math.max(1, dzMax), phi,
+            // where the underside is (the lume under the strap)
+            underPlan: holePlan || [], underLowPlan: holeLow || [], underNearPlan: nearUp || [], underNearLowPlan: nearLow || [], circleNodes: closed ? { far: circleNodes(1), near: circleNodes(-1) } : null,
+            // an opening of a closed hole (the upper one, or the lower) as a loop of [x, r] in the frame of the strap before it
+            // is turned: out of the wall, far edge there, near edge back
+            rimLoop: closed ? (low = false, n = 28) => {
+                const far = low ? holeLow : holePlan, near = low ? nearLow : nearUp, zc = low ? zcL : zcU;
+                const a = far[0].t, b = far[far.length - 1].t, tc = (a + b) / 2;
+                const ts = Array.from({ length: n + 1 }, (_, i) => tc + (b - a) / 2 * hs * 0.999 * (2 * i / n - 1));
+                const val = (plan, t) => hv(plan, far, zc, t);
+                const x = t => xmin + t * (xmax - xmin) + 0.5;
+                return ts.map(t => [x(t), val(far, t)]).concat(ts.slice().reverse().map(t => [x(t), val(near, t)]));
+            } : null, holeTan: tanH, drawn,
+            // the frame of the section at x: the axis it turns about (cy), its half width, its crest, its depth
+            frameAt: x => {
+                const k = pos(x);
+                return { cy: at(cyA, k), hw: Math.max(1, at(hh, k)), dz: at(dz, k), depth: at(Rt, k) };
             },
-            sdXY: (x, y) => P.grid.at(x, y),
+            zTop: rMax + reach + 4, rhoMax: rMax + reach, halfU: (xmax - xmin) / 2,
+            k: kFull, thick: thick.reduce((a, v) => a + v, 0) / N,
+            // The fillet is full where the strap stands on the wall and fades out beyond that footprint (not
+            // beyond the traced outline: a round strap touches the wall in a narrow band, and a fillet as
+            // wide as the outline would leave a ledge on each side of it)
+            kAt: (x, y) => taper(kx(x), FW ? FW.at(x, y) : PF.grid.at(x, y)),
+            inside: PF.isInside,
+            sdXY: (x, y) => PF.grid.at(x, y),
             sd(x, y, z) {
-                const dv = vessel.sd(x, y, z);
-                const d = at(dz, x), b = at(thick, x);
-                return roundedIntersection(P.grid.at(x, y), Math.max(dv - d, d - b - dv), at(Rr, x));
+                const dv = vessel.sd(x, y, z), k = pos(x), { i, i1, t } = k;
+                if (figure) {
+                    // the figure as large as the crest there (the drawn one at its full height), about the
+                    // middle of where it stands on the wall: smaller, it is also lower and shorter
+                    const sc = Math.min(50, drawn.crest / Math.max(1e-3, at(dz, k)));
+                    const ys = drawn.ya + (y - drawn.ya) * sc, rho = Math.hypot(x - scene.axisX, z);
+                    const rs = vessel.radiusAt(ys) + (rho - vessel.radiusAt(y)) * sc;
+                    const f = figure.at(rs, ys), uu = y - at(cyA, k);
+                    if (!innerRho) return holeCut(k, dv, uu, Math.max(f / sc, P.grid.at(x, y)));
+                    // the gap filled (a little into the figure), and the hole through it following the inner side of
+                    // the figure: all of the gap where the hole is as deep as the drawn one (the figure as drawn),
+                    // less of it towards the arms
+                    const e = innerAt(ys), rw = vessel.radiusAt(ys);
+                    if (Number.isNaN(e)) return Math.max(f / sc, P.grid.at(x, y));
+                    const fill = Math.max(rs - (e + 3), drawn.y0 - ys, ys - drawn.y1);
+                    const base = Math.max(Math.min(f, fill) / sc, P.grid.at(x, y)), hd = holeHd(k, uu);
+                    if (hd <= 0) return base;
+                    const cut = ((hd / drawn.under) * (e - rw) - (rs - rw)) / sc + uu * tanH;
+                    return smax(base, cut, Math.min(0.5 * at(thick, k), 0.35 * at(hh, k)));
+                }
+                const d = at(dz, k), yc = at(cyA, k), hw = Math.max(1, at(hh, k));
+                // turn back to the strap as it was before: across the strap (uu) and out of the wall (r)
+                const p = y - yc;
+                const uu = p * cosF + dv * sinF, r = -p * sinF + dv * cosF;
+                const s = uu / hw;
+                const u0 = at(un, k);
+                const face = faceDepth(secs[i], s, ceL[i], ceR[i]) * (1 - t) + faceDepth(secs[i1], s, ceL[i1], ceR[i1]) * t;
+                // depth below the crest and above the underside (a lug: far from it)
+                const tOut = Math.max(0, d - r), tIn = Math.max(0, r - u0);
+                const Rd = Math.max(0.05, Math.min(at(Rt, k), 0.5 * (tOut + tIn)));
+                return holeCut(k, r, uu, Math.max(r - d, Rd * face - tOut, u0 - r, P.grid.at(x, yc + uu) + recess(tIn, at(Ru, k), Rd)));
             }
         };
+        // the field of the strap on the surface of the wall, on a grid
+        const pad = Math.ceil(kFull) + 6;
+        const gx0 = Math.floor(bbF.x0) - pad, gy0 = Math.floor(bbF.y0) - pad;
+        const GW = Math.ceil(bbF.x1) - gx0 + pad + 1, GH = Math.ceil(bbF.y1) - gy0 + pad + 1;
+        const gs = Math.max(1, Math.ceil(Math.sqrt(GW * GH / 1e5)));
+        const gw = Math.ceil(GW / gs), gh = Math.ceil(GH / gs);
+        const data = new Float32Array(gw * gh);
+        for (let j = 0; j < gh; j++) {
+            for (let i = 0; i < gw; i++) {
+                const x = gx0 + (i + 0.5) * gs, y = gy0 + (j + 0.5) * gs;
+                data[j * gw + i] = part.sd(x, y, wallZ(scene, x, y));
+            }
+        }
+        FW = new Grid(gx0, gy0, gw, gh, data, gs);
+        return part;
     }
 
-    // The field of an applied part from what the drawing gives (null when it is not possible)
+    // The field of an applied part from what the drawing gives (null when it is not possible). The same
+    // part is asked for by the front view and by the 3D views: the last few are kept, by what shapes them
+    const partCache = new Map();
+
     function partField(spec, part, scene, vessel) {
+        const { shadow, bend, ...shape } = spec;
+        const key = JSON.stringify([shape, part && part.id, part && part.rings.length, part && part.rings[0].length,
+            scene.axisX, scene.radius && scene.radius.y0, scene.radius && scene.radius.y1, scene.radius && scene.radius.radius.length]);
+        const hit = partCache.get(key);
+        if (hit && hit.scene === scene) {
+            partCache.delete(key);
+            partCache.set(key, hit);
+            return hit.pf;
+        }
+        const pf = buildPartField(spec, part, scene, vessel);
+        partCache.set(key, { scene, pf });
+        if (partCache.size > 12) partCache.delete(partCache.keys().next().value);
+        return pf;
+    }
+
+    function buildPartField(spec, part, scene, vessel) {
         const poly = (spec.points || []).map(([x, y]) => ({ x, y }));
         if (poly.length < 3 || !scene.radius || scene.axisX === null) return null;
         const bb = G().bbox(poly);
         vessel = vessel || vesselField(scene);
-        if (spec.axis === 'x') return horizontalField(spec, scene, poly, bb, vessel);
+        if (!part) return null;
+        if (spec.axis === 'x') return horizontalField(spec, part, scene, poly, bb, vessel);
         const side = sidePart(spec, part, scene);
         return side ? verticalField(spec, side, scene, poly, bb) : null;
     }
@@ -814,6 +1136,6 @@
 
     window.ProspectField = {
         smin, share, vesselField, wallZ, planAt, defaultPlan, outerProfile, partField, unionOf, normalAt, quadMesh, BLEND_SCALE,
-        sidePart, sectionTrack, faceDepth, defaultSection
+        sidePart, sectionTrack, faceDepth, defaultSection, drawnSection, shapePlan, bezFromPlan, bezSample, syncBez, bezEnsure
     };
 })();

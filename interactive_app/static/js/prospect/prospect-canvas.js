@@ -43,14 +43,33 @@
             set: (f, v) => {
                 const m = Math.max(...f.plan.map(p => p.dz)) || 1;
                 f.plan.forEach(p => { p.dz = Math.round(p.dz * v / m * 10) / 10; });
+                // (the Bezier curve of the crest too)
+                if (f.bez && f.bez.crest) {
+                    f.bez.crest.forEach(n => { n.z *= v / m; n.hl[1] *= v / m; n.hr[1] *= v / m; });
+                    window.ProspectField.syncBez(f);
+                }
             } },
-        { key: 'thickness', label: 'Thickness (0 = from the side view)', min: 0, max: 200, step: 1 },
+        { key: 'holeSize', label: 'Size of the hole (%)', min: 30, max: 250, step: 1, axis: 'x', hide: f => f.lumeShape !== 'hole',
+            get: f => Math.round(100 * (f.holeScale || 1)), set: (f, v) => { f.holeScale = v / 100; } },
+        { key: 'lean', label: 'Tilt of the arch (degrees; 90 = lying flat on the wall)', min: -90, max: 90, step: 1, axis: 'x', get: f => f.lean || 0, hide: f => f.section === 'drawn' },
+        { key: 'thickness', label: 'Thickness (0 = from the side view)', min: 0, max: 200, step: 1, axis: 'y' },
         // (the section edited from above replaces it)
-        { key: 'roundness', label: 'Edge rounding', min: 0.1, max: 1, step: 0.05, hide: f => !!(f.sections && f.sections.length) },
+        { key: 'roundness', label: 'Edge rounding', min: 0.1, max: 1, step: 0.05, hide: f => !!(f.sections && f.sections.length) || f.section === 'drawn' },
         { key: 'bend', label: 'Arch shading', min: 0, max: 1.5, step: 0.05 },
         { key: 'blend', label: 'Blend into the wall', min: 0, max: 2.5, step: 0.05 },
         { key: 'shadow', label: 'Shadow on the wall', min: 0, max: 1.5, step: 0.05 }
     ];
+
+    // Section of a horizontal handle or a lug, kept along it and whatever its inclination: the rounding of
+    // its corners (1 = round face) and its thickness as a share of its width
+    const SECTION_PRESETS = {
+        drawn: { label: 'As drawn' },  // the figure drawn next to the profile, as it is
+        round: { label: 'Round', roundness: 1, thickRatio: 1 },
+        oval: { label: 'Oval', roundness: 1, thickRatio: 0.6 },
+        square: { label: 'Square', roundness: 0.08, thickRatio: 1 },
+        strap: { label: 'Strap', roundness: 0.3, thickRatio: 0.35 },
+        custom: { label: 'Custom' }    // keeps what it has: the shoulders and points can be shaped in the Side view
+    };
 
     const TOOL_KEYS ={ v: 'select', h: 'pan', b: 'band', p: 'polyline', f: 'freehand', s: 'stamp' };
     const HIT_PX = 10;  // screen px
@@ -77,6 +96,7 @@
             this.tone = null;
             this.decoPrims = new Map(); // decoration id -> primitives
             this.contextLines = [];     // other layers, drawn faint for reference
+            this.detailLines = [];      // internal details of the drawing, drawn as ink
 
             this.bgImage = null;
             this.bgSessionId = null;
@@ -170,12 +190,21 @@
 
             // Faint reference lines: every traced path except the prospects themselves
             this.contextLines = [];
-            this.svgElement.querySelectorAll('g[id^="layer_"]:not([id="layer_Prospectus"]) path').forEach(p => {
+            this.svgElement.querySelectorAll('g[id^="layer_"]:not([id="layer_Prospectus"]):not([id="layer_Detail"]) path').forEach(p => {
                 if (G().isProspectArt(p)) return;
                 // The paths of an applied part are drawn again as its outline: same flattening, so the
                 // faint copy lies exactly under the black one
                 const own = p.closest('g[id="layer_Handle"], g[id="layer_Application"]');
                 this.contextLines.push(...G().flattenPathD(dOverrides.get(p) || p.getAttribute('d'), own ? 1.5 : 3));
+            });
+
+            // Paths added in the SVG Editor and not yet in the document (continuation lines) join the
+            // faint lines; the internal details (also the ones already in the document) are drawn as ink
+            this.detailLines = [];
+            (editor.paths || []).forEach((p, i) => {
+                if (!p.currentD || editor.layerVisibility[p.layerId] === false) return;
+                if (p.category === 'Detail') this.detailLines.push(...G().flattenPathD(p.currentD, 1.5));
+                else if (!p.element && i >= editor.originalPathCount) this.contextLines.push(...G().flattenPathD(p.currentD, 3));
             });
 
             // Front views (Prospectus) first, then the side views of applied parts (Handle, Application)
@@ -323,19 +352,21 @@
             const range = this.vesselRange(sh);
             if (!this.frontCache) this.frontCache = new Map();
             for (const spec of model.fronts) {
-                // a horizontal handle or a lug has no side view to draw from
+                // every part is made from its section drawn next to the profile
                 const part = scene.parts.find(p => p.id === spec.part) || null;
-                if (!part && spec.axis !== 'x' && !spec.side) continue;
+                if (!part) continue;
                 const { shadow, bend, ...shape } = spec;
                 const geoKey = JSON.stringify([shape, scene.axisX, R.y0, R.y1, R.radius.length, part && part.id, part && part.rings.length]);
                 const lightKey = JSON.stringify([shadow, bend, sh.direction, sh.elevation, range && range.lo, range && range.hi, stride]);
-                let c = this.frontCache.get(spec.id);
+                let c = this.frontCache.get(spec.id), coarse = false;
                 if (!c || c.geoKey !== geoKey) {
                     c = { geoKey, geo: SU.frontGeometry(spec, part, scene, stride), lightKey: null, front: null };
                     if (stride === 1) this.frontCache.set(spec.id, c);
+                    coarse = stride > 1;
                 }
                 if (c.lightKey !== lightKey) {
-                    c.front = c.geo && SU.shadeFront(c.geo, spec, scene, sh, range, stride);
+                    // (a preview geometry is coarse already: it is shaded on every one of its samples)
+                    c.front = c.geo && SU.shadeFront(c.geo, spec, scene, sh, range, coarse ? 1 : stride);
                     c.lightKey = lightKey;
                 }
                 const front = c.front;
@@ -527,7 +558,7 @@
         // The front under a point, if any (its band)
         hitFront(x, y) {
             for (const [id, r] of this.frontRasters) {
-                const i = Math.floor(x - r.x0), j = Math.floor(y - r.y0);
+                const i = Math.floor((x - r.x0) / r.s), j = Math.floor((y - r.y0) / r.s);
                 if (i >= 0 && j >= 0 && i < r.w && j < r.h && r.mask[j * r.w + i]) return id;
             }
             return null;
@@ -550,33 +581,105 @@
         }
 
         // Defaults of a new applied part of the chosen type
-        newFront(points, source, gen, extra = {}) {
+        newFront(points, source, gen) {
             const kind = this.frontKind;
             const SU = window.ProspectSurfaces;
             const spec = {
                 id: `front_${Date.now().toString(36)}`,
                 kind: kind === 'lug' ? 'lug' : 'handle',
                 axis: kind === 'vertical' ? 'y' : 'x',
-                part: kind === 'vertical' ? document.getElementById('prospect-front-part').value || null : null,
+                part: document.getElementById('prospect-front-part').value || null,
                 points, source, gen: gen || null,
-                roundness: kind === 'horizontal' ? 0.6 : 1,
+                roundness: 1,
                 thickness: 0,
                 bend: 0.5,
                 blend: 0.5,
                 shadow: 0.6
             };
-            Object.assign(spec, extra);
             if (spec.axis === 'x') {
-                const b = G().bbox(points.map(([x, y]) => ({ x, y })));
-                spec.plan = SU.defaultPlan(Math.round((kind === 'lug' ? 0.5 : 0.35) * b.w));
+                // every horizontal handle and lug has a section
+                // (a lug as drawn next to the profile, a handle oval to begin with)
+                spec.section = kind === 'lug' ? 'drawn' : 'oval';
+                Object.assign(spec, { roundness: 1, thickRatio: kind === 'lug' ? 1 : SECTION_PRESETS.oval.thickRatio });
+                // the crest stands out as far as in the section drawn
+                const part = this.scene.parts.find(p => p.id === spec.part);
+                const drawn = part && window.ProspectField.drawnSection(part, this.scene);
+                const crest = Math.round(drawn ? drawn.crest : 20);
+                spec.plan = kind === 'lug' ? SU.defaultPlan(crest) : window.ProspectField.shapePlan('arch', crest);
+                // (a handle: the shape of it seen from above, the lume inside it)
+                if (kind !== 'lug') spec.lumeShape = 'arch';
             }
             return spec;
         }
 
+        // A handle or lug that goes out of the prospect is discarded: what share of its outline (sampled on a grid) is
+        // outside the drawing of the prospect
+        outsideShare(points) {
+            const poly = points.map(([x, y]) => ({ x, y })), out = this.prospect.outline;
+            if (poly.length < 3 || !out || !out.length) return 0;
+            const bb = G().bbox(poly);
+            let n = 0, bad = 0;
+            for (let j = 0; j < 24; j++) {
+                for (let i = 0; i < 24; i++) {
+                    const x = bb.x0 + (bb.x1 - bb.x0) * (i + 0.5) / 24, y = bb.y0 + (bb.y1 - bb.y0) * (j + 0.5) / 24;
+                    if (!G().pointInPolygon(x, y, poly)) continue;
+                    n++;
+                    if (!G().pointInPolygon(x, y, out)) bad++;
+                }
+            }
+            return n ? bad / n : 0;
+        }
+
         addFront(spec) {
+            if (this.outsideShare(spec.points || []) > 0.02) {
+                this.showMessage('That part goes out of the prospect: it was not added. Place it inside the drawing.');
+                this.updateUI();
+                this.redraw();
+                return;
+            }
             this.model.fronts.push(spec);
             this.selectedFrontId = spec.id;
             this.setTool('select');
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        // The section view chosen in the panel (null when the drawing has none)
+        get sectionPart() {
+            const id = document.getElementById('prospect-front-part').value;
+            return this.scene.parts.find(p => p.id === id) || null;
+        }
+
+        // The shape of the hole through the selected horizontal handle, seen from above (the lume); custom: its
+        // own points (orange, edited from above)
+        setLumeShape(type) {
+            const f = this.selectedFront;
+            if (!f || f.axis !== 'x') return;
+            f.lumeShape = type;
+            if (type !== 'custom') {
+                // (the lume back to a shape: both openings)
+                delete f.under; delete f.underLow; delete f.underNear; delete f.underNearLow;
+                if (f.bez) { delete f.bez.up; delete f.bez.low; delete f.bez.nup; delete f.bez.nlow; }
+            }
+            this.recomputeShading();
+            this.pushHistory();
+            this.updateUI();
+            this.redraw();
+        }
+
+        // The section of the selected horizontal handle or lug: its rounding and thickness come from the type
+        setFrontSection(type) {
+            const f = this.selectedFront, preset = SECTION_PRESETS[type];
+            if (!f || f.axis !== 'x' || !preset) return;
+            f.section = type;
+            if (preset.roundness != null) {
+                f.roundness = preset.roundness;
+                f.thickRatio = preset.thickRatio;
+                f.thickness = 0;
+                delete f.sections;
+            }
             this.recomputeShading();
             this.pushHistory();
             this.updateUI();
@@ -588,18 +691,12 @@
             const pts = this.frontPts;
             this.frontPts = [];
             const kind = this.frontKind;
-            if (pts.length < 3 || !this.handlesAvailable) {
+            if (pts.length < 3 || !this.handlesAvailable || !this.sectionPart) {
                 this.updateUI();
                 this.redraw();
                 return;
             }
-            // a vertical handle without a side view: one is made up from the extent of the outline
-            let extra = {};
-            if (kind === 'vertical' && !this.scene.parts.some(p => p.id === document.getElementById('prospect-front-part').value)) {
-                const b = G().bbox(pts), th = Math.round(Math.min(0.8 * b.w, 0.2 * b.h));
-                extra = { side: { y0: Math.round(b.y0 + th / 2), y1: Math.round(b.y1 - th / 2), reach: Math.round(0.35 * b.h), apex: 0.5, thick: th } };
-            }
-            this.addFront(this.newFront(pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]), 'traced', null, extra));
+            this.addFront(this.newFront(pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]), 'traced', null));
         }
 
         // Outline of a placed shape { shape, cx, cy, w, h, y0, y1 }
@@ -641,32 +738,23 @@
 
         // A default shape of the chosen type, with its middle at the point: the 3D proposes an outline
         placeApplied(ip) {
-            if (!this.handlesAvailable) return;
+            const part = this.sectionPart;
+            if (!this.handlesAvailable || !part) return;
             const kind = this.frontKind;
             const V = this.vessel ? this.vessel.bbox : this.prospect.bbox;
-            let gen, extra = {};
+            let gen;
             if (kind === 'vertical') {
-                const part = this.scene.parts.find(p => p.id === document.getElementById('prospect-front-part').value);
-                let w;
-                if (part) w = window.ProspectSurfaces.defaultWidth(part);
-                else {
-                    // no side view in the drawing: a loop a third of the vessel high, centred on the point
-                    const R = this.scene.radius, h = Math.min(0.3 * V.h, 0.8 * (R.y1 - R.y0));
-                    const y0 = Math.round(Math.max(R.y0 + 2, ip.y - h / 2)), y1 = Math.round(Math.min(R.y1 - 2, y0 + h));
-                    const th = Math.round(0.14 * (y1 - y0));
-                    extra = { side: { y0, y1, reach: Math.round(0.35 * (y1 - y0)), apex: 0.5, thick: th } };
-                    w = 1.2 * th;
-                }
-                gen = { shape: 'band', cx: ip.x, w: Math.round(w), y0: 0, y1: 0 };
-                const spec = this.newFront([], 'derived', gen, extra);
+                gen = { shape: 'band', cx: ip.x, w: Math.round(window.ProspectSurfaces.defaultWidth(part)), y0: 0, y1: 0 };
+                const spec = this.newFront([], 'derived', gen);
                 if (!this.refitBand(spec)) return;
                 this.addFront(spec);
                 return;
-            } else if (kind === 'lug') {
-                gen = { shape: 'ellipse', cx: ip.x, cy: ip.y, w: Math.round(0.1 * V.w), h: Math.round(0.08 * V.h) };
-            } else {
-                gen = { shape: 'pill', cx: ip.x, cy: ip.y, w: Math.round(0.22 * V.w), h: Math.round(0.09 * V.h) };
             }
+            // at the height of the section drawn, as tall as it
+            const d = window.ProspectField.drawnSection(part, this.scene);
+            const cy = d ? Math.round((d.y0 + d.y1) / 2) : ip.y, h = d ? Math.max(6, Math.round(d.y1 - d.y0)) : Math.round(0.08 * V.h);
+            if (kind === 'lug') gen = { shape: 'ellipse', cx: ip.x, cy, w: Math.round(0.1 * V.w), h };
+            else gen = { shape: 'pill', cx: ip.x, cy, w: Math.round(0.22 * V.w), h };
             this.addFront(this.newFront(this.genPolygon(gen), 'derived', gen));
         }
 
@@ -681,6 +769,18 @@
             front.gen.y0 = rho.y0;
             front.gen.y1 = rho.y1;
             front.points = this.genPolygon(front.gen);
+            return true;
+        }
+
+        // A placed shape follows its section view: a band its ends, a horizontal part the height of the section
+        refitPlaced(front) {
+            const g = front.gen, part = this.scene.parts.find(p => p.id === front.part);
+            if (!g || (g.shape !== 'pill' && g.shape !== 'ellipse') || !part) return this.refitBand(front);
+            const d = window.ProspectField.drawnSection(part, this.scene);
+            if (!d) return false;
+            g.cy = Math.round((d.y0 + d.y1) / 2);
+            g.h = Math.max(6, Math.round(d.y1 - d.y0));
+            front.points = this.genPolygon(g);
             return true;
         }
 
@@ -727,6 +827,8 @@
                         this.refitBand(front);
                     }
                     document.getElementById(`prospect-fr-${f.key}-value`).textContent = input.value;
+                    // (the 3D keeps its mesh while sliding, and is rebuilt when the slider is let go)
+                    if (window.prospect3d) window.prospect3d.editing = true;
                     if (frame) return;
                     frame = requestAnimationFrame(() => {
                         frame = null;
@@ -735,6 +837,7 @@
                     });
                 });
                 input.addEventListener('change', () => {
+                    if (window.prospect3d) window.prospect3d.editing = false;
                     this.recomputeShading();
                     this.redraw();
                     this.pushHistory();
@@ -744,8 +847,9 @@
 
         frontLabel(f, i) {
             const part = this.scene.parts.find(p => p.id === f.part);
-            const name = f.axis === 'x' ? (f.kind === 'lug' ? 'Lug' : 'Horizontal handle') : (part ? part.name : f.side ? 'Handle (side view made up)' : 'Handle');
-            return `${i + 1}. ${name}${f.source === 'derived' ? ' (placed)' : ''}`;
+            const name = `${f.axis === 'x' ? (f.kind === 'lug' ? 'Lug' : 'Horizontal handle') : 'Handle'}${part ? ` (${part.name})` : ' (no section view: pick one above)'}`;
+            const section = f.axis === 'x' && SECTION_PRESETS[f.section] ? `, ${SECTION_PRESETS[f.section].label.toLowerCase()}` : '';
+            return `${i + 1}. ${name}${section}${f.source === 'derived' ? ' (placed)' : ''}`;
         }
 
         updateHandlesPanel() {
@@ -762,15 +866,16 @@
                 opt.textContent = p.name;
                 select.appendChild(opt);
             });
-            // without a side view in the drawing, one is made up (and edited in the Side view)
-            const none = document.createElement('option');
-            none.value = '';
-            none.textContent = 'None: made up (edit it in the Side view)';
-            select.appendChild(none);
-            if (this.scene.parts.some(p => p.id === current) || current === '') select.value = current;
-            const kindSel = document.getElementById('prospect-front-kind');
-            const vertical = kindSel.value === 'vertical';
-            document.getElementById('prospect-front-part-group').style.display = vertical ? '' : 'none';
+            // the selected part shows its own section view
+            const sel = this.selectedFront;
+            const want = sel && this.scene.parts.some(p => p.id === sel.part) ? sel.part : current;
+            if (this.scene.parts.some(p => p.id === want)) select.value = want;
+            // every part needs the section drawn next to the profile
+            const none = !this.scene.parts.length;
+            document.getElementById('prospect-front-nopart').style.display = none ? '' : 'none';
+            select.style.display = none ? 'none' : '';
+            document.getElementById('prospect-front-place').disabled = none;
+            document.getElementById('prospect-front-derive').disabled = none;
             const list = document.getElementById('prospect-fronts-list');
             list.innerHTML = '';
             this.model.fronts.forEach((f, i) => {
@@ -787,6 +892,14 @@
             });
             const front = this.selectedFront;
             document.getElementById('prospect-front-controls').style.display = front ? '' : 'none';
+            const secGroup = document.getElementById('prospect-front-section-group');
+            if (secGroup) {
+                secGroup.style.display = front && front.axis === 'x' ? '' : 'none';
+                if (front && front.axis === 'x') document.getElementById('prospect-front-section').value = front.section || 'oval';
+            }
+            const lume = front && front.axis === 'x';
+            document.getElementById('prospect-front-lume-group').style.display = lume ? '' : 'none';
+            if (lume) document.getElementById('prospect-front-lume').value = front.lumeShape === 'hole' ? 'hole' : front.under && front.under.length ? 'custom' : front.lumeShape || (front.kind === 'lug' ? 'none' : 'arch');
             document.getElementById('prospect-front-adopt').style.display = front && front.source === 'derived' ? '' : 'none';
             if (front) {
                 FRONT_SCHEMA.forEach(f => {
@@ -942,6 +1055,21 @@
             this.entry.history.push(this.model);
             this.dirty = true;
             this.updateUndoButtons();
+            this.scheduleSave();
+        }
+
+        // The edits go into the document and the project a moment after the last one, as the SVG Editor's do
+        scheduleSave() {
+            const editor = window.svgEditor;
+            if (!editor || !editor.svgData || !editor.currentProjectId || !editor.sessionId) return;
+            clearTimeout(this.saveTimer);
+            this.saveTimer = setTimeout(() => {
+                // (not while something is being drawn or dragged)
+                if (this.action || this.frontPts.length || this.polyPts.length) { this.scheduleSave(); return; }
+                this.commitToDocument();
+                editor.exportModifiedSVG({ silent: true });
+                this.dirty = false;
+            }, 2000);
         }
 
         restore(model) {
@@ -956,8 +1084,8 @@
             this.redraw();
         }
 
-        undo() { if (this.entry) this.restore(this.entry.history.undo()); }
-        redo() { if (this.entry) this.restore(this.entry.history.redo()); }
+        undo() { if (this.entry) { this.restore(this.entry.history.undo()); this.scheduleSave(); } }
+        redo() { if (this.entry) { this.restore(this.entry.history.redo()); this.scheduleSave(); } }
 
         // ------------------------------------------------------------------
         // Output
@@ -1064,6 +1192,11 @@
             ctx.strokeStyle = 'rgba(100, 116, 139, 0.45)';
             ctx.lineWidth = px;
             for (const pl of this.contextLines) this.strokePolyline(pl);
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = Math.max(px, 0.8);
+            for (const pl of this.detailLines) this.strokePolyline(pl);
+            ctx.strokeStyle = 'rgba(100, 116, 139, 0.45)';
+            ctx.lineWidth = px;
             if (this.scene.axisX !== null) {
                 ctx.setLineDash([6 * px, 4 * px]);
                 ctx.beginPath();
@@ -1324,6 +1457,27 @@
             on('prospect-front-derive', 'click', () => this.setTool('place'));
             on('prospect-front-adopt', 'click', () => this.adoptFront());
             on('prospect-front-kind', 'change', () => this.updateHandlesPanel());
+            on('prospect-front-section', 'change', e => this.setFrontSection(e.target.value));
+            on('prospect-front-lume', 'change', e => this.setLumeShape(e.target.value));
+            // the section view of the selected part (one without it, from an older version, takes it here)
+            // A part without a section view (from an older version) takes the one chosen here; otherwise the choice
+            // is for the next part placed, and the selected one is let go
+            on('prospect-front-part', 'change', e => {
+                const f = this.selectedFront;
+                if (!f || f.part === e.target.value) return;
+                if (this.scene.parts.some(p => p.id === f.part)) {
+                    this.selectedFrontId = null;
+                    this.updateUI();
+                    this.redraw();
+                    return;
+                }
+                f.part = e.target.value;
+                if (f.source === 'derived') this.refitPlaced(f);
+                this.recomputeShading();
+                this.pushHistory();
+                this.updateUI();
+                this.redraw();
+            });
             on('prospect-bg-toggle', 'change', e => { this.showBg = e.target.checked; this.redraw(); });
             on('prospect-show-all', 'change', e => { this.showAll = e.target.checked; this.fitView(); });
             on('prospect-bg-opacity', 'input', e => { this.bgOpacity = parseFloat(e.target.value); this.redraw(); });

@@ -32,12 +32,66 @@
         }
     }
 
+    // The edge of the part where, inside its traced outline, it stands against the wall: the underside of a
+    // strap seen over the lume. The sides between a pixel of the part and a pixel of the wall are joined into
+    // polylines of the same kind as the runs of the outline ({ x, y, nx, ny, dz }, outward normal, height).
+    function innerEdgeRuns(mask, zs, wzs, w, h, x0, y0, sc, inside) {
+        const V = w + 1, edges = [], at = new Map();
+        const add = (ax, ay, bx, by, nx, ny, dz) => {
+            const id = edges.length, a = ay * V + ax, b = by * V + bx;
+            edges.push({ a, b, ax, ay, bx, by, nx, ny, dz, used: false });
+            for (const v of [a, b]) { if (!at.has(v)) at.set(v, []); at.get(v).push(id); }
+        };
+        for (let j = 0; j < h; j++) {
+            for (let i = 0; i < w; i++) {
+                const k = j * w + i;
+                if (!mask[k]) continue;
+                const dz = zs[k] - wzs[k];
+                for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    const ni = i + di, nj = j + dj;
+                    if (ni < 0 || nj < 0 || ni >= w || nj >= h || mask[nj * w + ni] || !inside(x0 + (ni + 0.5) * sc, y0 + (nj + 0.5) * sc)) continue;
+                    if (di) add(i + (di > 0 ? 1 : 0), j, i + (di > 0 ? 1 : 0), j + 1, di, 0, dz);
+                    else add(i, j + (dj > 0 ? 1 : 0), i + 1, j + (dj > 0 ? 1 : 0), 0, dj, dz);
+                }
+            }
+        }
+        const point = (vx, vy, e) => ({ x: x0 + vx * sc, y: y0 + vy * sc, nx: e.nx, ny: e.ny, dz: e.dz });
+        // walk from a vertex along the sides not used yet
+        const walk = (from, out, forward) => {
+            let v = from;
+            for (;;) {
+                const e = (at.get(v) || []).map(id => edges[id]).find(q => !q.used);
+                if (!e) return v;
+                e.used = true;
+                const [vx, vy, nv] = e.a === v ? [e.bx, e.by, e.b] : [e.ax, e.ay, e.a];
+                if (forward) out.push(point(vx, vy, e)); else out.unshift(point(vx, vy, e));
+                v = nv;
+            }
+        };
+        const runs = [];
+        for (const e0 of edges) {
+            if (e0.used) continue;
+            e0.used = true;
+            const pts = [point(e0.ax, e0.ay, e0), point(e0.bx, e0.by, e0)];
+            const end = walk(e0.b, pts, true), start = walk(e0.a, pts, false);
+            const run = G().simplify(pts, 0.8 * sc);
+            if (G().polylineLength(run) < 16) continue;
+            run.closed = end === start;
+            runs.push(run);
+        }
+        return runs;
+    }
+
     // Geometry of the front view, with no light in it (so a change of the light does not march again).
     // For every pixel of the raster: `hit` 0 = the wall beyond the reach of the fillet, 1 = near the
     // part but nothing hit, 2 = the surface, at depth `z` with normal `nrm` and share of the part `own`;
     // `wz` the depth of the wall; `mask` the part's own pixels (inside the traced outline and in front of
     // the wall); `runs` the stretches of the traced outline where the part stands out of the wall, with
-    // their outward normals. `stride` 2 computes one pixel in four (a preview while dragging).
+    // their outward normals. The raster has one sample every `s` px: 1 for a small part, more for a large
+    // one (about PART_SAMPLES samples over the part, at most MAX_SAMPLES in all with the room for its
+    // shadow); `stride` 2 doubles it (a preview while dragging).
+    const PART_SAMPLES = 60000, MAX_SAMPLES = 600000;
+
     function frontGeometry(spec, part, scene, stride = 1) {
         const FD = F();
         const vessel = FD.vesselField(scene);
@@ -48,14 +102,16 @@
         const m = Math.ceil(pf.k) + 3 + Math.ceil(1.6 * pf.thick + 10);
         const bb = pf.bb;
         const x0 = Math.floor(bb.x0) - m, y0 = Math.floor(bb.y0) - m;
-        const w = Math.ceil(bb.x1) - x0 + m + 1, h = Math.ceil(bb.y1) - y0 + m + 1;
+        const W = Math.ceil(bb.x1) - x0 + m + 1, H = Math.ceil(bb.y1) - y0 + m + 1;
+        const sc = Math.max(1, Math.ceil(Math.sqrt((bb.x1 - bb.x0) * (bb.y1 - bb.y0) / PART_SAMPLES)), Math.ceil(Math.sqrt(W * H / MAX_SAMPLES))) * stride;
+        const w = Math.ceil(W / sc), h = Math.ceil(H / sc);
         const hit = new Uint8Array(w * h), mask = new Uint8Array(w * h);
         const zs = new Float32Array(w * h), wzs = new Float32Array(w * h), own = new Float32Array(w * h);
         const nrm = new Float32Array(3 * w * h);
         const stepMax = Math.max(2, 0.5 * pf.thick);
-        for (let j = 0; j < h; j += stride) {
-            for (let i = 0; i < w; i += stride) {
-                const x = x0 + i + 0.5, y = y0 + j + 0.5, k = j * w + i;
+        for (let j = 0; j < h; j++) {
+            for (let i = 0; i < w; i++) {
+                const x = x0 + (i + 0.5) * sc, y = y0 + (j + 0.5) * sc, k = j * w + i;
                 const wz = FD.wallZ(scene, x, y);
                 wzs[k] = wz;
                 // farther than the fillet from the outline: the wall, untouched (but for the shadow)
@@ -86,10 +142,6 @@
                 if (z - wz > 0.3 && pf.inside(x, y)) mask[k] = 1;
             }
         }
-        if (stride > 1) {
-            for (const a of [hit, mask, zs, wzs, own]) spread(a, w, h, stride);
-            spread(nrm, w, h, stride, 3);
-        }
         // The normals of the part averaged over 3 x 3 px: where the face of the section meets its rounded
         // side the field has a crease, and the gradient there spikes on single pixels (a seam of dots)
         const sm = Float32Array.from(nrm);
@@ -113,16 +165,17 @@
         // it ends where the part merges into the wall). It is tested 2 px inside the outline: on the
         // outline itself the rounded side of the section recedes and the run would break.
         const at = (x, y) => {
-            const i = Math.floor(x) - x0, j = Math.floor(y) - y0;
+            const i = Math.floor((x - x0) / sc), j = Math.floor((y - y0) / sc);
             return i >= 0 && j >= 0 && i < w && j < h && mask[j * w + i] === 1;
         };
-        const standsOut = (x, y) => at(x, y) || at(x - 1, y) || at(x + 1, y) || at(x, y - 1) || at(x, y + 1);
+        const standsOut = (x, y) => at(x, y) || at(x - sc, y) || at(x + sc, y) || at(x, y - sc) || at(x, y + sc);
         // how far the part stands out of the wall there (the weight of the contour follows it)
         const height = (x, y) => {
-            const i = Math.floor(x) - x0, j = Math.floor(y) - y0, k = j * w + i;
+            const i = Math.floor((x - x0) / sc), j = Math.floor((y - y0) / sc), k = j * w + i;
             return i >= 0 && j >= 0 && i < w && j < h && mask[k] ? zs[k] - wzs[k] : 0;
         };
-        const poly = spec.points;
+        // (a turned arch: what is seen from the front is its projection, not the polygon it was traced as)
+        const poly = pf.outline || spec.points;
         let area = 0;
         for (let i = 0; i < poly.length; i++) {
             const [ax0, ay0] = poly[i], [bx0, by0] = poly[(i + 1) % poly.length];
@@ -138,12 +191,12 @@
             const nx = orient * (by0 - ay0) / (len || 1), ny = -orient * (bx0 - ax0) / (len || 1);
             for (let t = 0; t < n; t++, c++) {
                 const x = ax0 + (bx0 - ax0) * t / n, y = ay0 + (by0 - ay0) * t / n;
-                const p = { x, y, nx, ny, dz: height(x - 2 * nx, y - 2 * ny) };
-                if (standsOut(x - 2 * nx, y - 2 * ny)) {
+                const p = { x, y, nx, ny, dz: height(x - 2 * sc * nx, y - 2 * sc * ny) };
+                if (standsOut(x - 2 * sc * nx, y - 2 * sc * ny)) {
                     if (!run.length) run.start = c;
                     run.push(...gap, p);
                     gap = [];
-                } else if (run.length && gap.length < 40) gap.push(p);
+                } else if (run.length && gap.length < 40 * sc) gap.push(p);
                 else { gap = []; flush(); }
             }
         }
@@ -153,15 +206,18 @@
         } else if (run.length && runs.length && runs[0].start === 0) {
             runs[0] = Object.assign(run.concat(gap, runs[0]), { start: run.start });   // the run goes on past the first vertex
         } else flush();
-        return { pf, vessel, x0, y0, w, h, stride, hit, mask, zs, wzs, own, nrm, runs, thick: pf.thick, meanW: pf.meanW };
+        // A strap with a lume: its underside is an edge too (a lug is solid, it has none); a part as drawn next
+        // to the profile: its own edge, where it is smaller than the outline traced
+        if (pf.axis === 'x' && (!pf.lug || pf.asDrawn)) runs.push(...innerEdgeRuns(mask, zs, wzs, w, h, x0, y0, sc, pf.inside));
+        return { pf, vessel, x0, y0, w, h, s: sc, hit, mask, zs, wzs, own, nrm, runs, thick: pf.thick, meanW: pf.meanW };
     }
 
     // The front view under a light: { x0, y0, w, h, mask, lum, delta, shade, edges, meanW }. `edges` are
     // the contour runs, with a width per point (`w`, px of the drawing): heavier on the side away from
-    // the light, fading out where the part enters the wall. `preview` 2 shades one pixel in four.
+    // the light, fading out where the part enters the wall. `preview` 2 shades one sample in four.
     function shadeFront(geo, spec, scene, params, range, preview = 1) {
-        const { pf, vessel, x0, y0, w, h, hit, mask, zs, wzs, own, nrm } = geo;
-        const stride = Math.max(geo.stride, preview);
+        const { pf, vessel, x0, y0, w, h, s: sc, hit, mask, zs, wzs, own, nrm } = geo;
+        const stride = preview;
         // The shadow of the part on the wall (and on the fillet): soft shadow, marched towards the light
         // through the field of the part alone; its reach is a multiple of the thickness
         const strength = Math.min(0.95, 'shadow' in spec ? spec.shadow : 0.6);
@@ -195,9 +251,30 @@
             }
             return false;
         };
+        // Depth of a hole: what lies deeper than its surroundings is darker, more so the nearer the rim is and the
+        // higher it stands (an occlusion estimated from the depth around each point, 8 directions and 3 distances)
+        const cavity = pf.axis === 'x' && pf.underPlan.length > 0 && !pf.rimLoop;
+        const surf = q => (hit[q] === 2 ? zs[q] : wzs[q]);
+        const occlusion = (i, j, k) => {
+            const z0 = surf(k);
+            let sum = 0;
+            for (let a = 0; a < 8; a++) {
+                const cx = Math.cos(a * Math.PI / 4), cy = Math.sin(a * Math.PI / 4);
+                let best = 0;
+                for (const d of [2, 5, 11]) {
+                    const r = Math.max(1, Math.round(d / sc)), ii = Math.round(i + cx * r), jj = Math.round(j + cy * r);
+                    if (ii < 0 || jj < 0 || ii >= w || jj >= h) continue;
+                    const q = jj * w + ii;
+                    if (hit[q] === 0 || (hit[q] === 1 && !wzs[q])) continue;
+                    best = Math.max(best, (surf(q) - z0) / (r * sc));
+                }
+                sum += Math.min(1, best);
+            }
+            return sum / 8;
+        };
         for (let j = 0; j < h; j += stride) {
             for (let i = 0; i < w; i += stride) {
-                const x = x0 + i + 0.5, y = y0 + j + 0.5, k = j * w + i;
+                const x = x0 + (i + 0.5) * sc, y = y0 + (j + 0.5) * sc, k = j * w + i;
                 if (hit[k] === 0) {
                     if (reach > 0 && wzs[k] > 0 && maybeShadowed(x, y)) shade[k] = 1 - strength * (1 - shadowAt(x, y, wzs[k]));
                     continue;
@@ -215,9 +292,53 @@
                 lum[k] = clamp01((v - rg.lo) / span);
                 delta[k] = (v - vRef) / span;
                 if (reach > 0 && own[k] < 0.35) shade[k] = 1 - strength * (1 - shadowAt(x, y, zs[k]));
+                if (cavity) {
+                    const ao = Math.min(1, 1.6 * occlusion(i, j, k));
+                    if (mask[k]) lum[k] *= 1 - 0.85 * ao;
+                    else shade[k] *= 1 - 0.85 * ao;
+                }
             }
         }
         if (stride > 1) for (const a of [lum, delta, shade]) spread(a, w, h, stride);
+        // The opening of a closed hole, where the hole really is (the front is an elevation: a vertical hole has no other
+        // trace), as a flattened ellipse on the face of the strap that looks at the viewer (seen a little from above),
+        // dark inside. Turned over, the lower face is the one that looks at the viewer. The opening on the other face
+        // is only seen through the first one: its rim where it lies inside it.
+        const rimEdges = [];
+        if (pf.rimLoop) {
+            const SIN_E = 0.4, cF = Math.cos(pf.phi), sF = Math.sin(pf.phi);
+            const top = SIN_E * cF - 0.92 * sF >= 0;
+            const ringOf = isTop => {
+                const pts = pf.rimLoop(!isTop).map(([x, r]) => {
+                    const fr = pf.frameAt(x), u = (isTop ? -1 : 1) * 0.85 * fr.hw;
+                    return { x, p: fr.cy + u * cF - r * sF, dv: u * sF + r * cF };
+                });
+                const dvMean = pts.reduce((a, q) => a + q.dv, 0) / pts.length;
+                return pts.map(q => ({ x: q.x, y: q.p + (q.dv - dvMean) * SIN_E }));
+            };
+            const ring = ringOf(top), bb = G().bbox(ring), ySpan = Math.max(1e-3, bb.y1 - bb.y0);
+            for (let j = Math.max(0, Math.floor((bb.y0 - y0) / sc)); j < Math.min(h, Math.ceil((bb.y1 - y0) / sc)); j++) {
+                for (let i = Math.max(0, Math.floor((bb.x0 - x0) / sc)); i < Math.min(w, Math.ceil((bb.x1 - x0) / sc)); i++) {
+                    const k = j * w + i, x = x0 + (i + 0.5) * sc, y = y0 + (j + 0.5) * sc;
+                    if (hit[k] !== 2 || !G().pointInPolygon(x, y, ring)) continue;
+                    // (darkest on the far wall, at the top)
+                    lum[k] *= 0.15 + 0.4 * (y - bb.y0) / ySpan;
+                    mask[k] = 1;
+                }
+            }
+            const edge = ring.map(q => ({ x: q.x, y: q.y }));
+            edge.open = false;
+            edge.w = ring.map(q => 0.6 + 1.1 * (1 - (q.y - bb.y0) / ySpan));
+            rimEdges.push(edge);
+            // the other opening, seen through this one
+            let run = [];
+            const flush = () => {
+                if (run.length >= 3) { const e = run.map(q => ({ x: q.x, y: q.y })); e.open = true; e.w = run.map(() => 0.6); rimEdges.push(e); }
+                run = [];
+            };
+            for (const q of ringOf(!top)) { if (G().pointInPolygon(q.x, q.y, ring)) run.push(q); else flush(); }
+            flush();
+        }
         // Contour weight: 0.6 px on the lit side to 1.8 px on the side away from the light, thinning
         // down where the part comes close to the wall (at its roots the drawing has no edge)
         const lxy = Math.hypot(L[0], L[1]) || 1;
@@ -236,7 +357,8 @@
             });
             return edge;
         });
-        return { x0, y0, w, h, mask, lum, delta, shade, edges, meanW: geo.meanW };
+        edges.push(...rimEdges);
+        return { x0, y0, w, h, s: sc, mask, lum, delta, shade, edges, meanW: geo.meanW, inside: pf.inside };
     }
 
     // Add the fronts to the luminance field of the vessel: the field grows to hold them. The wall
@@ -248,7 +370,7 @@
         let X0 = field.x0, Y0 = field.y0, X1 = field.x0 + field.w, Y1 = field.y0 + field.h;
         for (const f of list) {
             X0 = Math.min(X0, f.x0); Y0 = Math.min(Y0, f.y0);
-            X1 = Math.max(X1, f.x0 + f.w); Y1 = Math.max(Y1, f.y0 + f.h);
+            X1 = Math.max(X1, f.x0 + f.w * f.s); Y1 = Math.max(Y1, f.y0 + f.h * f.s);
         }
         const w = X1 - X0, h = Y1 - Y0;
         const inside = new Uint8Array(w * h), lum = new Float32Array(w * h);
@@ -261,12 +383,27 @@
             }
         }
         for (const f of list) {
-            for (let j = 0; j < f.h; j++) {
-                for (let i = 0; i < f.w; i++) {
-                    const s = j * f.w + i;
-                    const k = (f.y0 - Y0 + j) * w + (f.x0 - X0 + i);
-                    if (wall[k] && (f.delta[s] || f.shade[s] < 1)) lum[k] = clamp01((lum[k] + f.delta[s]) * f.shade[s]);
-                    if (!f.mask[s]) continue;
+            const fs = f.s, FW = f.w * fs, FH = f.h * fs;
+            // (a coarse raster: the change of the wall and the shadow are interpolated between its samples)
+            const lerp = (a, u, v) => {
+                const fu = Math.min(f.w - 1, Math.max(0, u)), fv = Math.min(f.h - 1, Math.max(0, v));
+                const i = Math.min(f.w - 2, Math.floor(fu)), j = Math.min(f.h - 2, Math.floor(fv));
+                if (i < 0 || j < 0) return a[Math.round(fv) * f.w + Math.round(fu)];
+                const tu = fu - i, tv = fv - j, q = j * f.w + i;
+                return (a[q] * (1 - tu) + a[q + 1] * tu) * (1 - tv) + (a[q + f.w] * (1 - tu) + a[q + f.w + 1] * tu) * tv;
+            };
+            for (let J = 0; J < FH; J++) {
+                const v = (J + 0.5) / fs - 0.5, sj = Math.floor(J / fs);
+                for (let I = 0; I < FW; I++) {
+                    const s = sj * f.w + Math.floor(I / fs);
+                    const k = (f.y0 - Y0 + J) * w + (f.x0 - X0 + I);
+                    if (wall[k]) {
+                        const u = (I + 0.5) / fs - 0.5;
+                        const dl = fs > 1 ? lerp(f.delta, u, v) : f.delta[s], sd = fs > 1 ? lerp(f.shade, u, v) : f.shade[s];
+                        if (dl || sd < 1) lum[k] = clamp01((lum[k] + dl) * sd);
+                    }
+                    // (on a coarse raster the traced outline, not the block, is the edge of the part)
+                    if (!f.mask[s] || (fs > 1 && !f.inside(f.x0 + I + 0.5, f.y0 + J + 0.5))) continue;
                     // beyond the silhouette of the vessel the part has its own luminance
                     if (!wall[k]) lum[k] = f.lum[s] * f.shade[s];
                     inside[k] = 1; band[k] = 1;

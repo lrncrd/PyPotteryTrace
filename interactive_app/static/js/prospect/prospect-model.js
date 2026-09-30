@@ -48,6 +48,12 @@
             Object.assign(model.shading, saved.shading || {});
             Object.assign(model.surface, saved.surface || {});
             model.fronts = Array.isArray(saved.fronts) ? saved.fronts.filter(f => Array.isArray(f.points) && f.points.length >= 3) : [];
+            // (fields of earlier versions: a thickness no slider shows for horizontal parts, two openings of the lume)
+            for (const f of model.fronts) {
+                if (f.axis === 'x') f.thickness = 0;
+                delete f.underBelow;
+                delete f.lumeTrace;
+            }
             model.decorations = Array.isArray(saved.decorations) ? saved.decorations : [];
         } catch (e) {
             console.warn('Prospect model could not be read, using defaults:', e);

@@ -30,7 +30,8 @@ from archaeological_vectorizer import (
     create_simple_path,
     calculate_path_length,
     vectorize_archaeological_drawing,
-    vectorize_prospect_drawing
+    vectorize_prospect_drawing,
+    merge_outline_with_profile
 )
 
 
@@ -268,7 +269,7 @@ class VectorizationHandler:
             smoothing_factor: Bezier smoothing factor
             lines_threshold: Binarization threshold for lines
             debug_svg_dir: Directory to save intermediate SVG files for debugging
-            mask_path: Segmentation mask PNG (Prospectus only: closes gaps in the drawn border)
+            mask_path: Segmentation mask PNG (Prospectus/Profile: closes gaps in the drawn border)
             
         Returns:
             Dictionary with vectorized paths and metadata
@@ -294,7 +295,7 @@ class VectorizationHandler:
             if is_profile_mode:
                 print(f"  → Using extract_profile_mode for {category} category")
 
-            if category == 'Prospectus':
+            if category in ('Prospectus', 'Handle', 'Application'):
                 # Front view: outer border only, shading is generated later from the profile
                 print(f"  → Using prospect outline extraction for {category} category")
                 result = vectorize_prospect_drawing(
@@ -303,7 +304,8 @@ class VectorizationHandler:
                     mask_path=mask_path,
                     lines_threshold=lines_threshold,
                     epsilon=epsilon,
-                    smoothing_factor=smoothing_factor
+                    smoothing_factor=smoothing_factor,
+                    with_holes=category != 'Prospectus'  # handles: the opening is a closed ring too
                 )
             else:
                 result = vectorize_archaeological_drawing(
@@ -322,7 +324,8 @@ class VectorizationHandler:
                     show_debug_plots=False,
                     save_debug_images=False,
                     include_background_image=False,
-                    extract_profile_mode=is_profile_mode  # Attiva modalità profilo per Profile
+                    extract_profile_mode=is_profile_mode,  # Attiva modalità profilo per Profile
+                    mask_path=mask_path
                 )
             
             print(f"  → Vectorization complete: {result.get('total_paths_extracted', 0)} paths extracted")
@@ -344,6 +347,9 @@ class VectorizationHandler:
                     'decorations': result.get('decorations_count', 0)
                 }
             }
+            
+            if result.get('outline') is not None:
+                result_dict['stats']['outline'] = result['outline']
             
             # Add profile_data if it exists (from extract_profile_mode)
             if 'profile_data' in result:
@@ -1082,6 +1088,45 @@ class VectorizationHandler:
         
         print(f"✓ Mirrored profile SVG saved: {output_path}")
     
+    def merge_prospect_with_profiles(
+        self,
+        element: Dict[str, Any],
+        mirrored_profiles: List[np.ndarray],
+        width: int,
+        height: int,
+        epsilon: float = 1.5,
+        smoothing_factor: float = 0.3,
+        tol: float = 30.0
+    ) -> bool:
+        """
+        If the prospect outline reaches a mirrored profile, the profile becomes its outer side.
+        Rewrites element['paths'] and its svg_file. Returns True if something was merged.
+        """
+        outline = element.get('stats', {}).get('outline')
+        if outline is None:
+            return False
+        merged = outline
+        for profile in mirrored_profiles:
+            result = merge_outline_with_profile(merged, profile, tol)
+            if result is not None:
+                merged = result
+        if merged is outline:
+            return False
+        simplified = rdp(merged, epsilon=epsilon)
+        d = smooth_path_to_bezier(simplified, smoothing_factor) if smoothing_factor > 0 else create_simple_path(simplified)
+        svg_file = element.get('svg_file')
+        if svg_file:
+            dwg = svgwrite.Drawing(svg_file, size=(f'{width}px', f'{height}px'), profile='full')
+            group = dwg.g(id='lines', stroke='black', stroke_width=1, fill='none')
+            group.add(dwg.path(d=d + " Z"))
+            dwg.add(group)
+            dwg.save()
+            element['paths'] = self._extract_paths_from_svg(svg_file)
+        else:
+            element['paths'] = [d + " Z"]
+        element['stats']['outline'] = merged
+        return True
+
     def create_outer_contour_svg(
         self,
         profile_path: np.ndarray,

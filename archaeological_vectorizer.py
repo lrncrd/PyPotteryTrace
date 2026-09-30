@@ -882,7 +882,8 @@ def vectorize_archaeological_drawing(image_path: str,
                                    save_debug_images: bool = True,
                                    include_background_image: bool = False,
                                    extract_profile_mode: bool = False,
-                                   profile_vertical_confidence: int = 15) -> Dict[str, Any]:
+                                   profile_vertical_confidence: int = 15,
+                                   mask_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Main function to vectorize archaeological drawings with element classification.
     Based on the proven vectorize.py workflow.
@@ -906,6 +907,7 @@ def vectorize_archaeological_drawing(image_path: str,
         include_background_image: Whether to include original image as background in SVG
         extract_profile_mode: If True, extracts only a closed profile curve with external contour only (default False)
         profile_vertical_confidence: Tolleranza verticale in pixel per fondi piatti nei profili (default 15px)
+        mask_path: Segmentation mask (profile mode): closes gaps in the drawn outline so the profile is always a closed curve
         
     Returns:
         Dictionary with processing statistics and results
@@ -1076,12 +1078,20 @@ def vectorize_archaeological_drawing(image_path: str,
                 'painted_decorations_separate': []
             }
         else:
-            # Prendi il percorso più lungo (dovrebbe essere il profilo principale)
-            longest_path = max(main_paths, key=len)
-            print(f"Percorso principale selezionato: {len(longest_path)} punti")
-            
-            # 1. Chiudi la curva
-            closed_profile = close_profile_curve(longest_path)
+            # Con la maschera: silhouette riempita (i buchi del tratto sono chiusi dal bordo della maschera)
+            outline = None
+            if mask_path:
+                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                if mask is not None:
+                    outline, _ = extract_prospect_outline(img_gray, mask, lines_threshold)
+            if outline is not None and len(outline) >= 3:
+                closed_profile = np.vstack([outline, outline[:1]])
+            else:
+                # Prendi il percorso più lungo (dovrebbe essere il profilo principale)
+                longest_path = max(main_paths, key=len)
+                print(f"Percorso principale selezionato: {len(longest_path)} punti")
+                # 1. Chiudi la curva
+                closed_profile = close_profile_curve(longest_path)
             print(f"Curva chiusa: {len(closed_profile)} punti")
             
             # 2. Estrai il contorno esterno (lato sinistro) - SOLO per il ribaltamento
@@ -1197,13 +1207,17 @@ def estimate_stroke_width(ink: np.ndarray, min_area: int = 500) -> float:
 
 def extract_prospect_outline(img_gray: np.ndarray,
                              mask: Optional[np.ndarray] = None,
-                             lines_threshold: int = 100) -> Tuple[Optional[np.ndarray], float]:
+                             lines_threshold: int = 100,
+                             holes: Optional[List[np.ndarray]] = None) -> Tuple[Optional[np.ndarray], float]:
     """
     Extract the outer border of a prospect as a closed curve along the middle of the drawn stroke.
 
     Interior lines, decorations and shading are ignored: the drawing is filled from its border
     inwards and only the silhouette is kept. Where the drawn border is interrupted (or shared
     with the symmetry axis) the edge of the segmentation mask closes it.
+
+    If a list is passed as `holes`, the rings around the holes of the drawing (the opening of a ring
+    handle) are appended to it, also along the middle of the stroke.
 
     Returns:
         (outline as (N, 2) array of (y, x) points or None, stroke width in px)
@@ -1237,12 +1251,66 @@ def extract_prospect_outline(img_gray: np.ndarray,
         return None, w
     silhouette = lab == 1 + int(np.argmax(st[1:, cv2.CC_STAT_AREA]))
     # Shrink by half a stroke so the outline runs along the middle of the drawn border
-    inner = cv2.erode(silhouette.astype(np.uint8), disk(max(1, int(round(w / 2)))))
+    half = disk(max(1, int(round(w / 2))))
+    inner = cv2.erode(silhouette.astype(np.uint8), half)
     contours, _ = cv2.findContours(inner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return None, w
     c = max(contours, key=cv2.contourArea)
+    if holes is not None:
+        # Regions of paper closed by the ink alone (not by the mask edge): the opening of a ring handle
+        # is one; the body of the handle is another when stray dots close it, but it is a crescent
+        # around the opening, far less compact
+        n, lab = cv2.connectedComponents((~ink_closed).astype(np.uint8), connectivity=4)
+        outside = lab[0, 0]
+        for i in range(1, n):
+            region = ndimage.binary_fill_holes(lab == i)
+            if i == outside or region.sum() < (2 * w) ** 2:
+                continue
+            ring, _ = cv2.findContours(region.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            hull = cv2.contourArea(cv2.convexHull(max(ring, key=cv2.contourArea)))
+            if region.sum() > 0.85 * hull and region.sum() < 0.5 * silhouette.sum():  # ponytail: threshold tuned on one handle
+                ring, _ = cv2.findContours(cv2.dilate(region.astype(np.uint8), half), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                if ring:
+                    r = max(ring, key=cv2.contourArea)
+                    holes.append(np.array([[p[0][1], p[0][0]] for p in r], dtype=float))
     return np.array([[p[0][1], p[0][0]] for p in c], dtype=float), w
+
+
+def merge_outline_with_profile(outline: np.ndarray, profile: np.ndarray, tol: float = 10.0) -> Optional[np.ndarray]:
+    """
+    Replace the stretch of a closed outline that runs along a profile with the profile itself.
+
+    Used when the prospect is so wide that it reaches the mirrored profile: the mirrored profile
+    becomes its outer side. Both arrays are (N, 2) of (y, x); outline is a ring without repeated end.
+
+    Returns:
+        The merged ring, or None if the outline does not follow the profile.
+    """
+    from scipy.spatial import cKDTree
+    near = cKDTree(profile).query(outline)[0] < tol
+    n = len(outline)
+    if near.all() or near.sum() < 20:
+        return None
+    # Longest circular run of near points, on a ring that starts on a far point
+    shift = int(np.argmin(near))
+    near = np.roll(near, -shift)
+    best, start = (0, 0), None
+    for i, v in enumerate(np.append(near, False)):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            if i - start > best[1] - best[0]:
+                best = (start, i)
+            start = None
+    a, b = best[0], best[1] - 1
+    if b - a + 1 < max(20, 0.1 * len(profile)):
+        return None
+    ring = np.roll(outline, -shift, axis=0)
+    tree = cKDTree(profile)
+    ia, ib = tree.query(ring[a])[1], tree.query(ring[b])[1]
+    seg = profile[ia:ib + 1] if ia <= ib else profile[ib:ia + 1][::-1]
+    return np.vstack([ring[b + 1:], ring[:a], seg])
 
 
 def vectorize_prospect_drawing(image_path: str,
@@ -1250,7 +1318,8 @@ def vectorize_prospect_drawing(image_path: str,
                                mask_path: Optional[str] = None,
                                lines_threshold: int = 100,
                                epsilon: float = 1.5,
-                               smoothing_factor: float = 0.3) -> Dict[str, Any]:
+                               smoothing_factor: float = 0.3,
+                               with_holes: bool = False) -> Dict[str, Any]:
     """
     Vectorize a prospect (front view of the vessel) as its outer border only.
 
@@ -1274,20 +1343,21 @@ def vectorize_prospect_drawing(image_path: str,
     height, width = map(int, img_gray.shape)
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) if mask_path else None
 
-    outline, stroke_width = extract_prospect_outline(img_gray, mask, lines_threshold)
+    holes: Optional[List[np.ndarray]] = [] if with_holes else None
+    outline, stroke_width = extract_prospect_outline(img_gray, mask, lines_threshold, holes)
     print(f"Prospect: stroke width ~{stroke_width:.1f}px, outline {0 if outline is None else len(outline)} points")
 
     dwg = svgwrite.Drawing(output_svg_path, size=(f'{width}px', f'{height}px'), profile='full')
     lines_group = dwg.g(id='lines', stroke='black', stroke_width=1, fill='none')
-    if outline is not None:
-        simplified = rdp(outline, epsilon=epsilon)
+    for ring in ([] if outline is None else [outline] + (holes or [])):
+        simplified = rdp(ring, epsilon=epsilon)
         if len(simplified) >= 3:
             d = smooth_path_to_bezier(simplified, smoothing_factor) if smoothing_factor > 0 else create_simple_path(simplified)
             lines_group.add(dwg.path(d=d + " Z"))
     dwg.add(lines_group)
     dwg.save()
 
-    stats = {'total_paths_extracted': 0 if outline is None else 1, 'stroke_width': stroke_width}
+    stats = {'total_paths_extracted': 0 if outline is None else 1, 'stroke_width': stroke_width, 'outline': outline}
     return stats
 
 

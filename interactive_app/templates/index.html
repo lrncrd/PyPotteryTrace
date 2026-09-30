@@ -553,6 +553,11 @@
                             <input type="range" id="smoothing-slider" min="0" max="1" step="0.1" value="0.3" class="slider">
                         </div>
                         <div class="form-group">
+                            <label>Prospect–Profile Merge: <span id="merge-distance-value">30</span> px</label>
+                            <input type="range" id="merge-distance-slider" min="0" max="60" step="1" value="30" class="slider">
+                            <small>Distance within which the prospect outline is replaced by the mirrored profile (0 = off)</small>
+                        </div>
+                        <div class="form-group">
                             <label>Line Threshold (Black Level): <span id="lines-threshold-value">100</span></label>
                             <input type="range" id="lines-threshold-slider" min="10" max="240" step="5" value="100" class="slider" title="Binarization threshold for lines (higher = only dark lines, lower = faint lines)">
                             <small style="color: var(--text-muted); display: block; margin-top: 3px; font-size: 0.75rem;">
@@ -932,18 +937,19 @@
 
                     <div class="panel" id="prospect-handles-panel" style="display: none;">
                         <h2><i class="bi bi-link-45deg"></i> Handles and lugs</h2>
-                        <p class="prospect-status">Applied parts. Trace the outline on the original drawing (the drawing rules), or place a default shape and adjust it in the 3D views (the 3D proposes; adopt it to edit its outline).</p>
+                        <p class="prospect-status">Applied parts, each one from its section drawn next to the profile (segment it as Handle or Application). Trace the outline on the original drawing (the drawing rules), or place a default shape and adjust it in the 3D views (the 3D proposes; adopt it to edit its outline).</p>
                         <div class="form-group">
                             <label for="prospect-front-kind">Type</label>
                             <select id="prospect-front-kind" class="form-control">
-                                <option value="vertical">Vertical handle (from its side view)</option>
+                                <option value="vertical">Vertical handle</option>
                                 <option value="horizontal">Horizontal handle</option>
                                 <option value="lug">Lug</option>
                             </select>
                         </div>
                         <div class="form-group" id="prospect-front-part-group">
-                            <label for="prospect-front-part">Side view</label>
+                            <label for="prospect-front-part">Section view (next to the profile)</label>
                             <select id="prospect-front-part" class="form-control"></select>
+                            <p id="prospect-front-nopart" class="prospect-status" style="display: none;">No section view in this drawing: segment the section of the part next to the profile as Handle or Application and vectorize again.</p>
                         </div>
                         <button id="prospect-front-place" class="btn btn-secondary" style="width: 100%;">
                             <i class="bi bi-vector-pen"></i> Outline on the drawing
@@ -955,6 +961,28 @@
                         <button id="prospect-front-adopt" class="btn btn-secondary" style="width: 100%; display: none;">
                             <i class="bi bi-check2-square"></i> Adopt the outline from the 3D
                         </button>
+                        <div class="form-group" id="prospect-front-section-group" style="display: none; margin-top: 8px;">
+                            <label for="prospect-front-section">Section</label>
+                            <select id="prospect-front-section" class="form-control">
+                                <option value="drawn">As drawn (next to the profile)</option>
+                                <option value="round">Round</option>
+                                <option value="oval">Oval</option>
+                                <option value="square">Square</option>
+                                <option value="strap">Strap</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="prospect-front-lume-group" style="display: none; margin-top: 8px;">
+                            <label for="prospect-front-lume">Hole through it (lume), seen from above</label>
+                            <select id="prospect-front-lume" class="form-control">
+                                <option value="none">No hole</option>
+                                <option value="hole">Closed round hole</option>
+                                <option value="arch">Open arch (towards the wall)</option>
+                                <option value="flat">Flat</option>
+                                <option value="pointed">Pointed</option>
+                                <option value="custom">Custom (orange points)</option>
+                            </select>
+                        </div>
                         <div id="prospect-front-controls"></div>
                     </div>
 
@@ -987,11 +1015,13 @@
                             <canvas id="prospect-view-side"></canvas>
                         </div>
                         <div class="prospect-dock-view">
-                            <div class="prospect-dock-title">From above
-                                <input type="range" id="prospect-view-slice" min="0" max="100" value="50" title="Height of the section (vertical handles)" style="width: 90px; margin-left: auto;">
+                            <div class="prospect-dock-title"><span id="prospect-top-title">From above</span>
+                                <input type="range" id="prospect-view-slice" min="0" max="100" value="50" title="Where the section is: height of a vertical handle, position along the length of a horizontal one" style="width: 90px; margin-left: auto;">
                                 <button id="prospect-sec-sym" class="toolbar-btn" title="The two shoulders of the section move together"><i class="bi bi-symmetry-vertical"></i></button>
                                 <button id="prospect-sec-clear" class="toolbar-btn" title="Remove the section edited at this height"><i class="bi bi-eraser"></i></button>
                                 <button id="prospect-sec-reset" class="toolbar-btn" title="One section for the whole handle again (Edge rounding)"><i class="bi bi-arrow-counterclockwise"></i></button>
+                                <input type="range" id="prospect-plan-shift" min="-30" max="30" step="0.5" value="0" title="Move the whole handle (crest and lume) out of the wall or into it" style="width: 80px; display: none;">
+                                <button id="prospect-lume-reset" class="toolbar-btn" title="Lume: back to the chosen shape, as deep as in the section drawn" style="display: none;"><i class="bi bi-circle"></i></button>
                             </div>
                             <canvas id="prospect-view-top"></canvas>
                         </div>
@@ -1003,7 +1033,8 @@
                                     <option value="none">vessel: hidden</option>
                                 </select>
                                 <button id="prospect-view-quads" class="toolbar-btn" title="Show the quads of the mesh"><i class="bi bi-grid-3x3"></i></button>
-                                <input type="range" id="prospect-view-quad-size" min="3" max="24" step="1" value="8" title="Size of the quads (px of the drawing)" style="width: 60px;">
+                                <input type="range" id="prospect-view-quad-size" min="3" max="24" step="1" value="8" title="Size of the quads (px of the drawing)" style="width: 60px;">
+
                                 <button id="prospect-view-reset" class="toolbar-btn" title="Reset the view (double-click)"><i class="bi bi-arrow-counterclockwise"></i></button>
                                 <button id="prospect-dock-expand" class="toolbar-btn" title="Larger"><i class="bi bi-arrows-angle-expand"></i></button>
                             </div>

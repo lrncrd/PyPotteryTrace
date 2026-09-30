@@ -460,6 +460,7 @@ def generate_svg_preview():
         
         epsilon = data.get('epsilon', 1.5)
         smoothing = data.get('smoothing_factor', 0.3)
+        merge_distance = float(data.get('merge_distance', 30))
         lines_threshold = data.get('lines_threshold', 100)
         include_background = data.get('include_background', False)
         
@@ -594,8 +595,8 @@ def generate_svg_preview():
                     cv2.imwrite(str(png_path), full_img)
                     print(f"  ✓ Saved for vectorization: {png_filename} ({full_img.shape[1]}x{full_img.shape[0]}px)")
                     
-                    # Prospect outline extraction also needs the mask (closes gaps in the drawn border)
-                    if segment['category'] == 'Prospectus':
+                    # Prospect/profile outline extraction also needs the mask (closes gaps in the drawn border)
+                    if segment['category'] in ('Prospectus', 'Profile', 'Handle', 'Application'):
                         mask_png_path = masks_dir / f"{i+1:02d}_{segment['category']}_{safe_name}_mask.png"
                         cv2.imwrite(str(mask_png_path), mask_improved)
                 else:
@@ -1156,6 +1157,18 @@ def generate_svg_preview():
                     print(f"  → Keeping original Profile_Mirrored and Running_Element_Mirrored")
                     import traceback
                     traceback.print_exc()
+        
+        # A prospect wide enough to reach the mirrored profile takes it as its outer side
+        mirrored_profiles = []
+        for info in all_profile_infos:
+            mirrored = info['outer_contour'].astype(float)
+            mirrored[:, 1] = 2 * info['center_x'] - mirrored[:, 1]
+            mirrored_profiles.append(mirrored)
+        if mirrored_profiles and merge_distance > 0:
+            for elem in vectorized_elements:
+                if elem.get('category') == 'Prospectus' and vectorization_handler.merge_prospect_with_profiles(
+                        elem, mirrored_profiles, width, height, epsilon, smoothing, merge_distance):
+                    print(f"  ✓ Prospect '{elem.get('name')}' merged with mirrored profile")
         
         # After processing all profiles, create diameter line ONLY for the topmost one
         if topmost_profile_info is not None:

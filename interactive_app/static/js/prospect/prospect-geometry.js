@@ -14,6 +14,61 @@
 
     // Flatten an SVG path "d" into polylines (one per subpath), sampled every `step` px,
     // using the browser's own path geometry so every command (C, S, Q, A...) is handled
+    // One subpath of absolute M L H V C S Q T Z commands, sampled about every `step` px along each piece
+    // (getPointAtLength walks the path from its start at every call: quadratic on long paths). null when
+    // it has other commands (relative, arcs): the browser measures those.
+    function flattenAbsolute(sub, step) {
+        const tok = sub.match(/[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/g);
+        if (!tok) return [];
+        const pts = [];
+        let i = 0, cmd = null, cx = 0, cy = 0, sx = 0, sy = 0, px = 0, py = 0, prev = '';
+        const num = () => parseFloat(tok[i++]);
+        const line = (x, y) => {
+            const n = Math.max(1, Math.ceil(Math.hypot(x - cx, y - cy) / step));
+            for (let k = 1; k <= n; k++) pts.push({ x: cx + (x - cx) * k / n, y: cy + (y - cy) * k / n });
+        };
+        const cubic = (x1, y1, x2, y2, x, y) => {
+            const len = (Math.hypot(x - cx, y - cy) + Math.hypot(x1 - cx, y1 - cy) + Math.hypot(x2 - x1, y2 - y1) + Math.hypot(x - x2, y - y2)) / 2;
+            const n = Math.max(1, Math.ceil(len / step));
+            for (let k = 1; k <= n; k++) {
+                const t = k / n, u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, e = t * t * t;
+                pts.push({ x: a * cx + b * x1 + c * x2 + e * x, y: a * cy + b * y1 + c * y2 + e * y });
+            }
+        };
+        while (i < tok.length) {
+            if (/[A-Za-z]/.test(tok[i])) {
+                cmd = tok[i++];
+                if (!/[MLHVCSQTZ]/.test(cmd)) return null;
+            } else if (cmd === 'M') cmd = 'L';          // (coordinates after M go on as lines)
+            else if (!cmd || cmd === 'Z') return null;
+            if (cmd === 'M') {
+                cx = sx = num(); cy = sy = num();
+                pts.push({ x: cx, y: cy });
+            } else if (cmd === 'L') { const x = num(), y = num(); line(x, y); cx = x; cy = y; }
+            else if (cmd === 'H') { const x = num(); line(x, cy); cx = x; }
+            else if (cmd === 'V') { const y = num(); line(cx, y); cy = y; }
+            else if (cmd === 'C' || cmd === 'S') {
+                let x1, y1;
+                if (cmd === 'C') { x1 = num(); y1 = num(); }
+                else if (prev === 'C' || prev === 'S') { x1 = 2 * cx - px; y1 = 2 * cy - py; }
+                else { x1 = cx; y1 = cy; }
+                const x2 = num(), y2 = num(), x = num(), y = num();
+                cubic(x1, y1, x2, y2, x, y);
+                px = x2; py = y2; cx = x; cy = y;
+            } else if (cmd === 'Q' || cmd === 'T') {
+                let qx, qy;
+                if (cmd === 'Q') { qx = num(); qy = num(); }
+                else if (prev === 'Q' || prev === 'T') { qx = 2 * cx - px; qy = 2 * cy - py; }
+                else { qx = cx; qy = cy; }
+                const x = num(), y = num();
+                cubic(cx + 2 / 3 * (qx - cx), cy + 2 / 3 * (qy - cy), x + 2 / 3 * (qx - x), y + 2 / 3 * (qy - y), x, y);
+                px = qx; py = qy; cx = x; cy = y;
+            } else if (cmd === 'Z') { line(sx, sy); cx = sx; cy = sy; }
+            prev = cmd;
+        }
+        return pts.every(p => Number.isFinite(p.x) && Number.isFinite(p.y)) ? pts : null;
+    }
+
     function flattenPathD(d, step = 2) {
         if (!d) return [];
         if (!measureSvg) {
@@ -28,6 +83,8 @@
         // Paths written by Trace use absolute commands, so subpaths can be measured one by one
         const subpaths = d.trim().split(/(?=M)/).filter(s => s.trim().length > 1);
         for (const sub of subpaths) {
+            const fast = flattenAbsolute(sub, step);
+            if (fast) { if (fast.length) polylines.push(fast); continue; }
             const el = document.createElementNS(SVG_NS, 'path');
             el.setAttribute('d', sub);
             measureSvg.appendChild(el);

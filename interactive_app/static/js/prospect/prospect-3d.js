@@ -83,6 +83,14 @@
                 delete spec.sections;
                 return true;
             }));
+            // (back to the chosen shape of lume, as deep as in the section drawn)
+            on('prospect-lume-reset', 'click', () => this.editSpec(spec => {
+                if (!spec.under && spec.lumeShape !== 'custom') return false;
+                delete spec.under; delete spec.underLow; delete spec.underNear; delete spec.underNearLow;
+                if (spec.bez) { delete spec.bez.up; delete spec.bez.low; delete spec.bez.nup; delete spec.bez.nlow; }
+                if (spec.lumeShape === 'custom') spec.lumeShape = spec.kind === 'lug' ? 'none' : 'arch';
+                return true;
+            }));
             on('prospect-side-reset', 'click', () => this.editSpec(spec => {
                 if (!spec.sideEdit) return false;
                 delete spec.sideEdit;
@@ -340,8 +348,11 @@
                 this.drawQuads(ctx, v, ras, mesh, cam);
                 this.label(ctx, `${mesh.quads.length / 4} quads`);
             }
+            this.syncButtons(target.pf);
+            // Side of a horizontal handle or a lug: the section across the strap, at the position chosen with the slider
+            if (target.pf.axis === 'x') this.renderCut(sc);
             // Side: looking across the plane through the axis and the part, like the drawn side view
-            {
+            else {
                 const v = this.views.side;
                 const yaw = Math.atan2(-Math.cos(theta), -Math.sin(theta));
                 // (the camera stays put while an end is dragged, so the handle stays under the pointer)
@@ -352,9 +363,113 @@
                 this.drawSideEdit(ctx, cam, target);
                 this.label(ctx, 'outside on the left, the wall on the right');
                 if (target.pf.stats) this.label(ctx, target.pf.stats, 1);
-                if (this.sideMap) this.label(ctx, target.pf.part.madeUp ? 'side view made up: drag its ends and its outermost point' : 'drag the ends up or down', 2);
+                if (this.sideMap) this.label(ctx, 'drag the ends up or down', 2);
+                this.secMap = null;
             }
             this.renderTop(sc, targetIdx);
+        }
+
+        // The controls that only make sense for one kind of part
+        syncButtons(pf) {
+            const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+            show('prospect-lume-reset', pf.axis === 'x' && pf.underPlan.length > 0);
+            show('prospect-plan-shift', pf.axis === 'x');
+            show('prospect-side-reset', pf.axis === 'y');
+        }
+
+        // The section across the strap of a horizontal handle or a lug at the position `slice` along its
+        // length, cut in the surface (the wall and the part as one shape), with the handles of the section.
+        // Outside on the left, the wall on the right, like the side view of a vertical handle.
+        renderCut(sc) {
+            const v = this.views.side, scene = this.pc.scene, pf = sc.target.pf, spec = sc.target.spec;
+            const { vessel, F } = sc, ax = scene.axisX;
+            const xs = Math.round(pf.xmin + this.slice * (pf.xmax - pf.xmin)) + 0.5;
+            const fr = pf.frameAt(xs), dx = xs - ax;
+            const rowAt = y => { const r = vessel.radiusAt(y + 0.5), sl = vessel.slopeAt(y + 0.5); return [r, Math.sqrt(1 + sl * sl)]; };
+            const zOf = (y, dv) => { const [r, k] = rowAt(y); const rr = r + dv * k; return Math.sqrt(Math.max(0, rr * rr - dx * dx)); };
+            const dvOf = (y, z) => { const [r, k] = rowAt(y); return (Math.hypot(dx, z) - r) / k; };
+            const halfY = (fr.hw + fr.dz) * 1.4 + 24, ymid = fr.cy - 0.3 * fr.dz * Math.sin(pf.phi);
+            const zHi = zOf(fr.cy, Math.hypot(Math.max(fr.dz, 10), fr.hw) + 16), zLo = zOf(fr.cy, -40), zmid = (zHi + zLo) / 2;
+            const scale = Math.min((v.w - 16) / Math.max(1, zHi - zLo), (v.h - 16) / (2 * halfY));
+            const st = this.editing ? 2 : 1;
+            const key = `cut|${sc.list.indexOf(sc.target)}|${Math.round(xs)}|${v.w}x${v.h}|${this.built.key}|${this.vesselMode}|${st}`;
+            if (!v.cache || v.cache.key !== key) {
+                const img = new ImageData(v.w, v.h), dd = img.data;
+                // The section as chosen: the strap alone, as high as it is here, with no hole and no change of height along
+                // it (what the hole and the crest do to it is seen in the views from above and below)
+                let cp = pf;
+                if (!pf.asDrawn) {
+                    const flat = [{ t: 0, dz: fr.dz }, { t: 1, dz: fr.dz }], none = [{ t: 0, dz: 0 }, { t: 1, dz: 0 }];
+                    const { bez, ...rest } = spec;
+                    cp = FD().partField(Object.assign(rest, { plan: flat, under: none, underLow: none, lumeShape: 'arch' }), scene.parts.find(q => q.id === spec.part) || null, scene, vessel) || pf;
+                }
+                const fieldOf = this.vesselMode === 'none' ? (x, y, z) => cp.sd(x, y, z) : (cp === pf ? F : FD().unionOf(vessel, [cp]));
+                for (let py = 0; py < v.h; py += st) {
+                    for (let px = 0; px < v.w; px += st) {
+                        const y = (py + 0.5 * st - v.h / 2) / scale + ymid, z = zmid - (px + 0.5 * st - v.w / 2) / scale;
+                        const f = fieldOf(xs, y, z);
+                        let r = 255, g = 255, b = 255;
+                        if (f < 0) {
+                            let h = 1;
+                            if (this.vesselMode !== 'none') {
+                                const dv = vessel.sd(xs, y, z), dp = cp.sd(xs, y, z);
+                                h = dv < 0 ? 0 : dp < 0 ? 1 : FD().share(dv, dp, cp.kAt(xs, y));
+                            }
+                            const s = smooth(clamp((h - 0.1) / 0.8, 0, 1));
+                            r = 205 * (1 - s) + 90 * s + 20; g = 210 * (1 - s) + 150 * s + 20; b = 220 * (1 - s) + 255 * s;
+                        }
+                        if (Math.abs(f) < 0.6 * st / scale) { r = 30; g = 40; b = 90; }
+                        for (let j = py; j < Math.min(v.h, py + st); j++) {
+                            for (let i = px; i < Math.min(v.w, px + st); i++) {
+                                const q = 4 * (j * v.w + i);
+                                dd[q] = r; dd[q + 1] = g; dd[q + 2] = b; dd[q + 3] = 255;
+                            }
+                        }
+                    }
+                }
+                v.cache = { key, img };
+            }
+            const ctx = v.canvas.getContext('2d');
+            ctx.putImageData(v.cache.img, 0, 0);
+            const k = (spec.sections || []).find(q => Math.abs(q.t - this.slice) < KEY_TOL);
+            const sec = k || FD().sectionTrack(spec)(this.slice);
+            // s across the front outline (-1 its top edge), f depth below the crest, in units of fr.depth
+            // (a turned arch: the strap turns as a solid about the line through the middle of its outline, at
+            // height cy; s across the section, f the depth below its crest, in the section as it was before)
+            const cF = Math.cos(pf.phi), sF = Math.sin(pf.phi);
+            const toScreen = (s, f) => {
+                const u = s * fr.hw, r = fr.dz - f * fr.depth;
+                const dv = u * sF + r * cF, y = fr.cy + u * cF - r * sF, z = zOf(y, dv);
+                return [v.w / 2 - (z - zmid) * scale, v.h / 2 + (y - ymid) * scale];
+            };
+            const fromScreen = (px, py) => {
+                const y = (py - v.h / 2) / scale + ymid, z = zmid - (px - v.w / 2) / scale, dv = dvOf(y, z);
+                const p = y - fr.cy, u = p * cF + dv * sF, r = -p * sF + dv * cF;
+                return { s: u / fr.hw, f: (fr.dz - r) / fr.depth };
+            };
+            // the inclination: the middle of the crest, dragged: it sits at (cy - dz sin, dz cos) about the axis
+            const leanAt = (px, py) => {
+                const y = (py - v.h / 2) / scale + ymid, z = zmid - (px - v.w / 2) / scale;
+                return Math.round(clamp(Math.atan2(fr.cy - y, Math.max(0.5, dvOf(y, z))) * 180 / Math.PI, -90, 90));
+            };
+            // (a round or oval section is fixed: only the tilt is handled; the shoulders and points are for the others)
+            const locked = pf.sectionLocked;
+            const markers = locked ? [] : [{ kind: 'sl', p: toScreen(sec.sl, sec.fl) }, { kind: 'sr', p: toScreen(sec.sr, sec.fr) }];
+            if (fr.dz > 3 && !pf.asDrawn) markers.push({ kind: 'lean', p: toScreen(0, 0) });
+            if (k && !locked) k.pts.forEach((q, i) => markers.push({ kind: 'pt', i, p: toScreen(q.s, q.f) }));
+            for (const m of markers) {
+                if (m.kind === 'lean') { ctx.fillStyle = '#2563eb'; ctx.fillRect(m.p[0] - 5, m.p[1] - 5, 10, 10); }
+                else this.marker(ctx, m.p[0], m.p[1], m.kind !== 'pt');
+            }
+            this.secMap = { view: 'side', markers: markers.map(m => ({ kind: m.kind, i: m.i, sx: m.p[0], sy: m.p[1] })), fromScreen, leanAt, spec, locked };
+            this.sideMap = null;
+            this.label(ctx, `section across the strap at ${Math.round(this.slice * 100)}% of its length (slider above)`);
+            this.label(ctx, pf.asDrawn ? 'the section as drawn next to the profile (its inclination too)'
+                : locked ? 'round and oval sections are fixed (Square, Strap or Custom can be shaped)'
+                    : 'drag the shoulders; double-tap: add or remove a point', 1);
+            if (!pf.asDrawn) this.label(ctx, 'drag the square up or down: the arch tilts', 2);
+            const edited = locked ? [] : (spec.sections || []).map(q => `${Math.round(q.t * 100)}%`);
+            if (edited.length) this.label(ctx, `edited at ${edited.join(', ')}`, 3);
         }
 
         // From above: the mesh for a horizontal handle or a lug; for a vertical handle the section at
@@ -417,42 +532,146 @@
                 this.topMap = null;
                 return;
             }
-            this.secMap = null;
-            // horizontal: the mesh seen from above, x right and z down (towards the viewer of the drawing)
-            const b = pf.bb;
+            // horizontal: plain 2D drawings, from above and from below, x to the right, the wall and the curves (Bezier)
+            const b = pf.bbFoot, spec = sc.target.spec;
             const zs = [0, 1, 2, 3].map(i => FD().wallZ(scene, b.x0 + (b.x1 - b.x0) * i / 3, (b.y0 + b.y1) / 2));
-            const Z1 = Math.max(pf.rhoMax, ...zs) + 25, Z0 = Math.min(...zs) - 25;
-            const padX = Math.max(30, 0.25 * (b.x1 - b.x0));
+            const Z1 = Math.max(pf.rhoMax, ...zs) + 10, Z0 = Math.min(...zs) - 10;
+            const padX = Math.max(20, 0.15 * (b.x1 - b.x0));
             const X0 = b.x0 - padX, X1 = b.x1 + padX;
-            const scale = Math.min((v.w - 16) / (X1 - X0), (v.h - 16) / (Z1 - Z0));
             const mx = (X0 + X1) / 2, mz = (Z0 + Z1) / 2;
-            const cam = M().orbitCamera({ cx: mx, cy: 0, cz: mz, yaw: 0, pitch: -Math.PI / 2, W: v.w, H: v.h, scale });
-            const ras = M().rasterize([mesh], cam, v.w, v.h);
-            const ctx = this.paint(v, ras, mesh, sc.list.indexOf(sc.target), this.lightOf(cam));
-            this.drawQuads(ctx, v, ras, mesh, cam);
-            const toScreen = (x, z) => [v.w / 2 + scale * (x - mx), v.h / 2 + scale * (z - mz)];
-            // crest markers: where the outer surface of the part is, along its length
-            this.topMap = { scale, mx, mz, target: sc.target, markers: [] };
-            const spec = sc.target.spec;
-            const plan = pf.plan;
-            const cy = (b.y0 + b.y1) / 2;
-            const rw = vessel.radiusAt(cy + 0.5);
-            ctx.strokeStyle = '#2563eb';
+            const cy = (b.y0 + b.y1) / 2, rw = vessel.radiusAt(cy + 0.5), ax = scene.axisX;
+            const len = pf.xmax - pf.xmin;
+            // from above (the outside at the bottom) and, for a handle, from below (the outside at the top)
+            const hole = pf.underPlan.length > 0, closed = pf.underNearPlan.length > 0;
+            const hp = hole ? Math.floor(v.h / 2) : v.h;
+            const panels = (hole ? ['up', 'low'] : ['up']).map((key, i) => ({
+                key, flip: key === 'up' ? 1 : -1, y0: i * hp, h: hp,
+                scale: Math.min((v.w - 16) / (X1 - X0), (hp - 30) / (Z1 - Z0))
+            }));
+            const ctx = v.canvas.getContext('2d');
             ctx.fillStyle = '#ffffff';
-            ctx.lineWidth = 1.5;
-            plan.forEach((p, i) => {
-                const x = pf.xmin + p.t * (pf.xmax - pf.xmin);
-                const dx = x - scene.axisX;
-                const z = Math.sqrt(Math.max(0, (rw + p.dz) * (rw + p.dz) - dx * dx));
-                const [sx, sy] = toScreen(x, z);
+            ctx.fillRect(0, 0, v.w, v.h);
+            const items = [];
+            this.topMap = { panels, items, mx, mz, rw, ax, pf, spec, xmin: pf.xmin, len };
+            if (!this.sel || this.sel.id !== spec.id) this.sel = null;
+            const nodesOf = key => (spec.bez && spec.bez[key]) || (pf.circleNodes && !spec.under && (key === 'up' || key === 'low') ? pf.circleNodes.far : pf.circleNodes && !spec.underNear && (key === 'nup' || key === 'nlow') ? pf.circleNodes.near : null) || FD().bezFromPlan(key === 'crest' ? pf.plan : key === 'up' ? pf.underPlan : key === 'low' ? pf.underLowPlan : key === 'nup' ? pf.underNearPlan : pf.underNearLowPlan);
+            for (const pn of panels) {
+                const sx = x => v.w / 2 + pn.scale * (x - mx), sy = z => pn.y0 + pn.h / 2 + pn.flip * pn.scale * (z - mz) + 6;
+                const at = (t, dz) => {
+                    const x = pf.xmin + t * len, dx = x - ax;
+                    return [sx(x), sy(Math.sqrt(Math.max(0, (rw + Math.max(0, dz)) ** 2 - dx * dx)))];
+                };
+                pn.at = at;
+                ctx.save();
                 ctx.beginPath();
-                ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+                ctx.rect(0, pn.y0, v.w, pn.h);
+                ctx.clip();
+                // the vessel: the wall, and what is inside it
+                const wall = [];
+                for (let x = X0; x <= X1; x += (X1 - X0) / 80) wall.push([sx(x), sy(Math.sqrt(Math.max(0, rw * rw - (x - ax) ** 2)))]);
+                ctx.fillStyle = '#e2e8e0';
+                ctx.beginPath();
+                wall.forEach((q, i) => (i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])));
+                ctx.lineTo(sx(X1), pn.flip > 0 ? pn.y0 - 5 : pn.y0 + pn.h + 5);
+                ctx.lineTo(sx(X0), pn.flip > 0 ? pn.y0 - 5 : pn.y0 + pn.h + 5);
                 ctx.fill();
+                ctx.strokeStyle = '#1e2a5a';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                wall.forEach((q, i) => (i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])));
                 ctx.stroke();
-                this.topMap.markers.push({ i, x, cy, rw, sx, sy });
-            });
-            void spec;
-            this.label(ctx, 'from above: drag the crest points');
+                // the curves: crest, and the lume on this side (the one on the other side dashed)
+                const list = [['crest', '#2563eb', false]];
+                const far = pn.key, near = 'n' + pn.key, oFar = far === 'up' ? 'low' : 'up';
+                if (hole) list.push([far, '#d97706', false]);
+                if (closed) list.push([near, '#d97706', false]);
+                if (hole) list.push([oFar, '#d97706', true]);
+                if (closed) list.push(['n' + oFar, '#d97706', true]);
+                const lines = {};
+                for (const [key, color, dashed] of list) {
+                    const nodes = nodesOf(key), line = [];
+                    for (let i = 0; i < nodes.length - 1; i++) {
+                        const a = nodes[i], c = nodes[i + 1];
+                        const P = [[a.t, a.z], [a.t + a.hr[0], a.z + a.hr[1]], [c.t + c.hl[0], c.z + c.hl[1]], [c.t, c.z]];
+                        for (let k = 0; k <= 16; k++) {
+                            const u = k / 16, w = 1 - u;
+                            const t = w * w * w * P[0][0] + 3 * w * w * u * P[1][0] + 3 * w * u * u * P[2][0] + u * u * u * P[3][0];
+                            const z = w * w * w * P[0][1] + 3 * w * w * u * P[1][1] + 3 * w * u * u * P[2][1] + u * u * u * P[3][1];
+                            const q = at(t, z);
+                            line.push({ x: q[0], y: q[1], seg: i, u });
+                        }
+                    }
+                    lines[key + (dashed ? '*' : '')] = line;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = dashed ? 1 : 2;
+                    ctx.setLineDash(dashed ? [4, 4] : []);
+                    ctx.beginPath();
+                    line.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    if (!dashed) line.forEach((q, i) => { if (i % 2 === 0) items.push({ kind: 'seg', key, seg: q.seg, u: q.u, sx: q.x, sy: q.y, pn }); });
+                }
+                // the handle itself: between the crest and the lume (a lug: down to the wall)
+                const inner = hole && !closed ? lines[pn.key] : null;
+                ctx.fillStyle = 'rgba(37,99,235,0.13)';
+                ctx.beginPath();
+                lines.crest.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+                (inner || wall.filter(q => q[0] >= at(0, 0)[0] - 1 && q[0] <= at(1, 0)[0] + 1).map(q => ({ x: q[0], y: q[1] })))
+                    .slice().reverse().forEach(q => ctx.lineTo(q.x, q.y));
+                ctx.fill();
+                // a closed hole: between its far and its near edge
+                if (closed) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    lines[pn.key].forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+                    lines['n' + pn.key].slice().reverse().forEach(q => ctx.lineTo(q.x, q.y));
+                    ctx.fill();
+                    ctx.strokeStyle = '#d97706';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+                // the nodes (a filled square on the selected one, with its handles)
+                for (const [key, color] of list.filter(l => !l[2])) {
+                    const nodes = nodesOf(key);
+                    nodes.forEach((n, i) => {
+                        const [nx, ny] = at(n.t, n.z);
+                        const on = this.sel && this.sel.key === key && this.sel.i === i;
+                        if (on) {
+                            for (const side of ['hl', 'hr']) {
+                                if (!n[side][0]) continue;
+                                const [hx, hy] = at(n.t + n[side][0], n.z + n[side][1]);
+                                ctx.strokeStyle = color;
+                                ctx.lineWidth = 1;
+                                ctx.beginPath();
+                                ctx.moveTo(nx, ny);
+                                ctx.lineTo(hx, hy);
+                                ctx.stroke();
+                                ctx.fillStyle = color;
+                                ctx.beginPath();
+                                ctx.arc(hx, hy, 3.5, 0, Math.PI * 2);
+                                ctx.fill();
+                                items.push({ kind: side, key, i, sx: hx, sy: hy, pn });
+                            }
+                        }
+                        ctx.strokeStyle = color;
+                        ctx.fillStyle = on ? color : '#ffffff';
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath();
+                        ctx.rect(nx - 4, ny - 4, 8, 8);
+                        ctx.fill();
+                        ctx.stroke();
+                        items.push({ kind: 'node', key, i, sx: nx, sy: ny, pn });
+                    });
+                }
+                ctx.restore();
+                ctx.fillStyle = '#475569';
+                ctx.font = '11px sans-serif';
+                ctx.fillText(!hole ? 'from above: the crest (blue)'
+                    : pn.key === 'up' ? 'from above: the crest (blue) and the upper opening of the lume (orange)'
+                        : 'from below: the crest (blue) and the lower opening of the lume (orange; dashed: the upper one)', 8, pn.y0 + 13);
+                if (pn.key === 'up' && hp > 60) ctx.fillText(!hole ? 'for a hole: Hole through it, in the panel' : 'drag the nodes; click a curve: new node; double-click a node: remove it', 8, pn.y0 + 26);
+                if (pn.key === 'low') { ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, pn.y0 + 0.5); ctx.lineTo(v.w, pn.y0 + 0.5); ctx.stroke(); }
+            }
         }
 
         // A handle of a view: `fill` for the main ones (ends, shoulders), white for the others
@@ -489,14 +708,12 @@
             this.secMap = { markers: markers.map(m => ({ kind: m.kind, i: m.i, sx: m.p[0], sy: m.p[1] })), fromScreen, spec };
         }
 
-        // The side view the 3D is made from (drawn, with its ends moved, or made up) over the mesh, with
-        // handles on its ends and, when it is made up, on its outermost point
+        // The side view the 3D is made from (drawn, with its ends moved) over the mesh, with handles on its ends
         drawSideEdit(ctx, cam, target) {
             const pf = target.pf, part = pf.part;
             this.sideMap = null;
             if (pf.axis !== 'y' || !part) return;
-            const scene = this.pc.scene, ax = scene.axisX, rad = scene.radius.radius;
-            const rw = y => rad[clamp(Math.round(y), 0, rad.length - 1)];
+            const ax = this.pc.scene.axisX;
             const sT = Math.sin(pf.theta), cT = Math.cos(pf.theta);
             const all = part.rings.flat();
             const sgn = all.reduce((a, p) => a + p.x, 0) / all.length < ax ? -1 : 1;
@@ -513,17 +730,13 @@
                 { kind: 'top', p: toScreen(all.reduce((m, q) => (q.y < m.y ? q : m))) },
                 { kind: 'bottom', p: toScreen(all.reduce((m, q) => (q.y > m.y ? q : m))) }
             ];
-            if (part.madeUp) {
-                const out = q => sgn * (q.x - ax) - rw(q.y);
-                markers.push({ kind: 'apex', p: toScreen(G().edgeLine(part.rings[0]).reduce((m, q) => (out(q) > out(m) ? q : m))) });
-            }
-            for (const m of markers) this.marker(ctx, m.p[0], m.p[1], m.kind !== 'apex');
-            // screen px per px of the drawing, and the screen directions of "down" and "out of the wall"
-            const o = cam.project(ax, 0, 0), dn = cam.project(ax, 100, 0), ou = cam.project(ax + 100 * sT, 0, 100 * cT);
+            for (const m of markers) this.marker(ctx, m.p[0], m.p[1], true);
+            // screen px per px of the drawing, and the screen direction of "down"
+            const o = cam.project(ax, 0, 0), dn = cam.project(ax, 100, 0);
             const scale = Math.hypot(dn[0] - o[0], dn[1] - o[1]) / 100;
             const unit = q => { const l = Math.hypot(q[0] - o[0], q[1] - o[1]) || 1; return [(q[0] - o[0]) / l, (q[1] - o[1]) / l]; };
             this.sideMap = {
-                cam, scale, down: unit(dn), out: unit(ou), spec: target.spec,
+                cam, scale, down: unit(dn), spec: target.spec,
                 markers: markers.map(m => ({ kind: m.kind, sx: m.p[0], sy: m.p[1] }))
             };
         }
@@ -637,7 +850,14 @@
         sectionDown(c, e) {
             const m = this.secMap, p = this.canvasPos(c, e);
             const hit = m.markers.find(q => Math.hypot(q.sx - p.x, q.sy - p.y) <= PICK_PX);
+            if (hit && hit.kind === 'lean') {
+                c.setPointerCapture(e.pointerId);
+                this.drag = { kind: 'lean', spec: m.spec, moved: false };
+                this.editing = true;
+                return true;
+            }
             if (this.doubleTap(c, p)) {
+                if (m.locked) return true;
                 const key = this.sectionKey(m.spec);
                 if (hit && hit.kind === 'pt') key.pts.splice(hit.i, 1);
                 else {
@@ -659,12 +879,40 @@
             return true;
         }
 
-        // The ends of the side view follow the pointer up or down; the outermost point of a made-up one
-        // also goes out or in (how far the handle reaches) and along it (where it reaches farthest)
+        // The handles of the section follow the pointer (either canvas); true if a section was being dragged
+        sectionMove(c, e) {
+            if (!this.drag || (this.drag.kind !== 'section' && this.drag.kind !== 'lean')) return false;
+            const p = this.canvasPos(c, e);
+            if (this.drag.kind === 'lean') {
+                this.drag.spec.lean = this.secMap.leanAt(p.x, p.y);
+                this.drag.moved = true;
+                // the drawing follows while the strap is dragged (half resolution, as for the crest points)
+                this.pc.recomputeShading(2);
+                this.pc.redraw();
+                this.invalidate();
+                return true;
+            }
+            if (!this.drag.key) this.drag.key = this.sectionKey(this.drag.spec);
+            this.dragSection(this.drag, this.secMap.fromScreen(p.x, p.y));
+            this.drag.moved = true;
+            this.invalidate();
+            return true;
+        }
+
+        sectionEnd() {
+            if (!this.drag || (this.drag.kind !== 'section' && this.drag.kind !== 'lean')) return false;
+            const moved = this.drag.moved;
+            this.drag = null;
+            this.finishEdit(moved);
+            return true;
+        }
+
+        // The ends of the side view follow the pointer up or down
         setupSide() {
             const c = this.views.side.canvas;
             c.style.touchAction = 'none';
             c.addEventListener('pointerdown', e => {
+                if (this.secMap && this.secMap.view === 'side' && this.sectionDown(c, e)) return;
                 const m = this.sideMap;
                 if (!m) return;
                 const p = this.canvasPos(c, e);
@@ -674,38 +922,28 @@
                 const spec = m.spec;
                 this.drag = {
                     kind: 'side', what: hit.kind, x: p.x, y: p.y, cam: m.cam, map: m, spec, moved: false,
-                    side: spec.side ? Object.assign({}, spec.side) : null,
                     edit: Object.assign({ dy0: 0, dy1: 0 }, spec.sideEdit)
                 };
                 this.editing = true;
             });
             c.addEventListener('pointermove', e => {
+                if (this.sectionMove(c, e)) return;
                 const d = this.drag;
                 if (!d || d.kind !== 'side') return;
                 const p = this.canvasPos(c, e), m = d.map, dx = p.x - d.x, dy = p.y - d.y;
-                // px of the drawing, down and out of the wall
-                const down = (dx * m.down[0] + dy * m.down[1]) / m.scale, out = (dx * m.out[0] + dy * m.out[1]) / m.scale;
+                // px of the drawing, down
+                const down = (dx * m.down[0] + dy * m.down[1]) / m.scale;
                 const r1 = v => Math.round(v * 10) / 10;
-                if (d.side) {
-                    const sd = Object.assign({}, d.side);
-                    if (d.what === 'top') sd.y0 = r1(Math.min(sd.y0 + down, sd.y1 - 20));
-                    else if (d.what === 'bottom') sd.y1 = r1(Math.max(sd.y1 + down, sd.y0 + 20));
-                    else {
-                        sd.reach = r1(Math.max(6, sd.reach + out));
-                        sd.apex = Math.round(clamp(('apex' in sd ? sd.apex : 0.5) + down / Math.max(1, sd.y1 - sd.y0), 0, 1) * 1000) / 1000;
-                    }
-                    d.spec.side = sd;
-                } else {
-                    const ed = Object.assign({}, d.edit);
-                    if (d.what === 'top') ed.dy0 = r1(ed.dy0 + down);
-                    else ed.dy1 = r1(ed.dy1 + down);
-                    d.spec.sideEdit = ed;
-                }
+                const ed = Object.assign({}, d.edit);
+                if (d.what === 'top') ed.dy0 = r1(ed.dy0 + down);
+                else ed.dy1 = r1(ed.dy1 + down);
+                d.spec.sideEdit = ed;
                 this.pc.refitBand(d.spec);
                 d.moved = true;
                 this.invalidate();
             });
             const end = () => {
+                if (this.sectionEnd()) return;
                 const d = this.drag;
                 if (!d || d.kind !== 'side') return;
                 this.drag = null;
@@ -715,56 +953,132 @@
             c.addEventListener('pointercancel', end);
         }
 
-        // A point of the top view: the crest of a horizontal part follows the pointer (its height above the wall)
+        // The Bezier curves of the two 2D views of a horizontal part (crest, upper and lower opening of the lume)
         setupTop() {
             const c = this.views.top.canvas;
             c.style.touchAction = 'none';
             const pos = e => this.canvasPos(c, e);
+            const r1 = v => Math.round(v * 10) / 10;
+            // (t along the length, dz above the wall) of a point of a panel
+            const toPlan = (p, pn, m) => {
+                const x = (p.x - this.views.top.w / 2) / pn.scale + m.mx, z = pn.flip * (p.y - pn.y0 - pn.h / 2 - 6) / pn.scale + m.mz;
+                return { t: (x - m.xmin) / m.len, dz: Math.hypot(x - m.ax, z) - m.rw };
+            };
+            // the handles of a node stay within its neighbours, so the curve stays a function of the length
+            const fit = (nodes, i) => {
+                const n = nodes[i], prev = nodes[i - 1], next = nodes[i + 1];
+                if (prev) { const room = n.t - prev.t; if (-n.hl[0] > room) { const k = room / -n.hl[0]; n.hl = [n.hl[0] * k, n.hl[1] * k]; } }
+                else n.hl = [0, 0];
+                if (next) { const room = next.t - n.t; if (n.hr[0] > room) { const k = room / n.hr[0]; n.hr = [n.hr[0] * k, n.hr[1] * k]; } }
+                else n.hr = [0, 0];
+            };
+            const change = (fast) => {
+                const m = this.topMap;
+                FD().syncBez(m.spec);
+                if (m.spec.under && m.spec.lumeShape !== 'hole') m.spec.lumeShape = 'custom';
+                this.pc.recomputeShading(fast ? 2 : undefined);
+                this.pc.redraw();
+                this.invalidate();
+            };
+            const done = () => { this.pc.recomputeShading(); this.pc.redraw(); this.pc.pushHistory(); this.pc.updateUI(); this.invalidate(); };
             c.addEventListener('pointerdown', e => {
-                if (this.secMap && this.sectionDown(c, e)) return;
-                if (!this.topMap) return;
-                const p = pos(e);
-                const hit = this.topMap.markers.find(m => Math.hypot(m.sx - p.x, m.sy - p.y) <= PICK_PX);
-                if (!hit) return;
-                c.setPointerCapture(e.pointerId);
-                this.drag = { kind: 'crest', index: hit.i, moved: false };
-            });
-            c.addEventListener('pointermove', e => {
-                if (this.drag && this.drag.kind === 'section') {
-                    const p = pos(e);
-                    if (!this.drag.key) this.drag.key = this.sectionKey(this.drag.spec);
-                    this.dragSection(this.drag, this.secMap.fromScreen(p.x, p.y));
-                    this.drag.moved = true;
+                if (this.secMap && this.secMap.view !== 'side' && this.sectionDown(c, e)) return;
+                const m = this.topMap;
+                if (!m || !m.items) return;
+                const p = pos(e), d = q => Math.hypot(q.sx - p.x, q.sy - p.y);
+                const first = kind => m.items.filter(q => kind.includes(q.kind) && d(q) <= PICK_PX).sort((a, b) => d(a) - d(b))[0];
+                const hit = first(['hl', 'hr']) || first(['node']);
+                if (hit) {
+                    c.setPointerCapture(e.pointerId);
+                    const bz = FD().bezEnsure(m.spec, m.pf);
+                    const nodes = bz[hit.key];
+                    if (hit.kind === 'node' && this.doubleTap(c, p)) {
+                        if (nodes.length > 2 && hit.i > 0 && hit.i < nodes.length - 1) {
+                            nodes.splice(hit.i, 1);
+                            fit(nodes, hit.i - 1); fit(nodes, hit.i);
+                            this.sel = null;
+                            change(false);
+                            done();
+                        }
+                        return;
+                    }
+                    this.sel = { id: m.spec.id, key: hit.key, i: hit.i };
+                    this.drag = { kind: 'bez', what: hit.kind, key: hit.key, i: hit.i, pn: hit.pn, moved: false };
                     this.invalidate();
                     return;
                 }
-                if (!this.drag || this.drag.kind !== 'crest' || !this.topMap) return;
-                const p = pos(e), t = this.topMap;
-                const spec = t.target.spec;
-                const m = t.markers.find(q => q.i === this.drag.index);
-                if (!m) return;
-                const z = (p.y - this.views.top.h / 2) / t.scale + t.mz;
-                const dx = m.x - this.pc.scene.axisX;
-                if (!spec.plan || !spec.plan.length) spec.plan = t.target.pf.plan.map(q => Object.assign({}, q));
-                spec.plan[this.drag.index].dz = Math.max(0, Math.round((Math.sqrt(dx * dx + z * z) - m.rw) * 10) / 10);
-                this.drag.moved = true;
-                this.pc.recomputeShading(2);
-                this.pc.redraw();
+                // on a curve: a new node there (the curve keeps its shape), which follows the pointer
+                const on = first(['seg']);
+                if (!on) { if (this.sel) { this.sel = null; this.invalidate(); } return; }
+                c.setPointerCapture(e.pointerId);
+                const nodes = FD().bezEnsure(m.spec, m.pf)[on.key];
+                const a = nodes[on.seg], z = nodes[on.seg + 1], u = on.u;
+                const P = [[a.t, a.z], [a.t + a.hr[0], a.z + a.hr[1]], [z.t + z.hl[0], z.z + z.hl[1]], [z.t, z.z]];
+                const mid = (A, B) => [A[0] + (B[0] - A[0]) * u, A[1] + (B[1] - A[1]) * u];
+                const Q = [mid(P[0], P[1]), mid(P[1], P[2]), mid(P[2], P[3])], R = [mid(Q[0], Q[1]), mid(Q[1], Q[2])], S = mid(R[0], R[1]);
+                const node = { t: Math.round(S[0] * 1e4) / 1e4, z: r1(S[1]), hl: [R[0][0] - S[0], R[0][1] - S[1]], hr: [R[1][0] - S[0], R[1][1] - S[1]] };
+                a.hr = [Q[0][0] - P[0][0], Q[0][1] - P[0][1]];
+                z.hl = [Q[2][0] - P[3][0], Q[2][1] - P[3][1]];
+                nodes.splice(on.seg + 1, 0, node);
+                this.sel = { id: m.spec.id, key: on.key, i: on.seg + 1 };
+                this.drag = { kind: 'bez', what: 'node', key: on.key, i: on.seg + 1, pn: on.pn, moved: true };
+                change(true);
+            });
+            c.addEventListener('pointermove', e => {
+                if (this.sectionMove(c, e)) return;
+                const dr = this.drag, m = this.topMap;
+                if (!dr || dr.kind !== 'bez' || !m) return;
+                const nodes = m.spec.bez[dr.key], n = nodes[dr.i], q = toPlan(pos(e), dr.pn, m);
+                if (dr.what === 'node') {
+                    n.z = Math.max(0, r1(q.dz));
+                    const last = nodes.length - 1, tip = dr.key !== 'crest' && m.pf.underNearPlan.length > 0 && (dr.i === 0 || dr.i === last);
+                    if (dr.i > 0 && dr.i < last) n.t = Math.round(Math.min(nodes[dr.i + 1].t - 0.03, Math.max(nodes[dr.i - 1].t + 0.03, q.t)) * 1e4) / 1e4;
+                    // (the tips of a closed hole move along the length, and its two edges meet there)
+                    else if (tip) {
+                        n.t = Math.round((dr.i === 0 ? Math.min(nodes[1].t - 0.03, Math.max(0, q.t)) : Math.max(nodes[last - 1].t + 0.03, Math.min(1, q.t))) * 1e4) / 1e4;
+                        const pair = m.spec.bez[{ up: 'nup', nup: 'up', low: 'nlow', nlow: 'low' }[dr.key]], o = pair[dr.i === 0 ? 0 : pair.length - 1];
+                        o.t = n.t; o.z = n.z;
+                        fit(pair, dr.i === 0 ? 0 : pair.length - 1);
+                    }
+                    fit(nodes, dr.i - 1 >= 0 ? dr.i - 1 : 0); fit(nodes, dr.i); if (dr.i + 1 < nodes.length) fit(nodes, dr.i + 1);
+                } else {
+                    const side = dr.what, other = side === 'hr' ? 'hl' : 'hr', sg = side === 'hr' ? 1 : -1;
+                    const dt = Math.max(0, sg * (q.t - n.t)) * sg, dz = r1(q.dz - n.z);
+                    const len2 = Math.hypot(n[other][0], n[other][1]), len1 = Math.hypot(dt, dz);
+                    n[side] = [dt, dz];
+                    // (aligned: the other handle goes the opposite way, as long as it was)
+                    if (len1 > 1e-6 && len2 > 1e-6) n[other] = [-dt / len1 * len2, -dz / len1 * len2];
+                    fit(nodes, dr.i);
+                }
+                dr.moved = true;
+                change(true);
             });
             const end = () => {
-                if (this.drag && this.drag.kind === 'section') {
+                if (this.sectionEnd()) return;
+                if (this.drag && this.drag.kind === 'bez') {
                     const moved = this.drag.moved;
                     this.drag = null;
-                    this.finishEdit(moved);
-                    return;
-                }
-                if (this.drag && this.drag.kind === 'crest') {
-                    if (this.drag.moved) { this.pc.recomputeShading(); this.pc.redraw(); this.pc.pushHistory(); this.pc.updateUI(); }
-                    this.drag = null;
+                    if (moved) done();
                 }
             };
             c.addEventListener('pointerup', end);
             c.addEventListener('pointercancel', end);
+
+            // the slider moves the whole handle out of the wall or into it: the crest and the lume together (what stands on the wall stays)
+            const shift = document.getElementById('prospect-plan-shift');
+            if (shift) {
+                let last = 0;
+                shift.addEventListener('input', () => {
+                    const m = this.topMap;
+                    if (!m) return;
+                    const v = parseFloat(shift.value), delta = v - last;
+                    last = v;
+                    const bz = FD().bezEnsure(m.spec, m.pf);
+                    for (const key of Object.keys(bz)) for (const n of bz[key]) if (n.z > 0.05) n.z = Math.max(0.1, r1(n.z + delta));
+                    change(true);
+                });
+                shift.addEventListener('change', () => { last = 0; shift.value = 0; done(); });
+            }
         }
     }
 
