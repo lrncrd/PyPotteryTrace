@@ -232,6 +232,19 @@
         return out;
     }
 
+    // Closed outline around a polyline, w[i] wide at point i: a stroke of varying weight, to be filled
+    function ribbon(pts, w) {
+        const left = [], right = [], n = pts.length;
+        for (let i = 0; i < n; i++) {
+            const a = pts[Math.max(0, i - 1)], c = pts[Math.min(n - 1, i + 1)];
+            const l = Math.hypot(c.x - a.x, c.y - a.y) || 1, h = w[i] / 2;
+            const nx = -(c.y - a.y) / l * h, ny = (c.x - a.x) / l * h;
+            left.push({ x: pts[i].x + nx, y: pts[i].y + ny });
+            right.push({ x: pts[i].x - nx, y: pts[i].y - ny });
+        }
+        return left.concat(right.reverse());
+    }
+
     // Split a polyline into the runs that fall inside the polygon (sampled every `step` px)
     function clipPolylineToPolygon(pts, poly, step = 1) {
         const dense = resample(pts, step);
@@ -621,7 +634,7 @@
 
     window.ProspectGeometry = {
         isProspectArt, flattenPathD, polygonArea, bbox, pointInPolygon, distToSegment, distToPolyline,
-        horizontalSpans, verticalSpans, polylineLength, resample, pointsAlong, mulberry32, pathSampler, offsetPolyline, clipPolylineToPolygon,
+        horizontalSpans, verticalSpans, polylineLength, resample, pointsAlong, mulberry32, pathSampler, offsetPolyline, ribbon, clipPolylineToPolygon,
         simplify, smoothPolyline, radiusByRow, distanceTransform, edgeLine, readScene
     };
 })();

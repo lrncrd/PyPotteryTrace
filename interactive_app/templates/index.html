@@ -981,12 +981,17 @@
 
                     <div class="prospect-dock" id="prospect-dock" style="display: none;">
                         <div class="prospect-dock-view">
-                            <div class="prospect-dock-title">Side</div>
+                            <div class="prospect-dock-title">Side
+                                <button id="prospect-side-reset" class="toolbar-btn" title="Back to the side view as drawn" style="margin-left: auto;"><i class="bi bi-arrow-counterclockwise"></i></button>
+                            </div>
                             <canvas id="prospect-view-side"></canvas>
                         </div>
                         <div class="prospect-dock-view">
                             <div class="prospect-dock-title">From above
                                 <input type="range" id="prospect-view-slice" min="0" max="100" value="50" title="Height of the section (vertical handles)" style="width: 90px; margin-left: auto;">
+                                <button id="prospect-sec-sym" class="toolbar-btn" title="The two shoulders of the section move together"><i class="bi bi-symmetry-vertical"></i></button>
+                                <button id="prospect-sec-clear" class="toolbar-btn" title="Remove the section edited at this height"><i class="bi bi-eraser"></i></button>
+                                <button id="prospect-sec-reset" class="toolbar-btn" title="One section for the whole handle again (Edge rounding)"><i class="bi bi-arrow-counterclockwise"></i></button>
                             </div>
                             <canvas id="prospect-view-top"></canvas>
                         </div>

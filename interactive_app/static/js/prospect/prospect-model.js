@@ -150,11 +150,12 @@
             art.appendChild(g);
         }
 
-        // Side lines of the handles in front view
+        // Side lines of the handles in front view: strokes of varying weight, as filled outlines
         if (rendered.frontEdges && rendered.frontEdges.length) {
-            const g = el(doc, 'g', { class: 'handle-front', id: `${safeId}_handle_front`, fill: 'none', stroke: '#000000', 'stroke-width': '1', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+            const g = el(doc, 'g', { class: 'handle-front', id: `${safeId}_handle_front`, fill: '#000000', stroke: 'none' });
             for (const pl of rendered.frontEdges) {
-                g.appendChild(el(doc, 'path', { d: pl.map((p, i) => `${i ? 'L' : 'M'} ${fmt(p.x)} ${fmt(p.y)}`).join(' ') }));
+                const pts = window.ProspectGeometry.ribbon(pl, pl.w);
+                g.appendChild(el(doc, 'path', { d: pts.map((p, i) => `${i ? 'L' : 'M'} ${fmt(p.x)} ${fmt(p.y)}`).join(' ') + ' Z' }));
             }
             art.appendChild(g);
         }

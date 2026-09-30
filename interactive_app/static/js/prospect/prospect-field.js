@@ -53,12 +53,13 @@
         return k * (1 - t * t * (3 - 2 * t));
     }
 
-    // How far the side of a section recedes at depth t below a face, for corners of radius R
-    function recess(t, R) {
-        if (t >= R) return 0;
-        if (t <= 0) return R;
-        const u = R - t;
-        return R - Math.sqrt(Math.max(1e-6, R * R - u * u));
+    // How far the side of a section recedes at depth t below a face, for elliptic corners Ru across
+    // and Rt deep (Ru = Rt: a circle; Ru = the half width: the whole face is curved, a pillow)
+    function recess(t, Ru, Rt) {
+        if (t >= Rt) return 0;
+        if (t <= 0) return Ru;
+        const u = (Rt - t) / Rt;
+        return Ru * (1 - Math.sqrt(Math.max(1e-6, 1 - u * u)));
     }
 
     // Intersection of two fields with the corner rounded by R
@@ -336,6 +337,145 @@
         return grid;
     }
 
+    // ------------------------------------------------------------------
+    // Section of a vertical handle (edited from above)
+    // ------------------------------------------------------------------
+    //
+    // The outer face of the section across the strap: s from -1 (left edge of the front outline) to 1
+    // (right edge), f the depth below the outer face of the side view, in units of the rounding depth
+    // (half the thickness). Two shoulders (sl, fl) and (sr, fr) where the rounded corners begin (quarter
+    // ellipses down to the edges) and, between them, points [{ s, f }] the face runs through smoothly (a
+    // saddle, a groove). spec.sections [{ t, sl, sr, fl, fr, pts }] gives it at some heights t (0 = top
+    // of the handle, 1 = bottom), blended in between; without them one section follows `roundness`.
+    const SECTION_SAMPLES = 33;
+
+    function defaultSection(spec) {
+        const r = clamp('roundness' in spec ? spec.roundness : 1, 0.02, 1);
+        return { t: 0, sl: -(1 - r), sr: 1 - r, fl: 0, fr: 0, pts: [] };
+    }
+
+    // The face between the shoulders on SECTION_SAMPLES samples: a monotone cubic through the shoulders
+    // and the points, flat at the shoulders (where the corners start flat)
+    function sectionMid(sec) {
+        const out = new Float32Array(SECTION_SAMPLES);
+        if (sec.sr - sec.sl < 1e-4) return out.fill(sec.fl);
+        const xs = [sec.sl], ys = [sec.fl];
+        for (const p of (sec.pts || []).slice().sort((a, b) => a.s - b.s)) {
+            if (p.s > xs[xs.length - 1] + 1e-3 && p.s < sec.sr - 1e-3) { xs.push(p.s); ys.push(p.f); }
+        }
+        xs.push(sec.sr); ys.push(sec.fr);
+        const n = xs.length, d = [], m = new Float64Array(n);
+        for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]));
+        for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : 2 / (1 / d[i - 1] + 1 / d[i]);
+        for (let k = 0, i = 0; k < SECTION_SAMPLES; k++) {
+            const x = sec.sl + (sec.sr - sec.sl) * k / (SECTION_SAMPLES - 1);
+            while (i < n - 2 && x > xs[i + 1]) i++;
+            const h = xs[i + 1] - xs[i], u = clamp((x - xs[i]) / h, 0, 1), u2 = u * u, u3 = u2 * u;
+            out[k] = (2 * u3 - 3 * u2 + 1) * ys[i] + (u3 - 2 * u2 + u) * h * m[i] + (3 * u2 - 2 * u3) * ys[i + 1] + (u3 - u2) * h * m[i + 1];
+        }
+        return out;
+    }
+
+    // The sections of a handle as a function of the height t, each { sl, sr, fl, fr, mid }
+    function sectionTrack(spec) {
+        const keys = (spec.sections && spec.sections.length ? spec.sections : [defaultSection(spec)])
+            .slice().sort((a, b) => a.t - b.t)
+            .map(k => ({ t: k.t, sl: k.sl, sr: k.sr, fl: k.fl, fr: k.fr, mid: sectionMid(k) }));
+        return t => {
+            if (t <= keys[0].t) return keys[0];
+            const last = keys[keys.length - 1];
+            if (t >= last.t) return last;
+            let i = 0;
+            while (t > keys[i + 1].t) i++;
+            const a = keys[i], b = keys[i + 1], w = smoothstep((t - a.t) / Math.max(1e-6, b.t - a.t));
+            const mix = (p, q) => p * (1 - w) + q * w;
+            return {
+                t, sl: mix(a.sl, b.sl), sr: mix(a.sr, b.sr), fl: mix(a.fl, b.fl), fr: mix(a.fr, b.fr),
+                mid: a.mid.map((v, k) => mix(v, b.mid[k]))
+            };
+        };
+    }
+
+    // Depth (units of the rounding depth) of the face at s; the corners end at the edges at depth ce
+    function faceDepth(sec, s, ceL, ceR) {
+        if (s <= sec.sl) {
+            const e = Math.max(ceL, sec.fl), q = sec.sl > -1 ? Math.min(1, (sec.sl - s) / (1 + sec.sl)) : 1;
+            return sec.fl + (e - sec.fl) * (1 - Math.sqrt(1 - q * q));
+        }
+        if (s >= sec.sr) {
+            const e = Math.max(ceR, sec.fr), q = sec.sr < 1 ? Math.min(1, (s - sec.sr) / (1 - sec.sr)) : 1;
+            return sec.fr + (e - sec.fr) * (1 - Math.sqrt(1 - q * q));
+        }
+        const x = (s - sec.sl) / (sec.sr - sec.sl) * (SECTION_SAMPLES - 1);
+        const i = Math.min(SECTION_SAMPLES - 2, Math.floor(x)), u = x - i;
+        return sec.mid[i] * (1 - u) + sec.mid[i + 1] * u;
+    }
+
+    // ------------------------------------------------------------------
+    // Side view of a vertical handle
+    // ------------------------------------------------------------------
+
+    // The side view the 3D uses: the drawn one with its ends moved (spec.sideEdit { dy0, dy1 }: the
+    // figure is stretched between them and kept on the wall), or, when the drawing has none, one made
+    // up from spec.side
+    function sidePart(spec, part, scene) {
+        if (spec.side) return madeSide(spec, scene);
+        const e = spec.sideEdit;
+        if (!part || !e || (!e.dy0 && !e.dy1)) return part;
+        const ax = scene.axisX, rad = scene.radius.radius, H = rad.length;
+        const rw = y => rad[clamp(Math.round(y), 0, H - 1)];
+        const all = part.rings.flat();
+        const Y0 = Math.min(...all.map(p => p.y)), Y1 = Math.max(...all.map(p => p.y));
+        const N0 = Y0 + (e.dy0 || 0), N1 = Math.max(N0 + 10, Y1 + (e.dy1 || 0));
+        const k = (N1 - N0) / Math.max(1, Y1 - Y0);
+        const sgn = all.reduce((a, p) => a + p.x, 0) / all.length < ax ? -1 : 1;
+        // (the distance out of the wall is kept: the arms stay on it)
+        const move = p => {
+            const y = N0 + (p.y - Y0) * k;
+            return { x: ax + sgn * (rw(y) + sgn * (p.x - ax) - rw(p.y)), y };
+        };
+        const rings = part.rings.map(r => {
+            const q = r.map(move);
+            if (r.edgeEnd) q.edgeEnd = r.edgeEnd;
+            if (r.open) q.open = r.open;
+            return q;
+        });
+        return Object.assign({}, part, { rings, outline: rings[0], bbox: G().bbox(rings[0]) });
+    }
+
+    // A side view made up for a handle the drawing has no side view of (spec.side { y0, y1, reach,
+    // apex, thick }): a loop from the wall at y0 to the wall at y1, whose middle line goes `reach` px out
+    // of the wall, farthest at `apex` (0 = level with the top end, 1 = with the bottom one), a strap
+    // `thick` px thick (or `thickness`). Right of the axis, closed along the wall like a drawn one.
+    function madeSide(spec, scene) {
+        const sd = spec.side, ax = scene.axisX, rad = scene.radius.radius, H = rad.length;
+        const rw = y => rad[clamp(Math.round(y), 0, H - 1)];
+        const y0 = Math.min(sd.y0, sd.y1 - 10), y1 = Math.max(sd.y1, sd.y0 + 10), span = y1 - y0;
+        const reach = Math.max(6, sd.reach);
+        const th = clamp(spec.thickness > 0 ? spec.thickness : sd.thick, 2, Math.min(0.8 * reach, 0.45 * span));
+        const lift = (clamp('apex' in sd ? sd.apex : 0.5, 0, 1) - 0.5) * span, c = 4 / 3 * reach;
+        const P = [[0, y0], [c, y0 + lift], [c, y1 + lift], [0, y1]];
+        const mid = [];
+        for (let i = 0; i <= 64; i++) {
+            const t = i / 64, w = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t ** 3];
+            mid.push({ x: w.reduce((a, v, j) => a + v * P[j][0], 0), y: w.reduce((a, v, j) => a + v * P[j][1], 0) });
+        }
+        // (x out of the wall, y down: the normal of the offset points into the loop)
+        const toDrawing = p => ({ x: ax + rw(p.y) + p.x, y: p.y });
+        const alongWall = (ya, yb) => {
+            const pts = [], dir = yb > ya ? 1 : -1;
+            for (let y = ya + 2 * dir; dir > 0 ? y < yb : y > yb; y += 2 * dir) pts.push({ x: ax + rw(y), y });
+            return pts;
+        };
+        const outer = G().offsetPolyline(mid, -th / 2), inner = G().offsetPolyline(mid, th / 2);
+        const ring = outer.map(toDrawing);
+        ring.edgeEnd = ring.length;
+        ring.push(...alongWall(outer[outer.length - 1].y, outer[0].y));
+        ring.open = true;
+        const hole = inner.map(toDrawing).concat(alongWall(inner[inner.length - 1].y, inner[0].y));
+        return { id: `side_${spec.id}`, name: 'side view made up', rings: [ring, hole], outline: ring, bbox: G().bbox(ring), madeUp: true };
+    }
+
     // Vertical handle: front polygon x side view
     function verticalField(spec, part, scene, poly, bb) {
         const ax = scene.axisX, wall = scene.radius, H = wall.radius.length;
@@ -343,7 +483,6 @@
         if (!rho) return null;
         const holes = part.rings.slice(1).map(r => G().edgeLine(r));
         const inner = holes.length ? G().radiusByRow(holes, ax, H, false) : null;
-        const beta = spec.roundness;
         const yTop = Math.max(rho.y0, Math.ceil(bb.y0)), yBot = Math.min(rho.y1, Math.floor(bb.y1));
         if (yBot <= yTop) return null;
         // the azimuth of the handle, from the middle of its polygon at mid height
@@ -354,7 +493,11 @@
         const sinT = clamp(((spMid[0][0] + spMid[spMid.length - 1][1]) / 2 - ax) / pMid, -MAX_SIN, MAX_SIN);
         const cosT = Math.sqrt(1 - sinT * sinT);
         // rounding radius of the section on every row
-        const Rrow = new Float32Array(H).fill(0.05), hwRow = new Float32Array(H);
+        const Rrow = new Float32Array(H).fill(0.05), RtRow = new Float32Array(H).fill(0.05), hwRow = new Float32Array(H);
+        // the frame of the section on every row: middle and half width of the front outline (x of the
+        // drawing), the section there and the depth its corners end at
+        const cxRow = new Float32Array(H), hwxRow = new Float32Array(H).fill(1), ceL = new Float32Array(H), ceR = new Float32Array(H);
+        const secRow = new Array(H).fill(null);
         let sumW = 0, n = 0, maxHw = 0, rhoMax = 0;
         const strap = [], all = [];
         for (let y = yTop; y <= yBot; y++) {
@@ -365,6 +508,8 @@
             const xl = spans[0][0], xr = spans[spans.length - 1][1];
             if (xr - xl < 1) continue;
             const hw = (xr - xl) / (2 * cosT);
+            cxRow[y] = (xl + xr) / 2;
+            hwxRow[y] = (xr - xl) / 2;
             const hole = inner && inner.radius[y] > 0.5 ? inner.radius[y] : wall.radius[y];
             const b = spec.thickness > 0 ? spec.thickness : Math.max(3, p - hole);
             hwRow[y] = hw;
@@ -376,9 +521,38 @@
         }
         if (!n) return null;
         // The rounding of the section follows the width of the polygon and one thickness for the whole
-        // handle (with the local thickness the flat face would narrow where the strap is thick)
+        // handle (with the local thickness the flat face would narrow where the strap is thick). Its depth
+        // is half the thickness; across, the corners reach from the shoulders of the section to the edges
+        // (elliptic: a wide strap is curved across and its tone turns gradually, as on a cylinder). A
+        // corner narrower than it is deep ends higher up the side, as a round one would.
         const thickRef = spec.thickness > 0 ? spec.thickness : all.slice().sort((p, q) => p - q)[Math.floor(all.length / 2)];
-        for (let y = yTop; y <= yBot; y++) if (hwRow[y] > 0) Rrow[y] = Math.max(0.05, Math.min(beta * hwRow[y], hwRow[y], thickRef / 2));
+        const track = sectionTrack(spec);
+        for (let y = yTop; y <= yBot; y++) {
+            if (!(hwRow[y] > 0)) continue;
+            const sec = track((y - yTop) / Math.max(1, yBot - yTop));
+            secRow[y] = sec;
+            RtRow[y] = Math.max(0.05, thickRef / 2);
+            ceL[y] = Math.min(1, (1 + sec.sl) * hwRow[y] / RtRow[y]);
+            ceR[y] = Math.min(1, (1 - sec.sr) * hwRow[y] / RtRow[y]);
+            // the inner corners (towards the wall) as round as the outer ones
+            Rrow[y] = Math.max(0.05, Math.min(1, 1 - (sec.sr - sec.sl) / 2) * hwRow[y]);
+        }
+        // Rows without a width (above and below the polygon, gaps) take the rounding of the nearest row:
+        // unrounded, the blurred edge of the side view would leave a thin skin there, whose underside
+        // draws a dark line across the top of the handle
+        const near = new Int32Array(H).fill(-1);
+        for (let y = 0, last = -1; y < H; y++) { if (hwRow[y] > 0) last = y; near[y] = last; }
+        for (let y = H - 1, last = -1; y >= 0; y--) {
+            if (hwRow[y] > 0) last = y;
+            if (last >= 0 && (near[y] < 0 || last - y < y - near[y])) near[y] = last;
+        }
+        for (let y = 0; y < H; y++) {
+            const q = near[y];
+            if (hwRow[y] > 0 || q < 0) continue;
+            Rrow[y] = Rrow[q]; RtRow[y] = RtRow[q]; cxRow[y] = cxRow[q]; hwxRow[y] = hwxRow[q];
+            ceL[y] = ceL[q]; ceR[y] = ceR[q]; secRow[y] = secRow[q];
+        }
+        const face = (i, x) => secRow[i] ? faceDepth(secRow[i], (x - cxRow[i]) / hwxRow[i], ceL[i], ceR[i]) : 0;
         const P = polygonGrid(poly, bb);
         const side = sideGrid(part, wall, ax, y => inner && inner.radius[clamp(Math.round(y), 0, H - 1)] > 0.5);
         const meanW = sumW / n;
@@ -389,7 +563,10 @@
         let stats = `side view: strap ${Math.round(median(strap.length ? strap : all))} px thick`;
         if (holes.length) { const hb = G().bbox(holes.flat()); stats += `, lume ${Math.round(hb.w)} x ${Math.round(hb.h)} px`; }
         return {
-            axis: 'y', spec, bb, theta: Math.asin(sinT), meanW, yTop, yBot, xmin: bb.x0, xmax: bb.x1, stats,
+            axis: 'y', spec, part, bb, theta: Math.asin(sinT), meanW, yTop, yBot, xmin: bb.x0, xmax: bb.x1, stats,
+            // for the editing of the section: its frame on a row, the outer face of the side view there
+            frame: y => { const i = clamp(Math.round(y - 0.5), 0, H - 1); return { cx: cxRow[i], hw: hwxRow[i], depth: RtRow[i] }; },
+            outerRho: y => side.rows.at(side.rows.hi, y),
             zTop: rhoMax + maxHw + 2, rhoMax, halfU: maxHw,
             k: kFull, thick: median(strap.length ? strap : all),
             kAt: (x, y) => taper(kFull, P.grid.at(x, y)),
@@ -403,14 +580,20 @@
                 const f = clamp(y - 0.5, 0, H - 1), i = Math.floor(f), t = f - i, i1 = Math.min(H - 1, i + 1);
                 let b = side.at(rp, y);
                 if (spec.thickness > 0) b = Math.max(b, rho.radius[i] * (1 - t) + rho.radius[i1] * t - spec.thickness - rp);
-                // The corners of the section are rounded in the radial direction only: with the
-                // distance to the whole side figure the strap would narrow towards the tip of an arm
-                const R = Rrow[i] * (1 - t) + Rrow[i1] * t;
+                // The section is shaped in the radial direction only: with the distance to the whole
+                // side figure the strap would narrow towards the tip of an arm
+                const Ru = Rrow[i] * (1 - t) + Rrow[i1] * t, Rt = RtRow[i] * (1 - t) + RtRow[i1] * t;
                 // depth below the outer face along rho': the distance to the contour (consistent with b)
                 // over the cosine of its slope; near the tip of an arm the depth is large, no rounding
-                const sl = side.rows.at(side.rows.slope, y);
-                const tOut = Math.max(0, -b) * Math.sqrt(1 + sl * sl), tIn = side.inner.at(rp, y);
-                return Math.max(b, P.grid.at(x, y) + Math.max(recess(tOut, R), recess(tIn, R)));
+                const sk = side.rows.at(side.rows.slope, y);
+                const tOut = Math.max(0, -b) * Math.sqrt(1 + sk * sk), tIn = side.inner.at(rp, y);
+                // no deeper than half the strap there: deeper, the two rounded faces would meet short of
+                // the traced outline (where the side view is thinner, or slanted)
+                const Rd = Math.max(0.05, Math.min(Rt, 0.5 * (tOut + Math.max(0, tIn))));
+                // the outer face: the section across the strap (a height field below the side view's face;
+                // steeper than a distance at the edges: the ray-march bounds its steps and refines the hit)
+                const fOut = Rd * (face(i, x) * (1 - t) + face(i1, x) * t) - tOut;
+                return Math.max(b, fOut, P.grid.at(x, y) + recess(tIn, Ru, Rd));
             }
         };
     }
@@ -469,7 +652,9 @@
         if (poly.length < 3 || !scene.radius || scene.axisX === null) return null;
         const bb = G().bbox(poly);
         vessel = vessel || vesselField(scene);
-        return spec.axis === 'x' ? horizontalField(spec, scene, poly, bb, vessel) : (part ? verticalField(spec, part, scene, poly, bb) : null);
+        if (spec.axis === 'x') return horizontalField(spec, scene, poly, bb, vessel);
+        const side = sidePart(spec, part, scene);
+        return side ? verticalField(spec, side, scene, poly, bb) : null;
     }
 
     // Union of the vessel and some parts
@@ -628,6 +813,7 @@
     }
 
     window.ProspectField = {
-        smin, share, vesselField, wallZ, planAt, defaultPlan, outerProfile, partField, unionOf, normalAt, quadMesh, BLEND_SCALE
+        smin, share, vesselField, wallZ, planAt, defaultPlan, outerProfile, partField, unionOf, normalAt, quadMesh, BLEND_SCALE,
+        sidePart, sectionTrack, faceDepth, defaultSection
     };
 })();

@@ -255,6 +255,12 @@
             // (an open ring, e.g. a handle joining the vessel wall, has no edge along its closing line)
             for (const r of rings) {
                 ctx.beginPath();
+                if (r.w) {
+                    // a contour of varying weight (a handle): its own width plus the dot radius on each side
+                    G().ribbon(r, r.w.map(v => v + 2.6 * dotR)).forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+                    ctx.fill();
+                    continue;
+                }
                 G().edgeLine(r).forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
                 if (!r.open) ctx.closePath();
                 ctx.stroke();
