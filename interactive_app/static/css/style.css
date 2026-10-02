@@ -801,6 +801,20 @@ body {
     box-shadow: 0 1px 3px rgba(194, 65, 12, 0.08);
 }
 
+/* Lume (opening of a handle) */
+.lume-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.lume-buttons .btn.active {
+    background: var(--primary-soft);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
 .mode-btn.disabled-by-edit {
     opacity: 0.45 !important;
     cursor: not-allowed !important;

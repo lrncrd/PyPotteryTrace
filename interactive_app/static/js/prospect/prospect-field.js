@@ -575,13 +575,14 @@
         const inner = holes.length ? G().radiusByRow(holes, ax, H, false) : null;
         const yTop = Math.max(rho.y0, Math.ceil(bb.y0)), yBot = Math.min(rho.y1, Math.floor(bb.y1));
         if (yBot <= yTop) return null;
-        // the azimuth of the handle, from the middle of its polygon at mid height
-        const yMid = Math.min(yBot, Math.max(yTop, Math.round((yTop + yBot) / 2)));
-        const spMid = G().horizontalSpans(yMid + 0.5, poly);
-        if (!spMid.length) return null;
-        const pMid = rho.radius[yMid] > 0.5 ? rho.radius[yMid] : wall.radius[yMid];
-        const sinT = clamp(((spMid[0][0] + spMid[spMid.length - 1][1]) / 2 - ax) / pMid, -MAX_SIN, MAX_SIN);
-        const cosT = Math.sqrt(1 - sinT * sinT);
+        // The view is orthographic: wherever the handle stands across the vessel it is the same handle, straight
+        // towards the viewer, only slid sideways (it is not turned to look away from the axis). Its side view gives
+        // how far it stands out of the wall: in the field a point (x, y, z) is at rp = z from the axis, as if the
+        // handle stood in the middle of the vessel. `uc` is where it really is across (from the axis); the wall
+        // there is `Rw - s0` deep, so in the world (the front view, the real wall) the handle is moved back by
+        // s0 to stand on it; `local` is the handle with the vessel slid across to put its axis through it, which
+        // is how the views of the dock show it (the same as the centred one).
+        const uc = (bb.x0 + bb.x1) / 2 - ax;
         // rounding radius of the section on every row
         const Rrow = new Float32Array(H).fill(0.05), RtRow = new Float32Array(H).fill(0.05), hwRow = new Float32Array(H);
         // the frame of the section on every row: middle and half width of the front outline (x of the
@@ -597,7 +598,7 @@
             if (!spans.length) continue;
             const xl = spans[0][0], xr = spans[spans.length - 1][1];
             if (xr - xl < 1) continue;
-            const hw = (xr - xl) / (2 * cosT);
+            const hw = (xr - xl) / 2;
             cxRow[y] = (xl + xr) / 2;
             hwxRow[y] = (xr - xl) / 2;
             const hole = inner && inner.radius[y] > 0.5 ? inner.radius[y] : wall.radius[y];
@@ -655,7 +656,8 @@
         let stats = `side view: strap ${Math.round(median(strap.length ? strap : all))} px thick`;
         if (holes.length) { const hb = G().bbox(holes.flat()); stats += `, lume ${Math.round(hb.w)} x ${Math.round(hb.h)} px`; }
         return {
-            axis: 'y', spec, part, bb, theta: Math.asin(sinT), meanW, yTop, yBot, xmin: bb.x0, xmax: bb.x1, stats,
+            // (theta 0: the frame of the views is the drawing's; uc: where the handle is across, from the axis)
+            axis: 'y', spec, part, bb, theta: 0, uc, meanW, yTop, yBot, xmin: bb.x0, xmax: bb.x1, stats,
             // for the editing of the section: its frame on a row, the outer face of the side view there
             frame: y => { const i = clamp(Math.round(y - 0.5), 0, H - 1); return { cx: cxRow[i], hw: hwxRow[i], depth: RtRow[i] }; },
             outerRho: y => side.rows.at(side.rows.hi, y),
@@ -664,9 +666,13 @@
             kAt: (x, y) => taper(kRow[clamp(Math.round(y - 0.5), 0, H - 1)], P.grid.at(x, y)),
             inside: P.isInside,
             sdXY: (x, y) => P.grid.at(x, y),
-            sd(x, y, z) {
-                const rp = (x - ax) * sinT + z * cosT;
+            sd(x, y, z, local = false) {
                 const f = clamp(y - 0.5, 0, H - 1), i = Math.floor(f), t = f - i, i1 = Math.min(H - 1, i + 1);
+                let rp = z;
+                if (!local) {
+                    const Rw = wall.radius[i] * (1 - t) + wall.radius[i1] * t;
+                    rp += Rw - Math.sqrt(Math.max(0, Rw * Rw - uc * uc));
+                }
                 let b = side.at(rp, y);
                 if (spec.thickness > 0) b = Math.max(b, rho.radius[i] * (1 - t) + rho.radius[i1] * t - spec.thickness - rp);
                 // The section is shaped in the radial direction only: with the distance to the whole
@@ -683,7 +689,9 @@
                 // steeper than a distance at the edges: the ray-march bounds its steps and refines the hit)
                 const fOut = Rd * (face(i, x) * (1 - t) + face(i1, x) * t) - tOut;
                 return Math.max(b, fOut, P.grid.at(x, y) + recess(tIn, Ru, Rd));
-            }
+            },
+            // (the handle on the vessel slid across: see above)
+            sdLocal(x, y, z) { return this.sd(x, y, z, true); }
         };
     }
 

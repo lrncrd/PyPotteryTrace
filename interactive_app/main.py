@@ -667,13 +667,14 @@ def generate_svg_preview():
                 height=height,
                 epsilon=epsilon,
                 smoothing_factor=smoothing,
-                debug_svg_dir=str(svg_debug_dir)
+                debug_svg_dir=str(svg_debug_dir),
+                holes=segment_lume(segment)
             )
-            
+
             # Add reference to the SVG file path for unified export
             safe_name = segment['name'].replace(' ', '_').replace('/', '_')
             element_vectors['svg_file'] = str(svg_debug_dir / f"{segment['category']}_{safe_name}.svg")
-            
+
             # Handle Profile category with rotation center (same logic as for SAM masks)
             if segment['category'] == 'Profile' and session.get('rotation_center'):
                 center_x = session['rotation_center']['x']
@@ -857,7 +858,8 @@ def generate_svg_preview():
                         smoothing_factor=smoothing,
                         lines_threshold=lines_threshold,
                         debug_svg_dir=str(svg_debug_dir),  # Save intermediate SVG for debugging
-                        mask_path=mask_info.get('mask_path')
+                        mask_path=mask_info.get('mask_path'),
+                        holes=segment_lume(segment)
                     )
                     
                     # Add reference to the SVG file path for unified export
@@ -1566,18 +1568,104 @@ def segment():
         
         # Convert mask to polygon for frontend display (NO improvement here!)
         contours = vectorization_handler.mask_to_contours(mask)
-        
+
         return jsonify({
             'success': True,
             'mask': mask.tolist(),  # For backend processing (original SAM2 mask)
             'contours': contours,  # For frontend display (original mask)
+            'holes': vectorization_handler.mask_holes(mask),  # Openings the mask leaves out (lume of a handle)
             'mask_id': len(sessions_data[session_id]['segments'])
         })
-        
+
     except ModelNotLoadedError:
         raise
     except Exception as e:
         return jsonify({'error': f'Segmentation failed: {str(e)}'}), 500
+
+
+def segment_lume(segment):
+    """Openings (lume) of a handle as set in the segmentation; None: look for them in the drawing."""
+    if segment.get('category') not in ('Handle', 'Application'):
+        return None
+    holes = segment.get('holes')
+    return holes if isinstance(holes, list) else None
+
+
+def outer_ring_mask(session, outer):
+    """Image and filled mask of the outline the person is working on (a ring of [x, y] vertices)."""
+    import cv2
+    img = cv2.imread(session['image_path'])
+    if img is None or not outer or len(outer) < 3:
+        return None, None
+    return img, vectorization_handler.polygon_to_mask(outer, img.shape[1], img.shape[0])
+
+
+@app.route('/api/detect_lume', methods=['POST'])
+def detect_lume():
+    """Find the opening (lume) of a handle inside its outline: holes of the mask, or paper closed all round by ink."""
+    data = request.json
+    session_id = data.get('session_id')
+
+    if session_id not in sessions_data:
+        return jsonify({'error': 'Session not found'}), 404
+
+    try:
+        img, mask = outer_ring_mask(sessions_data[session_id], data.get('outer'))
+        if img is None:
+            return jsonify({'error': 'No outline to look into'}), 400
+        return jsonify({'success': True, 'holes': vectorization_handler.detect_lume(img, mask)})
+    except Exception as e:
+        return jsonify({'error': f'Lume detection failed: {str(e)}'}), 500
+
+
+@app.route('/api/segment_lume', methods=['POST'])
+def segment_lume_from_point():
+    """Segment the opening (lume) of a handle from a click inside it, with SAM2, within the outline of the handle."""
+    import cv2
+    import numpy as np
+    from scipy import ndimage
+
+    data = request.json
+    session_id = data.get('session_id')
+
+    if session_id not in sessions_data:
+        return jsonify({'error': 'Session not found'}), 404
+
+    point = data.get('point')
+    try:
+        img, filled = outer_ring_mask(sessions_data[session_id], data.get('outer'))
+        if img is None or not point:
+            return jsonify({'error': 'Needs an outline and a point inside it'}), 400
+        inside = filled > 0
+        if not inside[int(point[1]), int(point[0])]:
+            return jsonify({'error': 'Click inside the outline of the handle'}), 400
+
+        # SAM2 proposes a part, a bigger part and the whole: the opening is the best one that stays inside the
+        # outline and is not the handle itself
+        masks, _ = require_sam2().segment_candidates([point], [1])
+        best = None
+        for m in masks:
+            m = m > 0
+            area = int((m & inside).sum())
+            if area >= 100 and area <= 0.6 * inside.sum() and (m & ~inside).sum() <= 0.25 * m.sum():
+                best = m & inside
+                break
+        if best is None:
+            return jsonify({'error': 'Could not tell the opening apart here: click closer to its middle, or add it by hand'}), 422
+
+        # Keep the piece under the click, without holes of its own
+        labels, _ = ndimage.label(best)
+        label = labels[int(point[1]), int(point[0])]
+        piece = ndimage.binary_fill_holes(labels == label if label else best)
+        contours, _ = cv2.findContours(piece.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            return jsonify({'error': 'Could not tell the opening apart here'}), 422
+        ring = vectorization_handler._simplify_ring(max(contours, key=cv2.contourArea)[:, 0, :])
+        return jsonify({'success': True, 'hole': ring})
+    except ModelNotLoadedError:
+        raise
+    except Exception as e:
+        return jsonify({'error': f'Lume segmentation failed: {str(e)}'}), 500
 
 
 @app.route('/api/add_segment', methods=['POST'])
@@ -1595,7 +1683,8 @@ def add_segment():
     name = data.get('name', f'Element {len(sessions_data[session_id]["segments"]) + 1}')
     should_vectorize = data.get('should_vectorize', True)  # Default to True for backward compatibility
     is_manual = data.get('is_manual', False)  # Manual masks don't use dilation
-    
+    holes = data.get('holes')  # Openings (lume) of a handle, rings of [x, y]; None: look for them in the drawing
+
     # Handle polygon/manual masks
     contours = None
     if isinstance(mask, dict) and mask.get('type') == 'polygon':
@@ -1614,6 +1703,7 @@ def add_segment():
         'name': name,
         'should_vectorize': should_vectorize,
         'is_manual': is_manual,  # Flag to skip dilation in vectorization
+        'holes': holes,
         'contours': contours,  # Store contours for polygon masks
         'created_at': datetime.now().isoformat()
     }
@@ -1661,6 +1751,7 @@ def sync_segments():
             'category': seg.get('category', 'Profile'),
             'mask': mask_data,  # Preserve mask data (including polygon vertices)
             'contours': seg.get('contours'),
+            'holes': seg.get('holes'),
             'should_vectorize': seg.get('should_vectorize', True),
             'is_manual': is_manual,  # Preserve manual mask flag
             'created_at': datetime.now().isoformat()
@@ -3094,6 +3185,7 @@ def save_project_annotations(project_id, image_name):
                     "name": segment.get('name', ''),
                     "should_vectorize": segment.get('should_vectorize', True),
                     "is_manual": segment.get('is_manual', False),
+                    "holes": segment.get('holes'),
                     "mask_type": segment.get('mask', {}).get('type') if isinstance(segment.get('mask'), dict) else None,
                     "mask_vertices": segment.get('mask', {}).get('vertices') if isinstance(segment.get('mask'), dict) and segment.get('mask', {}).get('type') == 'polygon' else None
                 }
@@ -3174,7 +3266,8 @@ def get_project_annotations(project_id, image_name):
                 'contours': contours,
                 'mask': mask_data,  # Include reconstructed mask data
                 'should_vectorize': attributes.get('should_vectorize', True),
-                'is_manual': is_manual  # Include manual flag
+                'is_manual': is_manual,  # Include manual flag
+                'holes': attributes.get('holes')
             })
         
         return jsonify({

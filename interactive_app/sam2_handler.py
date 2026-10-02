@@ -279,6 +279,32 @@ class SAM2Handler:
         
         return mask.astype(np.uint8)
     
+    def segment_candidates(
+        self,
+        points: List[Tuple[int, int]],
+        labels: List[int]
+    ) -> Tuple[List[np.ndarray], List[float]]:
+        """
+        All the masks SAM2 proposes for the point prompts (a part, a bigger part, the whole), best score first.
+
+        Args:
+            points: List of (x, y) coordinates
+            labels: List of labels (1 = positive, 0 = negative)
+
+        Returns:
+            (binary masks (H, W), their scores)
+        """
+        if self.current_image is None:
+            raise ValueError("No image set. Call set_image() first.")
+
+        masks, scores, _ = self.predictor.predict(
+            point_coords=np.array(points, dtype=np.float32),
+            point_labels=np.array(labels, dtype=np.int32),
+            multimask_output=True
+        )
+        order = np.argsort(-scores)
+        return [masks[i].astype(np.uint8) for i in order], [float(scores[i]) for i in order]
+
     def segment_with_box(
         self,
         box: Tuple[int, int, int, int],

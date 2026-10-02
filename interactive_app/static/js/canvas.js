@@ -229,7 +229,7 @@ class CanvasManager {
             console.log('Drawing saved masks:', this.savedMasks.length);
             this.savedMasks.forEach((maskData, idx) => {
                 console.log(`  Drawing mask ${idx}: ${maskData.name} (ID: ${maskData.segmentId})`);
-                this.drawContours(maskData.contours, maskData.color, maskData.fillColor);
+                this.drawContours(maskData.contours, maskData.color, maskData.fillColor, maskData.holes || []);
             });
         }
 
@@ -252,7 +252,9 @@ class CanvasManager {
 
         // Draw current segmentation preview if available
         if (window.segmentationManager && segmentationManager.previewContours) {
-            this.drawContours(segmentationManager.previewContours, '#00ff00', 'rgba(0, 255, 0, 0.2)');
+            // (while the lume is edited, the segmentation manager draws it)
+            const lume = segmentationManager.isEditingPolygon ? [] : segmentationManager.previewHoles;
+            this.drawContours(segmentationManager.previewContours, '#00ff00', 'rgba(0, 255, 0, 0.2)', lume);
         }
 
         // Draw polygon preview if in polygon mode
@@ -261,7 +263,8 @@ class CanvasManager {
         }
     }
 
-    drawContours(contours, strokeColor = '#00ff00', fillColor = 'rgba(0, 255, 0, 0.2)') {
+    // holes: the openings inside the contours (the lume of a handle), left out of the fill and drawn dashed
+    drawContours(contours, strokeColor = '#00ff00', fillColor = 'rgba(0, 255, 0, 0.2)', holes = []) {
         this.ctx.save();
         this.ctx.translate(this.offsetX, this.offsetY);
         this.ctx.scale(this.scale, this.scale);
@@ -270,26 +273,44 @@ class CanvasManager {
         this.ctx.lineWidth = 2 / this.scale;
         this.ctx.fillStyle = fillColor;
 
+        const tracePath = (ring, path = this.ctx) => {
+            path.moveTo(ring[0][0], ring[0][1]);
+            for (let i = 1; i < ring.length; i++) {
+                path.lineTo(ring[i][0], ring[i][1]);
+            }
+            path.closePath();
+        };
+        const rings = holes.filter(ring => ring.length >= 3);
+
         contours.forEach(contour => {
             if (contour.length < 2) return;
 
+            // A contour with the openings that lie inside it: even-odd, so that they stay empty
+            const fillPath = new Path2D();
+            tracePath(contour, fillPath);
+            rings.forEach(ring => tracePath(ring, fillPath));
+            this.ctx.fill(fillPath, 'evenodd');
+
             this.ctx.beginPath();
-            this.ctx.moveTo(contour[0][0], contour[0][1]);
-
-            for (let i = 1; i < contour.length; i++) {
-                this.ctx.lineTo(contour[i][0], contour[i][1]);
-            }
-
-            this.ctx.closePath();
-            this.ctx.fill();
+            tracePath(contour);
             this.ctx.stroke();
         });
+
+        if (rings.length > 0) {
+            this.ctx.strokeStyle = '#ea580c';
+            this.ctx.setLineDash([6 / this.scale, 4 / this.scale]);
+            rings.forEach(ring => {
+                this.ctx.beginPath();
+                tracePath(ring);
+                this.ctx.stroke();
+            });
+        }
 
         this.ctx.restore();
     }
 
     // Add a mask to the saved masks list (called when a segment is added)
-    addSavedMask(contours, category, name, segmentId) {
+    addSavedMask(contours, category, name, segmentId, holes = []) {
         // Generate a color based on category
         const categoryColors = {
             'Profile': { stroke: '#ff6b6b', fill: 'rgba(255, 107, 107, 0.15)' },
@@ -307,6 +328,7 @@ class CanvasManager {
             contours: contours,
             color: colors.stroke,
             fillColor: colors.fill,
+            holes: holes || [],
             category: category,
             name: name,
             segmentId: segmentId
@@ -509,6 +531,7 @@ class CanvasManager {
                     this.canvas.style.cursor = 'crosshair';
                     break;
                 case 'rotation':
+                case 'lume':
                     this.canvas.style.cursor = 'crosshair';
                     break;
                 default:

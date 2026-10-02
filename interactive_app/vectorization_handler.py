@@ -31,6 +31,7 @@ from archaeological_vectorizer import (
     calculate_path_length,
     vectorize_archaeological_drawing,
     vectorize_prospect_drawing,
+    extract_prospect_outline,
     merge_outline_with_profile
 )
 
@@ -168,7 +169,62 @@ class VectorizationHandler:
                 contour_list.append(points)
         
         return contour_list
-    
+
+    @staticmethod
+    def _simplify_ring(points: np.ndarray, tolerance: float = 0.006) -> List[List[int]]:
+        """Reduce a ring of (x, y) points to the few vertices a person can drag around."""
+        pts = np.asarray(points, dtype=np.int32).reshape(-1, 1, 2)
+        eps = max(1.0, tolerance * cv2.arcLength(pts, True))
+        approx = cv2.approxPolyDP(pts, eps, True).reshape(-1, 2)
+        return [[int(x), int(y)] for x, y in approx]
+
+    def mask_holes(self, mask: np.ndarray, min_area: int = 100) -> List[List[List[int]]]:
+        """
+        Holes of a binary mask (the lume of a handle, when the segmentation leaves it out).
+
+        Args:
+            mask: Binary mask (H, W)
+            min_area: Holes smaller than this (px) are noise, not openings
+
+        Returns:
+            List of rings, each a list of [x, y] vertices
+        """
+        mask_uint8 = (mask * 255).astype(np.uint8) if mask.dtype != np.uint8 else mask
+        contours, hierarchy = cv2.findContours(mask_uint8, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+        rings = []
+        for contour, (_, _, _, parent) in zip(contours, hierarchy[0] if hierarchy is not None else []):
+            if parent >= 0 and cv2.contourArea(contour) >= min_area:
+                rings.append(self._simplify_ring(contour[:, 0, :]))
+        return [r for r in rings if len(r) >= 3]
+
+    def detect_lume(self, image: np.ndarray, mask: np.ndarray, lines_threshold: int = 100) -> List[List[List[int]]]:
+        """
+        Find the opening of a handle (the lume) inside its segmentation.
+
+        First the holes of the mask itself; if the segmentation covers the opening too, the region
+        of paper that the drawn ink closes all round (what the prospect outline extraction does).
+
+        Args:
+            image: Original image (BGR)
+            mask: Binary mask of the handle (H, W), 0/1 or 0/255
+            lines_threshold: Binarization threshold for the ink
+
+        Returns:
+            List of rings, each a list of [x, y] vertices (empty: no opening found)
+        """
+        holes = self.mask_holes(mask)
+        if holes:
+            return holes
+        binary = (mask > 0).astype(np.uint8) * 255
+        if not binary.any():
+            return []
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = np.where(binary > 0, gray, 255).astype(np.uint8)
+        found: List[np.ndarray] = []
+        extract_prospect_outline(gray, binary, lines_threshold, found)
+        # The extraction gives (y, x) rings
+        return [r for r in (self._simplify_ring(np.array([[x, y] for y, x in ring])) for ring in found) if len(r) >= 3]
+
     def improve_mask(self, mask: np.ndarray, dilate_size: int = 5, close_size: int = 7, is_manual: bool = False) -> np.ndarray: #5
         """
         Improve mask quality with morphological operations.
@@ -250,7 +306,8 @@ class VectorizationHandler:
         smoothing_factor: float = 0.3,
         lines_threshold: int = 100,
         debug_svg_dir: Optional[str] = None,  # NEW: save intermediate SVG for debugging
-        mask_path: Optional[str] = None
+        mask_path: Optional[str] = None,
+        holes: Optional[List[List[List[float]]]] = None
     ) -> Dict[str, Any]:
         """
         Vectorize from a saved PNG file (already masked, full-size, white background).
@@ -270,7 +327,9 @@ class VectorizationHandler:
             lines_threshold: Binarization threshold for lines
             debug_svg_dir: Directory to save intermediate SVG files for debugging
             mask_path: Segmentation mask PNG (Prospectus/Profile: closes gaps in the drawn border)
-            
+            holes: Openings of the element as chosen in the segmentation (the lume of a handle), rings of
+                [x, y] vertices; None: look for them in the drawing
+
         Returns:
             Dictionary with vectorized paths and metadata
         """
@@ -305,7 +364,10 @@ class VectorizationHandler:
                     lines_threshold=lines_threshold,
                     epsilon=epsilon,
                     smoothing_factor=smoothing_factor,
-                    with_holes=category != 'Prospectus'  # handles: the opening is a closed ring too
+                    with_holes=category != 'Prospectus',  # handles: the opening is a closed ring too
+                    holes_override=None if holes is None else [
+                        np.array([[p[1], p[0]] for p in ring], dtype=float) for ring in holes if len(ring) >= 3
+                    ]
                 )
             else:
                 result = vectorize_archaeological_drawing(
@@ -371,7 +433,8 @@ class VectorizationHandler:
         height: int,
         epsilon: float = 1.5,
         smoothing_factor: float = 0.3,
-        debug_svg_dir: Optional[str] = None
+        debug_svg_dir: Optional[str] = None,
+        holes: Optional[List[List[List[float]]]] = None
     ) -> Dict[str, Any]:
         """
         Vectorize directly from polygon vertices (for manual masks).
@@ -391,35 +454,40 @@ class VectorizationHandler:
             epsilon: RDP simplification (not used, vertices already simplified)
             smoothing_factor: Bezier smoothing factor for smooth curves
             debug_svg_dir: Directory to save SVG for debugging
-            
+            holes: Openings inside the polygon (the lume of a handle), rings of [x, y] vertices
+
         Returns:
             Dictionary with vectorized paths and metadata
         """
         import numpy as np
         from archaeological_vectorizer import extract_left_side_of_profile, smooth_path_to_bezier
         
-        # Convert vertices to numpy array in [y, x] format (row, col) for smooth_path_to_bezier
-        # smooth_path_to_bezier expects format: [(y1,x1), (y2,x2), ...]
-        vertices_yx = np.array([[v[1], v[0]] for v in vertices], dtype=np.float32)
-        
-        # Create smooth Bezier path from vertices (same as automatic pipeline)
-        if smoothing_factor > 0 and len(vertices_yx) >= 3:
-            path_d = smooth_path_to_bezier(vertices_yx, smoothing_factor)
-            # Add Z to close the path
-            if path_d and not path_d.strip().endswith('Z'):
-                path_d += " Z"
-            print(f"  → Created smooth Bezier path with smoothing_factor={smoothing_factor}")
-        else:
+        def ring_to_path(ring: List[List[float]]) -> str:
+            # smooth_path_to_bezier expects format: [(y1,x1), (y2,x2), ...]
+            ring_yx = np.array([[v[1], v[0]] for v in ring], dtype=np.float32)
+
+            # Create smooth Bezier path from vertices (same as automatic pipeline)
+            if smoothing_factor > 0 and len(ring_yx) >= 3:
+                d = smooth_path_to_bezier(ring_yx, smoothing_factor)
+                # Add Z to close the path
+                if d and not d.strip().endswith('Z'):
+                    d += " Z"
+                print(f"  → Created smooth Bezier path with smoothing_factor={smoothing_factor}")
+                return d
             # Fallback to simple lines if smoothing disabled or too few vertices
             path_parts = []
-            for i, v in enumerate(vertices):
+            for i, v in enumerate(ring):
                 if i == 0:
                     path_parts.append(f"M {v[0]:.2f} {v[1]:.2f}")
                 else:
                     path_parts.append(f"L {v[0]:.2f} {v[1]:.2f}")
             path_parts.append("Z")  # Close path
-            path_d = " ".join(path_parts)
-        
+            return " ".join(path_parts)
+
+        path_d = ring_to_path(vertices)
+        # The openings (lume of a handle) are closed rings of their own, like in the automatic pipeline
+        hole_paths = [ring_to_path(ring) for ring in (holes or []) if len(ring) >= 3]
+
         # Convert vertices to numpy array in [y, x] format for profile logic
         full_profile = np.array([[v[1], v[0]] for v in vertices], dtype=np.int32)
         
@@ -437,25 +505,26 @@ class VectorizationHandler:
                 profile='full'
             )
             style = self.CATEGORIES.get(category, self.CATEGORIES['Detail'])
-            dwg.add(dwg.path(
-                d=path_d,
-                stroke=style.get('color', '#000000'),
-                stroke_width=style.get('stroke_width', 1.0),
-                fill=style.get('fill', 'none')
-            ))
+            for d in [path_d] + hole_paths:
+                dwg.add(dwg.path(
+                    d=d,
+                    stroke=style.get('color', '#000000'),
+                    stroke_width=style.get('stroke_width', 1.0),
+                    fill=style.get('fill', 'none')
+                ))
             dwg.save()
             print(f"  → Manual SVG saved to: {svg_file}")
-        
+
         # Prepare result dictionary
         result_dict = {
             'name': name,
             'category': category,
-            'paths': [path_d],  # Single path with all vertices
+            'paths': [path_d] + hole_paths,  # The outline, then one path per opening
             'style': self.CATEGORIES.get(category, self.CATEGORIES['Detail']),
             'svg_file': svg_file,
             'is_manual': True,
             'stats': {
-                'total_paths': 1,
+                'total_paths': 1 + len(hole_paths),
                 'vertex_count': len(vertices)
             }
         }

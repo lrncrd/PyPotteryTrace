@@ -53,6 +53,14 @@
             get: f => Math.round(100 * (f.holeScale || 1)), set: (f, v) => { f.holeScale = v / 100; } },
         { key: 'lean', label: 'Tilt of the arch (degrees; 90 = lying flat on the wall)', min: -90, max: 90, step: 1, axis: 'x', get: f => f.lean || 0, hide: f => f.section === 'drawn' },
         { key: 'thickness', label: 'Thickness (0 = from the side view)', min: 0, max: 200, step: 1, axis: 'y' },
+        // Width of a vertical handle where it joins the wall, at its upper and at its lower end, as a share of the
+        // outline as it is (reshapes: the outline is changed; see placePoints)
+        { key: 'attachTop', label: 'Width at the upper attachment (%)', min: 40, max: 800, step: 1, axis: 'y', reshapes: true,
+            get: f => (f.attach ? f.attach.top : 100), set: (f, v) => { f.attach = Object.assign({ top: 100, bottom: 100, reach: 25 }, f.attach, { top: v }); } },
+        { key: 'attachBottom', label: 'Width at the lower attachment (%)', min: 40, max: 800, step: 1, axis: 'y', reshapes: true,
+            get: f => (f.attach ? f.attach.bottom : 100), set: (f, v) => { f.attach = Object.assign({ top: 100, bottom: 100, reach: 25 }, f.attach, { bottom: v }); } },
+        { key: 'attachReach', label: 'How far the change reaches along the handle (%)', min: 5, max: 60, step: 1, axis: 'y', reshapes: true,
+            get: f => (f.attach ? f.attach.reach : 25), set: (f, v) => { f.attach = Object.assign({ top: 100, bottom: 100, reach: 25 }, f.attach, { reach: v }); } },
         // (the section edited from above replaces it)
         { key: 'roundness', label: 'Edge rounding', min: 0.1, max: 1, step: 0.05, hide: f => !!(f.sections && f.sections.length) || f.section === 'drawn' },
         { key: 'bend', label: 'Arch shading', min: 0, max: 1.5, step: 0.05 },
@@ -376,6 +384,18 @@
             }
         }
 
+        // Is the point inside the current prospect (even-odd: the hole of a handle is not)
+        insideProspect(x, y) {
+            let inside = false;
+            for (const ring of this.prospect.rings) {
+                for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                    const a = ring[i], b = ring[j];
+                    if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+                }
+            }
+            return inside;
+        }
+
         recomputeShading(stride = 1) {
             this.computeShading(stride);
             this.saveSnapshot();
@@ -424,6 +444,8 @@
                 // No dots on or inside the decorations
                 const blocked = S().decorationMask(this.field, this.decoPrims.values(), dotR * 1.5, this.prospect.rings);
                 this.dots = S().stipple(this.field, this.density, rings, sh, dotR, blocked);
+                // A handle that goes beyond the prospect (a wide attachment) is cut by its outline
+                if (this.frontRasters.size) this.dots = this.dots.filter(([x, y]) => this.insideProspect(x, y));
             } else if (sh.mode === 'tone') {
                 this.tone = { canvas: S().toneCanvas(this.field, this.density, sh), x: this.field.x0, y: this.field.y0 };
             }
@@ -525,6 +547,7 @@
             if (vi >= 0) {
                 const now = Date.now();
                 if (this.lastVertexTap && this.lastVertexTap.id === front.id && this.lastVertexTap.index === vi && now - this.lastVertexTap.time < 400 && front.points.length > 3) {
+                    this.bakeAttach(front);
                     front.points.splice(vi, 1);
                     this.lastVertexTap = null;
                     this.recomputeShading();
@@ -539,6 +562,7 @@
             for (let i = 0; i < n; i++) {
                 const a = front.points[i], b = front.points[(i + 1) % n];
                 if (G().distToSegment(ip.x, ip.y, { x: a[0], y: a[1] }, { x: b[0], y: b[1] }) <= tol) {
+                    this.bakeAttach(front);
                     front.points.splice(i + 1, 0, [ip.x, ip.y]);
                     this.action = { type: 'fvertex', id: front.id, index: i + 1, moved: true };
                     return true;
@@ -550,6 +574,7 @@
         dragFrontVertex(a, ip) {
             const front = this.model.fronts.find(f => f.id === a.id);
             if (!front) return;
+            this.bakeAttach(front);
             front.points[a.index] = [ip.x, ip.y];
             a.moved = true;
             this.buildFronts(this.model.shading, 2);
@@ -699,6 +724,24 @@
             this.addFront(this.newFront(pts.map(p => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10]), 'traced', null));
         }
 
+        // The outline of a vertical handle with the width at its attachments applied. `points` is the outline before
+        // the widths (generated, or as traced); while they are not 100% it is kept in front.base, and what is drawn,
+        // shaded and exported is front.points.
+        placePoints(front, points) {
+            const a = front.attach;
+            const on = front.axis === 'y' && !!a && (a.top !== 100 || a.bottom !== 100);
+            front.base = on ? points : null;
+            front.points = on ? G().widenEnds(points, a.top / 100, a.bottom / 100, a.reach / 100) : points;
+        }
+
+        // The outline is edited by hand from here on: what is shown is now the outline, the widths are 100% again
+        bakeAttach(front) {
+            if (!front.base) return;
+            front.base = null;
+            front.attach = Object.assign({}, front.attach, { top: 100, bottom: 100 });
+            this.updateUI();
+        }
+
         // Outline of a placed shape { shape, cx, cy, w, h, y0, y1 }
         genPolygon(g) {
             const r1 = v => Math.round(v * 10) / 10;
@@ -768,7 +811,7 @@
             if (!rho) return false;
             front.gen.y0 = rho.y0;
             front.gen.y1 = rho.y1;
-            front.points = this.genPolygon(front.gen);
+            this.placePoints(front, this.genPolygon(front.gen));
             return true;
         }
 
@@ -823,8 +866,10 @@
                     const v = parseFloat(input.value);
                     if (f.set) f.set(front, v); else front[f.key] = v;
                     if (front.source === 'derived' && front.gen) {
-                        front.points = this.genPolygon(front.gen);
+                        this.placePoints(front, this.genPolygon(front.gen));
                         this.refitBand(front);
+                    } else if (f.reshapes) {
+                        this.placePoints(front, front.base || front.points);
                     }
                     document.getElementById(`prospect-fr-${f.key}-value`).textContent = input.value;
                     // (the 3D keeps its mesh while sliding, and is rebuilt when the slider is let go)
@@ -1213,7 +1258,10 @@
                     if (snap.item === this.prospect) continue;
                     const mode = snap.model.shading.mode;
                     if (snap.tone && mode === 'tone') {
+                        ctx.save();
+                        if (snap.frontEdges.length) ctx.clip(snap.outlinePath, 'evenodd');  // (a handle beyond the prospect is cut)
                         ctx.drawImage(snap.tone.canvas, snap.tone.x, snap.tone.y);
+                        ctx.restore();
                     } else if (snap.dots.length && mode === 'stipple') {
                         ctx.fillStyle = '#000000';
                         ctx.beginPath();
@@ -1231,13 +1279,20 @@
                     ctx.lineWidth = Math.max(px, 1);
                     for (const ring of snap.item.rings) this.strokePolyline(G().edgeLine(ring), !ring.open);
                     ctx.fillStyle = '#000000';
+                    // (the handles are cut by the outline of the prospect)
+                    ctx.save();
+                    ctx.clip(snap.outlinePath, 'evenodd');
                     for (const edge of snap.frontEdges) this.fillEdge(edge, px);
+                    ctx.restore();
                 }
             }
 
             // Shading
             if (this.tone && this.model.shading.mode === 'tone') {
+                ctx.save();
+                if (this.frontEdges.length) ctx.clip(this.outlinePath, 'evenodd');  // (a handle beyond the prospect is cut)
                 ctx.drawImage(this.tone.canvas, this.tone.x, this.tone.y);
+                ctx.restore();
             } else if (this.dots.length && this.model.shading.mode === 'stipple') {
                 ctx.fillStyle = '#000000';
                 ctx.beginPath();
@@ -1270,7 +1325,10 @@
             ctx.lineWidth = Math.max(px, 1);
             for (const ring of this.prospect.rings) this.strokePolyline(G().edgeLine(ring), !ring.open);
             ctx.fillStyle = '#000000';
+            ctx.save();
+            ctx.clip(this.outlinePath, 'evenodd');
             for (const edge of this.frontEdges) this.fillEdge(edge, px);
+            ctx.restore();
             // The outline of the selected handle front view, with its vertices
             const selFront = this.selectedFront;
             if (selFront) {
@@ -1617,7 +1675,7 @@
                 if (front && front.gen) {
                     front.gen.cx += ip.x - a.last.x;
                     if (front.gen.shape !== 'band') front.gen.cy += ip.y - a.last.y;
-                    front.points = this.genPolygon(front.gen);
+                    this.placePoints(front, this.genPolygon(front.gen));
                     a.last = ip;
                     a.moved = true;
                     this.buildFronts(this.model.shading, 2);

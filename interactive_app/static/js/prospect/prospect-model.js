@@ -153,12 +153,15 @@
             });
             img.setAttributeNS(XLINK_NS, 'xlink:href', url);  // older viewers (Illustrator)
             g.appendChild(img);
+            // A handle that goes beyond the prospect is cut by its outline
+            if (rendered.clipD && rendered.frontEdges && rendered.frontEdges.length) g.setAttribute('clip-path', `url(#${clipId})`);
             art.appendChild(g);
         }
 
         // Side lines of the handles in front view: strokes of varying weight, as filled outlines
         if (rendered.frontEdges && rendered.frontEdges.length) {
             const g = el(doc, 'g', { class: 'handle-front', id: `${safeId}_handle_front`, fill: '#000000', stroke: 'none' });
+            if (rendered.clipD) g.setAttribute('clip-path', `url(#${clipId})`);
             for (const pl of rendered.frontEdges) {
                 const pts = window.ProspectGeometry.ribbon(pl, pl.w);
                 g.appendChild(el(doc, 'path', { d: pts.map((p, i) => `${i ? 'L' : 'M'} ${fmt(p.x)} ${fmt(p.y)}`).join(' ') + ' Z' }));

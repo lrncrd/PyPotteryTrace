@@ -172,6 +172,33 @@
         return spans;
     }
 
+    // The outline of a vertical handle with its width changed where it joins the wall, at the top and at the
+    // bottom: every row is stretched across about its middle by kTop and kBot (1 = as it is), the change fading
+    // out over `reach` (share of the height of the handle) along it. points: [[x, y], ...]
+    function widenEnds(points, kTop, kBot, reach) {
+        const pts = points.map(([x, y]) => ({ x, y }));
+        const b = bbox(pts);
+        if (b.h < 4) return points.map(p => p.slice());
+        const r = Math.max(0.02, reach);
+        // vertices dense enough along the handle for the change to bend the outline smoothly
+        const step = b.h / 40, ring = [];
+        for (let i = 0; i < pts.length; i++) {
+            const p = pts[i], q = pts[(i + 1) % pts.length];
+            ring.push(p);
+            const n = Math.floor(Math.hypot(q.x - p.x, q.y - p.y) / step);
+            for (let k = 1; k <= n; k++) ring.push({ x: p.x + (q.x - p.x) * k / (n + 1), y: p.y + (q.y - p.y) * k / (n + 1) });
+        }
+        const fade = d => (d >= 1 ? 0 : 0.5 * (1 + Math.cos(Math.PI * d)));
+        return ring.map(p => {
+            // (the middle of the row; at the very tips, of the row just inside)
+            const spans = horizontalSpans(Math.min(b.y1 - 0.5, Math.max(b.y0 + 0.5, p.y)), pts);
+            const cx = spans.length ? (spans[0][0] + spans[spans.length - 1][1]) / 2 : (b.x0 + b.x1) / 2;
+            const u = (p.y - b.y0) / b.h;
+            const k = 1 + (kTop - 1) * fade(u / r) + (kBot - 1) * fade((1 - u) / r);
+            return [Math.round((cx + (p.x - cx) * k) * 10) / 10, Math.round(p.y * 10) / 10];
+        });
+    }
+
     // Same as horizontalSpans, along a vertical line at x: [[y0, y1], ...]
     function verticalSpans(x, poly) {
         const rings = Array.isArray(poly[0]) ? poly : [poly];
@@ -691,7 +718,7 @@
 
     window.ProspectGeometry = {
         isProspectArt, flattenPathD, polygonArea, bbox, pointInPolygon, distToSegment, distToPolyline,
-        horizontalSpans, verticalSpans, polylineLength, resample, pointsAlong, mulberry32, pathSampler, offsetPolyline, ribbon, clipPolylineToPolygon,
+        horizontalSpans, verticalSpans, widenEnds, polylineLength, resample, pointsAlong, mulberry32, pathSampler, offsetPolyline, ribbon, clipPolylineToPolygon,
         simplify, smoothPolyline, radiusByRow, distanceTransform, edgeLine, readScene
     };
 })();

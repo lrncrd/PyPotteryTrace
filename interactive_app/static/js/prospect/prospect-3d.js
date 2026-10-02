@@ -171,18 +171,36 @@
             const target = b.list.find(s => s.spec.id === selected) || b.list[0] || null;
             this.target = target;
             if (!target) return { list: b.list, target: null, selected };
-            this.fields(b);
+            this.fields(b, target);
             const meshKey = `${target.spec.id}|${this.vesselMode}|${this.quadSize}|${b.key}`;
             if (b.meshKey !== meshKey && !(this.editing && b.mesh)) {
                 b.mesh = this.buildMesh(b, target);
                 b.meshKey = meshKey;
             }
-            return { list: b.list, target, selected, vessel: b.vessel, mesh: b.mesh, F: b.F, info: b.info };
+            return { list: b.list, target, selected, vessel: b.vessel, mesh: b.mesh, F: b.F, info: b.info, vsd: b.vsd, psd: b.psd };
         }
 
-        // The surface of the vessel and the parts (F), and what a point of it belongs to (info)
-        fields(b) {
+        // The surface of the vessel and the parts (F), and what a point of it belongs to (info); vsd and psd: the
+        // vessel and the target part alone, as the views from above see them
+        fields(b, target) {
             const vessel = b.vessel, mode = this.vesselMode;
+            const tp = target && target.pf.axis === 'y' ? target.pf : null;
+            if (tp) {
+                // A vertical handle is the same wherever it stands across the vessel, straight towards the viewer: the
+                // views show it in the middle of the vessel (its axis slid across to pass through the handle), with the
+                // handle alone on it (the other parts are seen when they are the target)
+                const uc = tp.uc, idx = b.list.indexOf(target);
+                b.vsd = (x, y, z) => vessel.sd(x - uc, y, z);
+                b.psd = (x, y, z) => tp.sd(x, y, z, true);
+                b.F = mode === 'none' ? b.psd : (x, y, z) => FD().smin(b.vsd(x, y, z), b.psd(x, y, z), tp.kAt(x, y));
+                b.info = (x, y, z) => {
+                    const h = mode === 'none' ? 1 : FD().share(b.vsd(x, y, z), b.psd(x, y, z), tp.kAt(x, y));
+                    return { h, part: h > 0.3 || mode === 'none' ? idx : -1 };
+                };
+                return;
+            }
+            b.vsd = (x, y, z) => vessel.sd(x, y, z);
+            b.psd = target ? (x, y, z) => target.pf.sd(x, y, z) : null;
             b.F = FD().unionOf(mode === 'none' ? null : vessel, b.list.map(s => s.pf));
             b.info = (x, y, z) => {
                 const dv = vessel.sd(x, y, z);
@@ -201,11 +219,13 @@
             const { F, info } = b;
             const bb = pf.bb;
             let u, y, r, span;
+            // (a vertical handle: the vessel is slid across to be behind it, see fields)
+            const uc = pf.uc || 0;
             if (mode === 'full') {
                 let rMax = 0;
                 for (let yy = vessel.y0; yy <= vessel.y1; yy += 8) rMax = Math.max(rMax, vessel.radiusAt(yy + 0.5));
-                for (const s of b.list) rMax = Math.max(rMax, s.pf.rhoMax);
-                u = [-rMax - 8, rMax + 8]; r = [-rMax - 8, rMax + 8]; y = [vessel.y0 - 4, vessel.y1 + 4];
+                for (const s of (pf.axis === 'y' ? [target] : b.list)) rMax = Math.max(rMax, s.pf.rhoMax);
+                u = [uc - rMax - 8, uc + rMax + 8]; r = [-rMax - 8, rMax + 8]; y = [vessel.y0 - 4, vessel.y1 + 4];
                 span = 2 * rMax;
             } else {
                 const spanU = 2 * pf.halfU, spanY = bb.y1 - bb.y0;
@@ -214,9 +234,9 @@
                 let rMin = Infinity, rMax = 0;
                 for (let yy = y[0]; yy <= y[1]; yy += 4) { const rr = vessel.radiusAt(yy + 0.5); rMin = Math.min(rMin, rr); rMax = Math.max(rMax, rr); }
                 const halfL = pf.halfU + margin;
-                u = [-halfL, halfL];
+                u = [uc - halfL, uc + halfL];
                 const lo = Math.sqrt(Math.max(0, rMin * rMin - halfL * halfL));
-                r = [mode === 'none' ? rMin - 30 : lo - 12, Math.max(rMax, ...b.list.map(s => s.pf.rhoMax)) + 12];
+                r = [mode === 'none' ? rMin - 30 : lo - 12, Math.max(rMax, ...(pf.axis === 'y' ? [target] : b.list).map(s => s.pf.rhoMax)) + 12];
                 span = Math.max(u[1] - u[0], y[1] - y[0], r[1] - r[0]);
             }
             let step = Math.max(this.quadSize, span / 130);
@@ -480,7 +500,7 @@
             if (pf.axis === 'y') {
                 const ys = Math.round(pf.yTop + this.slice * (pf.yBot - pf.yTop));
                 const cT = Math.cos(pf.theta), sT = Math.sin(pf.theta);
-                const halfL = pf.halfU * 2.2 + 30;
+                const halfL = pf.halfU * 2.2 + 30, uc = pf.uc || 0;
                 const rw = vessel.radiusAt(ys + 0.5);
                 const lo = Math.sqrt(Math.max(0, rw * rw - halfL * halfL)) - 24, hi = pf.rhoMax * 1.03 + 10;
                 const scale = Math.min((v.w - 16) / (2 * halfL), (v.h - 16) / (hi - lo));
@@ -489,9 +509,10 @@
                 if (!v.cache || v.cache.key !== key) {
                     const img = new ImageData(v.w, v.h);
                     const dd = img.data;
-                    const fieldOf = this.vesselMode === 'none' ? (x, y, z) => pf.sd(x, y, z) : F;
+                    // (in the middle of the vessel: the fields of the views, see fields)
+                    const fieldOf = this.vesselMode === 'none' ? sc.psd : F;
                     const at = (px, py) => {
-                        const u = (px - v.w / 2) / scale, rr = (py - v.h / 2) / scale + (lo + hi) / 2;
+                        const u = (px - v.w / 2) / scale + uc, rr = (py - v.h / 2) / scale + (lo + hi) / 2;
                         return [scene.axisX + u * cT + rr * sT, ys + 0.5, -u * sT + rr * cT];
                     };
                     for (let py = 0; py < v.h; py += st) {
@@ -505,7 +526,7 @@
                                 // where the fillet has added material between them
                                 let h = 1;
                                 if (this.vesselMode !== 'none') {
-                                    const dv = vessel.sd(x, y, z), dp = pf.sd(x, y, z);
+                                    const dv = sc.vsd(x, y, z), dp = sc.psd(x, y, z);
                                     h = dv < 0 ? 0 : dp < 0 ? 1 : FD().share(dv, dp, pf.kAt(x, y));
                                 }
                                 const s = smooth(clamp((h - 0.1) / 0.8, 0, 1));
@@ -524,7 +545,7 @@
                 }
                 const ctx = v.canvas.getContext('2d');
                 ctx.putImageData(v.cache.img, 0, 0);
-                this.drawSectionEdit(ctx, v, sc, { ys, lo, hi, scale, cT, sT });
+                this.drawSectionEdit(ctx, v, sc, { ys, lo, hi, scale, cT, sT, uc });
                 this.label(ctx, `section at row ${ys} (slider above); outside at the bottom`);
                 const edited = (sc.target.spec.sections || []).map(k => `${Math.round(k.t * 100)}%`);
                 this.label(ctx, 'drag the shoulders; double-tap: add or remove a point', 1);
@@ -694,13 +715,15 @@
             const key = (spec.sections || []).find(k => Math.abs(k.t - this.slice) < KEY_TOL);
             const sec = key || FD().sectionTrack(spec)(this.slice);
             // s across the front outline, f depth below the face of the side view (units of fr.depth)
+            // (the view is centred on the handle, with the outside at the bottom: x is across, rr straight towards
+            // the viewer, in the middle of the vessel, see fields)
             const toScreen = (s, f) => {
                 const x = fr.cx + s * fr.hw, rr = rOut - f * fr.depth;
-                return [v.w / 2 + (x - ax - rr * g.sT) / g.cT * g.scale, v.h / 2 + (rr - mid) * g.scale];
+                return [v.w / 2 + (x - ax - g.uc) * g.scale, v.h / 2 + (rr - mid) * g.scale];
             };
             const fromScreen = (px, py) => {
-                const u = (px - v.w / 2) / g.scale, rr = (py - v.h / 2) / g.scale + mid;
-                return { s: (ax + u * g.cT + rr * g.sT - fr.cx) / fr.hw, f: (rOut - rr) / fr.depth };
+                const x = ax + (px - v.w / 2) / g.scale + g.uc, rr = (py - v.h / 2) / g.scale + mid;
+                return { s: (x - fr.cx) / fr.hw, f: (rOut - rr) / fr.depth };
             };
             const markers = [{ kind: 'sl', p: toScreen(sec.sl, sec.fl) }, { kind: 'sr', p: toScreen(sec.sr, sec.fr) }];
             if (key) key.pts.forEach((q, i) => markers.push({ kind: 'pt', i, p: toScreen(q.s, q.f) }));
@@ -714,10 +737,10 @@
             this.sideMap = null;
             if (pf.axis !== 'y' || !part) return;
             const ax = this.pc.scene.axisX;
-            const sT = Math.sin(pf.theta), cT = Math.cos(pf.theta);
             const all = part.rings.flat();
             const sgn = all.reduce((a, p) => a + p.x, 0) / all.length < ax ? -1 : 1;
-            const toScreen = p => { const r = sgn * (p.x - ax); return cam.project(ax + r * sT, p.y, r * cT); };
+            // (straight towards the viewer, at the handle's place across: see verticalField and fields)
+            const toScreen = p => cam.project(ax + pf.uc, p.y, sgn * (p.x - ax));
             ctx.strokeStyle = 'rgba(37, 99, 235, 0.85)';
             ctx.lineWidth = 1.2;
             for (const ring of part.rings) {

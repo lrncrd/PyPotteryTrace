@@ -21,16 +21,191 @@ class SegmentationManager {
         this.isDraggingVertex = false;
         this.vertexHitRadius = 10;  // Pixels radius to detect vertex click
         this.originalContour = null;  // Store original contour for re-simplification
-        
+
+        // Lume: the opening of a handle, one ring of [x, y] per opening, inside the outline
+        this.previewHoles = [];
+        this.polygonHoles = [];  // The rings while they are edited (selectedRing: -1 = outline, k = polygonHoles[k])
+        this.selectedRing = -1;
+        this.backupPreviewHoles = null;
+
         this.init();
     }
-    
+
     init() {
         this.setupCanvasInteraction();
         this.setupPolygonControls();
         this.setupEditMaskButton();
         this.setupPolygonEditControls();
         this.setupUndoButton();
+        this.setupLumeControls();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Lume (the opening of a handle)
+    // ---------------------------------------------------------------------------------------------
+
+    setupLumeControls() {
+        const on = (id, fn) => {
+            const btn = document.getElementById(id);
+            if (btn) btn.addEventListener('click', fn);
+        };
+        on('lume-detect-btn', () => this.detectLume());
+        on('lume-pick-btn', () => {
+            if (!window.app) return;
+            window.app.setMode(window.app.currentMode === 'lume' ? 'point' : 'lume');
+        });
+        on('lume-add-btn', () => this.addLumeOval());
+        on('lume-clear-btn', () => this.clearLume());
+
+        const category = document.getElementById('category-select');
+        if (category) {
+            category.addEventListener('change', () => {
+                this.refreshLumeUI();
+                if (this.lumeWanted() && this.previewContours && this.previewHoles.length === 0 && !this.lumeTried) {
+                    this.detectLume(true);
+                }
+            });
+        }
+    }
+
+    lumeWanted() {
+        const category = document.getElementById('category-select');
+        return !!category && category.value === 'Handle';
+    }
+
+    // The outline of the element being built: the edited polygon, else the largest contour of the mask
+    getOuterRing() {
+        if (this.isEditingPolygon) return this.polygonVertices;
+        if (!this.previewContours || this.previewContours.length === 0) return null;
+        return this.previewContours.reduce((a, b) => this.calculatePolygonArea(b) > this.calculatePolygonArea(a) ? b : a);
+    }
+
+    refreshLumeUI() {
+        const panel = document.getElementById('lume-controls');
+        if (panel) panel.style.display = this.lumeWanted() ? 'block' : 'none';
+
+        const hasMask = !!this.previewContours && !this.isEditingPolygon;
+        ['lume-detect-btn', 'lume-pick-btn', 'lume-add-btn'].forEach(id => {
+            const btn = document.getElementById(id);
+            if (btn) btn.disabled = !hasMask;
+        });
+        const clearBtn = document.getElementById('lume-clear-btn');
+        if (clearBtn) clearBtn.disabled = !hasMask || this.previewHoles.length === 0;
+
+        const pickBtn = document.getElementById('lume-pick-btn');
+        if (pickBtn) pickBtn.classList.toggle('active', !!window.app && window.app.currentMode === 'lume');
+
+        const status = document.getElementById('lume-status');
+        if (status) {
+            const n = this.previewHoles.length;
+            status.textContent = n === 0 ? 'none' : (n === 1 ? '1 opening' : `${n} openings`);
+        }
+    }
+
+    // Called when a new mask is shown: the openings the mask leaves out are the lume; if there are none, look
+    // for them in the drawing
+    onNewMask(holes) {
+        this.previewHoles = (holes || []).map(r => r.map(p => [p[0], p[1]]));
+        this.lumeTried = this.previewHoles.length > 0;
+        this.refreshLumeUI();
+        if (this.lumeWanted() && this.previewHoles.length === 0) {
+            this.detectLume(true);
+        }
+    }
+
+    async detectLume(silent = false) {
+        if (this.isEditingPolygon) return;
+        const outer = this.getOuterRing();
+        if (!outer || !window.app || !window.app.sessionId) return;
+        this.lumeTried = true;
+
+        try {
+            const response = await fetch('/api/detect_lume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: window.app.sessionId, outer: outer })
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Lume detection failed');
+
+            // The mask may have changed while the request was out
+            if (this.isEditingPolygon || this.getOuterRing() !== outer) return;
+            this.previewHoles = data.holes;
+            this.refreshLumeUI();
+            if (window.canvasManager) window.canvasManager.redraw();
+
+            if (!silent || data.holes.length > 0) {
+                window.app.showNotification(
+                    data.holes.length > 0
+                        ? `Lume found (${data.holes.length === 1 ? '1 opening' : data.holes.length + ' openings'}). Edit Mask to adjust it.`
+                        : 'No lume found. Try "Click it" inside the opening, or "Add oval".',
+                    data.holes.length > 0 ? 'success' : 'info'
+                );
+            }
+        } catch (error) {
+            console.error('Lume detection error:', error);
+            if (window.app) window.app.showNotification('Lume detection failed: ' + error.message, 'error');
+        }
+    }
+
+    async pickLumeAt(x, y) {
+        const outer = this.getOuterRing();
+        if (!outer) {
+            window.app.showNotification('Segment the handle first', 'warning');
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/segment_lume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: window.app.sessionId, outer: outer, point: [x, y] })
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Could not outline the opening');
+
+            this.previewHoles.push(data.hole);
+            this.refreshLumeUI();
+            window.app.setMode('point');
+            if (window.canvasManager) window.canvasManager.redraw();
+            window.app.showNotification('Lume added. Edit Mask to adjust it.', 'success');
+        } catch (error) {
+            window.app.showNotification(error.message, 'warning');
+        }
+    }
+
+    // An oval in the middle of the outline, to be reshaped in Edit Mask
+    addLumeOval() {
+        const outer = this.getOuterRing();
+        if (!outer) return;
+
+        const xs = outer.map(p => p[0]), ys = outer.map(p => p[1]);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+        const rx = (Math.max(...xs) - Math.min(...xs)) * 0.18, ry = (Math.max(...ys) - Math.min(...ys)) * 0.18;
+        const ring = [];
+        for (let i = 0; i < 16; i++) {
+            const a = (2 * Math.PI * i) / 16;
+            ring.push([Math.round(cx + rx * Math.cos(a)), Math.round(cy + ry * Math.sin(a))]);
+        }
+        this.previewHoles.push(ring);
+        this.refreshLumeUI();
+        if (window.canvasManager) window.canvasManager.redraw();
+    }
+
+    clearLume() {
+        this.previewHoles = [];
+        this.lumeTried = true;  // Removed on purpose: do not look for it again
+        this.refreshLumeUI();
+        if (window.canvasManager) window.canvasManager.redraw();
+    }
+
+    // The rings to send with the segment (null: not a handle, nothing to say about openings)
+    lumeForSegment(category) {
+        return category === 'Handle' ? this.previewHoles.map(r => r.map(p => [p[0], p[1]])) : null;
+    }
+
+    ringAt(ring) {
+        return ring < 0 ? this.polygonVertices : this.polygonHoles[ring];
     }
     
     setupEditMaskButton() {
@@ -180,6 +355,9 @@ class SegmentationManager {
         this.originalContour = largestContour.map(p => [p[0], p[1]]);
         this.backupPreviewContours = this.previewContours ? this.previewContours.map(c => c.map(p => [p[0], p[1]])) : null;
         this.backupCurrentMask = this.currentMask;
+        this.backupPreviewHoles = this.previewHoles.map(r => r.map(p => [p[0], p[1]]));
+        this.polygonHoles = this.previewHoles.map(r => r.map(p => [p[0], p[1]]));
+        this.selectedRing = -1;
         
         // Get simplification value from slider (or use default)
         // Use HIGH epsilon by default = very few vertices (better to add than remove)
@@ -316,6 +494,8 @@ class SegmentationManager {
         const clearPreviewBtn = document.getElementById('clear-preview-btn');
         if (clearPreviewBtn) clearPreviewBtn.disabled = locked ? true : (!this.previewContours);
 
+        this.refreshLumeUI();
+
         // 2. Mode buttons in sidebar (Point, Box, Rotation Center)
         document.querySelectorAll('.mode-btn').forEach(btn => {
             if (btn.dataset.mode !== 'polygon') {
@@ -387,7 +567,12 @@ class SegmentationManager {
         if (this.originalContour) {
             this.polygonVertices = this.originalContour.map(p => [p[0], p[1]]);
         }
-        
+        if (this.backupPreviewHoles) {
+            this.previewHoles = this.backupPreviewHoles.map(r => r.map(p => [p[0], p[1]]));
+        }
+        this.polygonHoles = [];
+        this.refreshLumeUI();
+
         // Hide edit controls, show draw controls
         const drawControls = document.getElementById('polygon-draw-controls');
         const editControls = document.getElementById('polygon-edit-controls');
@@ -417,21 +602,25 @@ class SegmentationManager {
         // Update the mask from edited vertices
         this.currentMask = this.createMaskFromPolygon();
         this.previewContours = [this.polygonVertices.slice()];
-        
+        this.previewHoles = this.polygonHoles.map(r => r.map(p => [p[0], p[1]]));
+        this.polygonHoles = [];
+        this.selectedRing = -1;
+
         // Hide edit controls, show draw controls
         const drawControls = document.getElementById('polygon-draw-controls');
         const editControls = document.getElementById('polygon-edit-controls');
         const instructions = document.getElementById('polygon-mode-instructions');
-        
+
         if (drawControls) drawControls.style.display = 'block';
         if (editControls) editControls.style.display = 'none';
         if (instructions) {
             instructions.textContent = 'Click to add vertices. Double-click or press Enter to close polygon.';
         }
-        
+
         // Release editing lock
         this.setEditModeLock(false);
-        
+        this.refreshLumeUI();
+
         // Enable add segment button
         const addSegBtn = document.getElementById('add-segment-btn');
         if (addSegBtn) addSegBtn.disabled = false;
@@ -452,20 +641,21 @@ class SegmentationManager {
     // Handle vertex interaction during edit mode
     handleEditModeClick(x, y, event) {
         const coords = { x, y };
-        
-        // Check if clicking on a vertex
-        const vertexIndex = this.findVertexAtPosition(coords.x, coords.y);
-        
+
+        // Check if clicking on a vertex (of the outline or of the lume)
+        const hit = this.findVertexAtPosition(coords.x, coords.y);
+
         if (event.button === 2) {  // Right click - delete vertex
-            if (vertexIndex >= 0 && this.polygonVertices.length > 3) {
-                this.polygonVertices.splice(vertexIndex, 1);
+            if (hit && this.ringAt(hit.ring).length > 3) {
+                this.ringAt(hit.ring).splice(hit.index, 1);
                 this.updatePolygonControls();
                 if (window.canvasManager) window.canvasManager.redraw();
                 return true;
             }
-        } else if (vertexIndex >= 0) {
+        } else if (hit) {
             // Select vertex for dragging
-            this.selectedVertexIndex = vertexIndex;
+            this.selectedRing = hit.ring;
+            this.selectedVertexIndex = hit.index;
             this.isDraggingVertex = true;
             return true;
         } else {
@@ -473,9 +663,10 @@ class SegmentationManager {
             const edgeInfo = this.findEdgeAtPosition(coords.x, coords.y);
             if (edgeInfo) {
                 // Insert new vertex at click position
-                this.polygonVertices.splice(edgeInfo.insertIndex, 0, [coords.x, coords.y]);
-                
+                this.ringAt(edgeInfo.ring).splice(edgeInfo.insertIndex, 0, [coords.x, coords.y]);
+
                 // IMMEDIATELY start dragging the new vertex (click-and-drag behavior)
+                this.selectedRing = edgeInfo.ring;
                 this.selectedVertexIndex = edgeInfo.insertIndex;
                 this.isDraggingVertex = true;
                 
@@ -490,57 +681,74 @@ class SegmentationManager {
     
     handleEditModeMove(x, y) {
         if (this.isDraggingVertex && this.selectedVertexIndex >= 0) {
-            this.polygonVertices[this.selectedVertexIndex] = [x, y];
+            this.ringAt(this.selectedRing)[this.selectedVertexIndex] = [x, y];
             if (window.canvasManager) window.canvasManager.redraw();
             return true;
         }
         return false;
     }
-    
+
     handleEditModeUp() {
         this.isDraggingVertex = false;
         this.selectedVertexIndex = -1;
+        this.selectedRing = -1;
     }
-    
+
+    // The rings that can be edited, the lume first (it lies inside the outline, on top of it)
+    editableRings() {
+        return [...this.polygonHoles.map((_, k) => k), -1];
+    }
+
+    // The vertex under (x, y): { ring, index }, or null
     findVertexAtPosition(x, y) {
-        if (!window.canvasManager) return -1;
-        
+        if (!window.canvasManager) return null;
+
         const scale = window.canvasManager.scale;
         const hitRadius = this.vertexHitRadius / scale;
-        
-        for (let i = 0; i < this.polygonVertices.length; i++) {
-            const [vx, vy] = this.polygonVertices[i];
-            const dist = Math.sqrt((x - vx) ** 2 + (y - vy) ** 2);
-            if (dist <= hitRadius) {
-                return i;
+
+        for (const ring of this.editableRings()) {
+            const vertices = this.ringAt(ring);
+            for (let i = 0; i < vertices.length; i++) {
+                const [vx, vy] = vertices[i];
+                const dist = Math.sqrt((x - vx) ** 2 + (y - vy) ** 2);
+                if (dist <= hitRadius) {
+                    return { ring, index: i };
+                }
             }
         }
-        return -1;
+        return null;
     }
-    
+
+    // The edge under (x, y): { ring, edgeIndex, insertIndex }, or null
     findEdgeAtPosition(x, y) {
-        if (!window.canvasManager || this.polygonVertices.length < 2) return null;
-        
+        if (!window.canvasManager) return null;
+
         const scale = window.canvasManager.scale;
         const hitRadius = this.vertexHitRadius / scale;
-        
-        for (let i = 0; i < this.polygonVertices.length; i++) {
-            const p1 = this.polygonVertices[i];
-            const p2 = this.polygonVertices[(i + 1) % this.polygonVertices.length];
-            
-            const dist = this.perpendicularDistance([x, y], p1, p2);
-            
-            // Also check if point is within the segment bounds
-            const minX = Math.min(p1[0], p2[0]) - hitRadius;
-            const maxX = Math.max(p1[0], p2[0]) + hitRadius;
-            const minY = Math.min(p1[1], p2[1]) - hitRadius;
-            const maxY = Math.max(p1[1], p2[1]) + hitRadius;
-            
-            if (dist <= hitRadius && x >= minX && x <= maxX && y >= minY && y <= maxY) {
-                return {
-                    edgeIndex: i,
-                    insertIndex: i + 1
-                };
+
+        for (const ring of this.editableRings()) {
+            const vertices = this.ringAt(ring);
+            if (vertices.length < 2) continue;
+
+            for (let i = 0; i < vertices.length; i++) {
+                const p1 = vertices[i];
+                const p2 = vertices[(i + 1) % vertices.length];
+
+                const dist = this.perpendicularDistance([x, y], p1, p2);
+
+                // Also check if point is within the segment bounds
+                const minX = Math.min(p1[0], p2[0]) - hitRadius;
+                const maxX = Math.max(p1[0], p2[0]) + hitRadius;
+                const minY = Math.min(p1[1], p2[1]) - hitRadius;
+                const maxY = Math.max(p1[1], p2[1]) + hitRadius;
+
+                if (dist <= hitRadius && x >= minX && x <= maxX && y >= minY && y <= maxY) {
+                    return {
+                        ring,
+                        edgeIndex: i,
+                        insertIndex: i + 1
+                    };
+                }
             }
         }
         return null;
@@ -764,6 +972,9 @@ class SegmentationManager {
                     console.log('Setting rotation center at', coords);
                     window.app.setRotationCenter(coords.x, coords.y);
                     break;
+                case 'lume':
+                    this.pickLumeAt(coords.x, coords.y);
+                    break;
             }
         });
         
@@ -838,12 +1049,13 @@ class SegmentationManager {
         // Create a simple mask representation from polygon
         // The actual mask will be created on the backend from contours
         this.currentMask = this.createMaskFromPolygon();
-        
+        this.onNewMask([]);
+
         // Redraw with filled polygon
         if (window.canvasManager) {
             window.canvasManager.redraw();
         }
-        
+
         // Enable add segment button
         document.getElementById('add-segment-btn').disabled = false;
         document.getElementById('clear-preview-btn').disabled = false;
@@ -926,19 +1138,58 @@ class SegmentationManager {
             // Close path if polygon is closed
             if (this.isPolygonClosed && this.polygonVertices.length > 2) {
                 ctx.closePath();
+                // The lume is not part of the fill (even-odd)
+                const fillPath = new Path2D();
+                [this.polygonVertices, ...(isEditing ? this.polygonHoles : this.previewHoles)].forEach(ring => {
+                    ring.forEach(([x, y], i) => {
+                        const px = x * scale + offsetX, py = y * scale + offsetY;
+                        if (i === 0) fillPath.moveTo(px, py); else fillPath.lineTo(px, py);
+                    });
+                    fillPath.closePath();
+                });
                 ctx.fillStyle = isEditing ? 'rgba(0, 170, 255, 0.15)' : 'rgba(0, 255, 0, 0.2)';
-                ctx.fill();
+                ctx.fill(fillPath, 'evenodd');
             }
-            
+
             ctx.stroke();
-            
+
+            // The lume while it is edited: dashed orange, with its own vertices
+            if (isEditing) {
+                this.polygonHoles.forEach((ring, k) => {
+                    ctx.beginPath();
+                    ring.forEach(([x, y], i) => {
+                        const px = x * scale + offsetX, py = y * scale + offsetY;
+                        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+                    });
+                    ctx.closePath();
+                    ctx.strokeStyle = '#ea580c';
+                    ctx.lineWidth = 2.5;
+                    ctx.setLineDash([6, 4]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    ring.forEach(([x, y], i) => {
+                        const isSelected = this.selectedRing === k && i === this.selectedVertexIndex;
+                        ctx.beginPath();
+                        ctx.arc(x * scale + offsetX, y * scale + offsetY, 7, 0, 2 * Math.PI);
+                        ctx.fillStyle = isSelected ? '#ff0000' : '#ea580c';
+                        ctx.fill();
+                        ctx.strokeStyle = isSelected ? '#ffffff' : '#000000';
+                        ctx.lineWidth = isSelected ? 2 : 1;
+                        ctx.stroke();
+                    });
+                });
+                ctx.strokeStyle = '#00aaff';
+                ctx.lineWidth = 2.5;
+            }
+
             // Draw vertices
             for (let i = 0; i < this.polygonVertices.length; i++) {
                 const [x, y] = this.polygonVertices[i];
                 const canvasX = x * scale + offsetX;
                 const canvasY = y * scale + offsetY;
-                
-                const isSelected = (i === this.selectedVertexIndex);
+
+                const isSelected = (this.selectedRing === -1 && i === this.selectedVertexIndex);
                 const vertexRadius = isEditing ? 8 : 6;
                 
                 ctx.beginPath();
@@ -1204,12 +1455,13 @@ class SegmentationManager {
                 this.currentMask = data.mask;
                 this.previewContours = data.contours;
                 this.isManualMask = false;  // SAM mask, not manual
-                
+                this.onNewMask(data.holes);
+
                 // Redraw canvas with preview
                 if (window.canvasManager) {
                     window.canvasManager.redraw();
                 }
-                
+
                 // Enable buttons
                 document.getElementById('add-segment-btn').disabled = false;
                 document.getElementById('clear-preview-btn').disabled = false;
@@ -1224,7 +1476,7 @@ class SegmentationManager {
             }
         }
     }
-    
+
     async segmentWithBox() {
         if (!this.boxStart || !this.boxEnd) return;
         
@@ -1253,12 +1505,13 @@ class SegmentationManager {
                 this.currentMask = data.mask;
                 this.previewContours = data.contours;
                 this.isManualMask = false;  // SAM mask, not manual
-                
+                this.onNewMask(data.holes);
+
                 // Redraw canvas with preview
                 if (window.canvasManager) {
                     window.canvasManager.redraw();
                 }
-                
+
                 // Enable buttons
                 document.getElementById('add-segment-btn').disabled = false;
                 document.getElementById('clear-preview-btn').disabled = false;
@@ -1272,7 +1525,7 @@ class SegmentationManager {
                 app.showNotification('Segmentation failed: ' + error.message, 'error');
             }
         }
-        
+
         // Reset box
         this.boxStart = null;
         this.boxEnd = null;
@@ -1296,7 +1549,12 @@ class SegmentationManager {
         this.selectedVertexIndex = -1;
         this.isDraggingVertex = false;
         this.originalContour = null;  // Clear original contour
-        
+        this.previewHoles = [];
+        this.polygonHoles = [];
+        this.selectedRing = -1;
+        this.backupPreviewHoles = null;
+        this.lumeTried = false;
+
         // Update polygon buttons
         const closeBtn = document.getElementById('close-polygon-btn');
         const clearBtn = document.getElementById('clear-polygon-btn');
@@ -1312,6 +1570,7 @@ class SegmentationManager {
         if (editControls) editControls.style.display = 'none';
         
         this.updateUndoButton();
+        this.refreshLumeUI();
 
         // Redraw canvas
         if (window.canvasManager) {

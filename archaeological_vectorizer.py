@@ -1319,7 +1319,8 @@ def vectorize_prospect_drawing(image_path: str,
                                lines_threshold: int = 100,
                                epsilon: float = 1.5,
                                smoothing_factor: float = 0.3,
-                               with_holes: bool = False) -> Dict[str, Any]:
+                               with_holes: bool = False,
+                               holes_override: Optional[List[np.ndarray]] = None) -> Dict[str, Any]:
     """
     Vectorize a prospect (front view of the vessel) as its outer border only.
 
@@ -1333,6 +1334,9 @@ def vectorize_prospect_drawing(image_path: str,
         lines_threshold: Binarization threshold (higher = only dark ink)
         epsilon: RDP simplification epsilon
         smoothing_factor: Bezier smoothing (0-1)
+        with_holes: Look for the openings (the lume of a handle) in the drawing
+        holes_override: The openings as chosen by the user, rings of (y, x) points: used as they are, instead of
+            looking for them in the drawing (an empty list: no opening)
 
     Returns:
         Dictionary with statistics
@@ -1343,8 +1347,10 @@ def vectorize_prospect_drawing(image_path: str,
     height, width = map(int, img_gray.shape)
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE) if mask_path else None
 
-    holes: Optional[List[np.ndarray]] = [] if with_holes else None
+    holes: Optional[List[np.ndarray]] = [] if with_holes and holes_override is None else None
     outline, stroke_width = extract_prospect_outline(img_gray, mask, lines_threshold, holes)
+    if holes_override is not None:
+        holes = list(holes_override)
     print(f"Prospect: stroke width ~{stroke_width:.1f}px, outline {0 if outline is None else len(outline)} points")
 
     dwg = svgwrite.Drawing(output_svg_path, size=(f'{width}px', f'{height}px'), profile='full')

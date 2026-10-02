@@ -474,7 +474,7 @@
                             </div>
                             <div id="polygon-edit-controls" style="display: none;">
                                 <p style="font-size: 0.8rem; color: var(--text-dim); margin: 4px 0;">
-                                    <strong>Edit mode:</strong> Drag vertices to move. Click edge to add point. Right-click vertex to delete.
+                                    <strong>Edit mode:</strong> Drag vertices to move. Click edge to add point. Right-click vertex to delete. The lume (orange) is edited the same way.
                                 </p>
                                 <div class="form-group" style="margin: 8px 0;">
                                     <label for="simplify-slider" style="font-size: 0.85rem;">Simplification: <span id="simplify-value">15</span></label>
@@ -504,6 +504,27 @@
                             <option value="Running_Element">Running element</option>
                             <option value="Detail">Detail</option>
                         </select>
+
+                        <div class="form-group lume-controls" id="lume-controls" style="display: none;">
+                            <label class="form-label" style="font-weight: 600; font-size: 0.82rem; margin-bottom: 6px; display: block;">
+                                Lume (opening of the handle): <span id="lume-status">none</span>
+                            </label>
+                            <div class="lume-buttons">
+                                <button id="lume-detect-btn" class="btn btn-secondary btn-small" disabled title="Look for the opening again, automatically">
+                                    <i class="bi bi-search"></i> Detect
+                                </button>
+                                <button id="lume-pick-btn" class="btn btn-secondary btn-small" disabled title="Click inside the opening: SAM2 outlines it">
+                                    <i class="bi bi-hand-index-thumb"></i> Click it
+                                </button>
+                                <button id="lume-add-btn" class="btn btn-secondary btn-small" disabled title="Place an oval to reshape with Edit Mask">
+                                    <i class="bi bi-circle"></i> Add oval
+                                </button>
+                                <button id="lume-clear-btn" class="btn btn-secondary btn-small" disabled title="The handle has no opening">
+                                    <i class="bi bi-x-circle"></i> Remove
+                                </button>
+                            </div>
+                            <small style="color: var(--text-muted);">Edit Mask lets you drag the vertices of the lume too.</small>
+                        </div>
 
                         <div class="form-group">
                             <label for="element-name">Element Name:</label>

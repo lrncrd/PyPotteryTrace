@@ -276,11 +276,12 @@ class PyPotteryTraceApp {
             polygonControls.style.display = mode === 'polygon' ? 'block' : 'none';
         }
 
-        // Clear previous mode data when switching modes
+        // Clear previous mode data when switching modes (picking the lume works on the mask as it is)
         if (window.segmentationManager) {
-            if (mode !== 'polygon') {
+            if (mode !== 'polygon' && mode !== 'lume') {
                 segmentationManager.clearPolygon();
             }
+            segmentationManager.refreshLumeUI();
         }
 
         // Update canvas cursor
@@ -473,6 +474,9 @@ class PyPotteryTraceApp {
         // Store preview contours before clearing
         const contoursToSave = segmentationManager.previewContours;
 
+        // The lume of a handle (null for the other categories)
+        const holesToSave = segmentationManager.lumeForSegment(category);
+
         // For manual masks, use the contours directly as the mask data
         let maskData = segmentationManager.currentMask;
         if (isManualMask && segmentationManager.currentMask.type === 'polygon') {
@@ -500,7 +504,8 @@ class PyPotteryTraceApp {
                     category: category,
                     name: name,
                     should_vectorize: shouldVectorize,
-                    is_manual: isManualMask  // Flag for manual masks - no dilation
+                    is_manual: isManualMask,  // Flag for manual masks - no dilation
+                    holes: holesToSave
                 })
             });
 
@@ -515,12 +520,13 @@ class PyPotteryTraceApp {
                     mask: maskData,  // Save mask data for persistence
                     contours: contoursToSave,  // Save contours for redrawing
                     should_vectorize: shouldVectorize,
-                    is_manual: isManualMask  // Store manual mask flag
+                    is_manual: isManualMask,  // Store manual mask flag
+                    holes: holesToSave
                 });
 
                 // Save the stored contours to canvas as a permanent mask
                 if (window.canvasManager) {
-                    window.canvasManager.addSavedMask(contoursToSave, category, name, data.segment_id);
+                    window.canvasManager.addSavedMask(contoursToSave, category, name, data.segment_id, holesToSave);
 
                     // Clear SVG overlay since we now have updated masks
                     window.canvasManager.clearSVG();
@@ -1315,7 +1321,8 @@ class PyPotteryTraceApp {
                                 seg.contours,
                                 seg.category,
                                 seg.name,
-                                seg.id
+                                seg.id,
+                                seg.holes
                             );
                         }
                     });
@@ -1485,7 +1492,8 @@ class PyPotteryTraceApp {
                 contours: seg.contours,
                 mask: seg.mask,  // Include mask data (contains polygon vertices for manual masks)
                 should_vectorize: seg.should_vectorize !== undefined ? seg.should_vectorize : this.getDefaultVectorization(seg.category),
-                is_manual: seg.is_manual || false  // Preserve manual mask flag
+                is_manual: seg.is_manual || false,  // Preserve manual mask flag
+                holes: seg.holes  // The lume of a handle (null: look for it in the drawing)
             }));
 
             // Send to backend to update session
